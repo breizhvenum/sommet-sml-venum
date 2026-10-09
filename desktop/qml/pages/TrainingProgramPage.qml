@@ -222,37 +222,14 @@ Item {
     // The watch sport mode for an intervals.icu sport (André, 2026-09-25: rides go to the cycling
     // mode, runs to running, ... automatically). Matched by name against the watch's own modes; ""
     // when the watch has none for that sport (the entry then keeps its mode / the picked one).
-    readonly property var sportWords: ({
-        "Ride": ["cycl", "bike", "ride", "vélo", "velo"], "VirtualRide": ["indoor", "cycl", "bike"],
-        "GravelRide": ["gravel", "cycl", "bike"], "MountainBikeRide": ["mountain", "mtb", "cycl", "bike"],
-        "Run": ["run"], "VirtualRun": ["treadmill", "run"], "TrailRun": ["trail", "run"],
-        "Walk": ["walk"], "Hike": ["hik", "trek", "walk"], "Rowing": ["row"],
-        // A pool swim goes to the pool mode, an open-water one to the open-water mode - not to
-        // whichever mode with "swim" in its name the watch lists first.
-        "Swim": ["pool", "swim"], "OpenWaterSwim": ["open", "swim"],
-        "NordicSki": ["ski"]
-    })
-    function modeForSport(sport) {
-        const words = root.sportWords[sport] || []
-        const names = root.workoutModes
-        for (const w of words)
-            for (const n of names)
-                if (n.toLowerCase().indexOf(w) >= 0) return n
-        return ""
-    }
+    // The matching itself lives in TrainingPlanSync (2026-10-09), so the plug-in sync sends the
+    // backend exactly what the button here does.
+    function modeForSport(sport) { return TrainingPlanSync.modeForSport(sport) }
     // Watch sport modes to offer for a workout: the first one per sport (ActivityID). The watch
     // lists a native workout under EVERY mode of its sport (hardware-confirmed 2026-09-26), so a
     // second mode of the same sport - e.g. "Running Couch25k -W1", set up for the Couch-to-5K app -
     // adds nothing as a choice.
-    readonly property var workoutModes: {
-        const seen = {}, out = []
-        for (const m of CustomModesService.modes) {
-            if (seen[m.activityId]) continue
-            seen[m.activityId] = true
-            out.push(m.name)
-        }
-        return out
-    }
+    readonly property var workoutModes: TrainingPlanSync.workoutModes
     // "pool" / "open" when a sport mode is one of the watch's swim sports, else "".
     function swimKindOf(name) {
         const m = CustomModesService.modes.find(x => x.name === name)
@@ -268,24 +245,14 @@ Item {
     // 3), else its first mode. Imported workouts carry their sport; hand-made ones pick it in the
     // editor - there is no page-level sport picker any more (André, 2026-10-05: "do we need that
     // picker? ... when we select the workout then we will select the sport on the watch").
-    readonly property string defaultMode: {
-        const run = CustomModesService.modes.find(m => m.activityId === 3)
-        return run ? run.name : (root.workoutModes[0] || "")
-    }
+    readonly property string defaultMode: TrainingPlanSync.defaultMode
     // Sport mode of a planned workout: the one picked in the editor, else the mode matching its
     // intervals.icu sport, else its own mode, else `fallbackMode`.
-    function modeOf(e, fallbackMode) {
-        if (e.modePicked && e.mode) return e.mode
-        return (e.sport && root.modeForSport(e.sport)) || e.mode || fallbackMode
-    }
+    function modeOf(e, fallbackMode) { return TrainingPlanSync.modeOf(e, fallbackMode) }
     // What "Sync to watch" installs: every entry except those made for a bike computer, each in the
     // sport mode matching its sport when it has one, else its own mode, else the picked one.
     function entriesWithMode(fallbackMode) {
-        return root.entries
-            .filter(e => e.device !== "bryton" && e.device !== "magene")
-            .map(function (e) {
-                return { date: e.date, mode: root.modeOf(e, fallbackMode), workout: e.workout }
-            })
+        return TrainingPlanSync.entriesWithMode(root.entries, fallbackMode)
     }
 
     // No duplicates (André, 2026-09-25): an event Sommet itself pushed (external_id "sommet:<uid>")
@@ -394,15 +361,9 @@ Item {
         property real poolLength: 25
         property string words: "en"
     }
-    Settings {
-        id: draftStore
-        category: "trainingProgram"
-        property string draft: ""
-        // Every mode of a plan sport runs the next upcoming workout by itself. With it on, the
-        // watch-face "Today" card's Start -> pick the sport -> the steps run, no WORKOUT menu
-        // (hardware, André's Peak, 2026-10-05).
-        property bool autoStart: false
-    }
+    // The draft and the switches (autoStart, autoSync) are TrainingPlanSync's one Settings
+    // object, so the plug-in sync sends what is edited here (2026-10-09).
+    readonly property var draftStore: TrainingPlanSync.settings
     property bool _draftRestored: false
     function saveDraft() {
         if (!root._draftRestored) return
@@ -923,6 +884,39 @@ Item {
                                   : qsTr("Off: the watch shows nothing on training days; pick the "
                                          + "workout from the sport's WORKOUT menu (hold [Next]).")
                             color: Theme.mutedText
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                    }
+
+                    // The sync without the button: once per plug-in (André, 2026-10-09, after a
+                    // run on the 7th ran the 5th's workout - the watch only learns the next
+                    // workout from a sync).
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingMedium
+
+                        CheckBox {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Update the watch when it's plugged in")
+                            checked: draftStore.autoSync
+                            onToggled: draftStore.autoSync = checked
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.width * 0.6
+                            wrapMode: Text.WordWrap
+                            text: {
+                                const last = TrainingPlanSync.lastAutoSync
+                                if (last) return last
+                                return draftStore.autoSync
+                                    ? qsTr("Every time the watch is connected, past workouts are "
+                                           + "cleared, the next ones go on, and the training day "
+                                           + "points at the right one. No button to press.")
+                                    : qsTr("Off: the watch changes only when you press Sync to watch. "
+                                           + "Until then its training day still starts the workout "
+                                           + "from the last sync.")
+                            }
+                            color: TrainingPlanSync.lastAutoSyncOk ? Theme.mutedText : Theme.warning
                             font.pixelSize: Theme.fontSizeCaption
                         }
                     }

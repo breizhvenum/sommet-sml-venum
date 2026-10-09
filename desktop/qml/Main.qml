@@ -140,6 +140,13 @@ ApplicationWindow {
                 if (ConnectionsService.syncStatsToWatch)
                     window.intervalsPostBg("/api/intervals/stats-to-watch")
             }
+            // The training plan, once per plug-in (2026-10-09): past workouts off, next ones on,
+            // the training day re-pointed. See TrainingPlanSync for why it cannot wait for a
+            // button. Independent of intervals.icu - the plan is local.
+            if (nowConnected && !window._wasConnectedForClass)
+                TrainingPlanSync.watchConnected()
+            else if (!nowConnected && window._wasConnectedForClass)
+                TrainingPlanSync.watchDisconnected()
             window._wasConnectedForClass = nowConnected
         }
     }

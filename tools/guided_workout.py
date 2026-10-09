@@ -240,8 +240,13 @@ def with_lights(binary, workout):
     2026-09-26). If the binary isn't the template iamrule_code.py knows, it's returned unchanged
     with a warning - never an unvalidated patch."""
     import iamrule_code
+    # iamrule_code reads the IAMRULE header, so give it the magic when the compiler left it off
+    # (it did until 2026-10-05; by 2026-10-09 the same compiler returned the magic itself).
+    binary = bytes(binary)
+    if binary[:8] != b"IAMRULE\0":
+        binary = b"IAMRULE\0" + binary
     try:
-        patched, flashes = iamrule_code.add_lights(bytes(binary), **light_choices(workout))
+        patched, flashes = iamrule_code.add_lights(binary, **light_choices(workout))
     except ValueError as e:
         print(f"guided_workout: backlight flashes skipped ({e}); using the compiler's binary",
               file=sys.stderr)
@@ -310,18 +315,25 @@ RULE_ID_OFFSET = 12   # u32 in the magic-less binary: ver(4) outFmtDiv(4) one(4)
 
 
 def with_rule_id(binary, rule_id):
-    """The compiled binary (no IAMRULE magic) with its ruleId u32 and "rule0" symbol set to
-    `rule_id` (1..9). Raises if the binary isn't the compiler's rule0 shape."""
+    """The compiled binary, WITHOUT the IAMRULE magic, with its ruleId u32 and "rule<N>" symbol
+    set to `rule_id` (1..9). Takes the binary with or without the magic: the community compiler
+    returned it magic-less with ruleId 0 until 2026-10-05 and WITH the magic and a large ruleId
+    (11000001, symbol still "rule0") by 2026-10-09 - the first plug-in sync crashed on the old
+    "must be rule0, no magic" check. Whatever it carries, our own 1..9 id goes in (the installed
+    set must stay unique, and apps.decode reads that u32 back). Raises if the symbol isn't the
+    one-digit "rule<d>" shape the in-place rewrite needs."""
+    import re
     import struct
     if not 1 <= int(rule_id) <= 9:
         raise ValueError(f"rule id {rule_id} must be 1..9 (the symbol is patched in place)")
     b = bytearray(binary)
     if b[:len(b"IAMRULE\0")] == b"IAMRULE\0":
-        raise ValueError("with_rule_id wants the magic-less binary")
-    if struct.unpack_from("<I", b, RULE_ID_OFFSET)[0] != 0 or b.count(b"rule0\0") != 1:
-        raise ValueError("binary is not the compiler's rule0 shape - not patched")
+        b = b[len(b"IAMRULE\0"):]
+    symbols = re.findall(rb"rule\d\0", bytes(b))
+    if len(symbols) != 1:
+        raise ValueError("binary has no single one-digit rule<N> symbol - not patched")
     struct.pack_into("<I", b, RULE_ID_OFFSET, int(rule_id))
-    return bytes(b).replace(b"rule0\0", b"rule%d\0" % int(rule_id))
+    return bytes(b).replace(symbols[0], b"rule%d\0" % int(rule_id))
 
 
 def free_rule_id(entries):

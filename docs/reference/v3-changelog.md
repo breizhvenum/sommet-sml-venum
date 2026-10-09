@@ -7,6 +7,36 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-09: The training plan syncs itself when the watch is plugged in (desktop, unreleased)
+
+André's run on the 7th: "I believe the watch didn't match intervals.icu timings... like 8min run..
+I think I saw like two", then "at a moment I didn't see the watch telling me to run or walk so I run
+as I could". Read back from the watch: both running modes still pointed at the 5th's W6.1 (walk 5',
+jog 5', walk 3', jog 8', walk 3', jog 5' - the one 8-minute jog he saw), not the 7th's W6.2 (jog
+10', walk 3', jog 10'), and W6.1's 29 minutes ran out 9 minutes before his 38-minute run did. The
+auto-start rule is re-pointed only by a sync, and the last sync was the 5th.
+
+- **Sync on plug-in** (`TrainingPlanSync.qml`, on by default, switch on the Training program page:
+  "Update the watch when it's plugged in"): once per connection, as soon as the watch is recognised,
+  the plan is synced exactly as the button does - past workouts off, the next ones on, the training
+  day pointed at the next one. Confirmed on André's Peak the same evening: plugged in, the 5th and
+  7th left the menu, the 14th and 17th went on, both running modes → 10/10_W6.3.
+- **Why not the watch itself**: it cannot pick a native stepped workout by date. The stepped binary
+  is the compiler's (one step table the firmware reads), and the only date-aware mechanism is the
+  older display-field app family (`tools/training_plan.py`, `SUUNTO_DAYS_AFTER_1_1_2000`), which has
+  no step screen or target band. So the date logic stays on the computer, and the computer runs it
+  without being asked.
+- **Compiler change caught**: by the 9th the community compiler returned the guidance binary WITH
+  the IAMRULE magic and a large ruleId (11000001, symbol still "rule0"); on the 5th it was magic-less
+  with ruleId 0. The rule-id stamp refused it and the first plug-in sync died with "with_rule_id
+  wants the magic-less binary". It now takes either shape and always stamps our own 1..9 id; the
+  backlight patcher adds the magic itself when the compiler leaves it off.
+- The sport → watch-mode matching moved out of the page into the singleton so the plug-in sync and
+  the button send the backend the same entries.
+
+Still open: the Android app has no plug-in sync (it syncs when the plan screen asks); and the
+"% km" wording in the card's 50%/100% pop-up.
+
 ## 2026-10-05: Planned moves and guided workouts on the Ambit3 - four fixes and an auto-start (desktop, unreleased)
 
 André ran his Couch to 5k W6.1 from the watch's "Today" card and got "something completely different

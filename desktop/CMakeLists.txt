@@ -184,6 +184,9 @@ set_source_files_properties(qml/viewmodels/RouteViewModel.qml PROPERTIES
 set_source_files_properties(qml/PlanStore.qml PROPERTIES
     QT_QML_SINGLETON_TYPE true
 )
+set_source_files_properties(qml/TrainingPlanSync.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE true
+)
 
 qt_add_qml_module(ambitapp
     URI AmbitApp
@@ -278,6 +281,7 @@ qt_add_qml_module(ambitapp
         qml/components/IntervalsIcon.qml
         qml/MapService.qml
         qml/PlanStore.qml
+        qml/TrainingPlanSync.qml
         qml/viewmodels/HomeViewModel.qml
         qml/viewmodels/WeatherViewModel.qml
         qml/viewmodels/ActivityViewModel.qml
