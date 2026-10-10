@@ -112,5 +112,84 @@ class ModeActivityId(unittest.TestCase):
                 self.assertEqual(GW.mode_activity_id(decoded, mode), activity)
 
 
+def modes(*spec):
+    """[(name, activity_id)] -> a custom_modes.decode-shaped dict with empty rules."""
+    return {"exercise_modes": [{"Settings": {"Name": n, "ActivityID": a}, "Displays": [], "Rules": []}
+                               for n, a in spec]}
+
+
+class AutoStartRules(unittest.TestCase):
+    """2026-10-10: every installed upcoming workout is an active rule of the sport's WORKOUT
+    mode (date-gated on the watch), soonest first; other modes of the sport carry none."""
+    TODAY = TC.datetime.date(2026, 10, 10)
+
+    def test_all_upcoming_into_the_workout_mode_only(self):
+        d = modes(("Running", 3), ("Running workout", 3), ("Cycling", 4))
+        data = region(("Sunrise", 0), ("10/10_W10", 1), ("12/10_W12", 1), ("14/10_W14", 1))
+        existing = WI.apps_entries_with_raw_blocks(data)
+        touched, out, needs = TC.auto_start_rules(
+            d, existing, data, plan("2026-10-14", "2026-10-12", "2026-10-10"), self.TODAY, True)
+        self.assertEqual(touched, ["Running workout"])
+        self.assertEqual(out, [{"sport": 3, "mode": "Running workout",
+                                "workouts": ["10/10_W10", "12/10_W12", "14/10_W14"]}])
+        self.assertEqual(needs, [])
+        by_name = {m["Settings"]["Name"]: m["Rules"] for m in d["exercise_modes"]}
+        self.assertEqual([r["RuleIdx"] for r in by_name["Running workout"]], [1, 2, 3])
+        self.assertEqual(by_name["Running"], [])
+
+    def test_no_workout_mode_is_reported_not_guessed(self):
+        d = modes(("Running", 3), ("Running Couch25k", 3))
+        data = region(("10/10_W10", 1))
+        existing = WI.apps_entries_with_raw_blocks(data)
+        _, out, needs = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, True)
+        self.assertEqual(out, [])
+        self.assertEqual(needs, [{"sport": 3, "mode": "Running", "suggested": "Running workout"}])
+        self.assertTrue(all(m["Rules"] == [] for m in d["exercise_modes"]))
+
+    def test_off_drops_managed_rules_everywhere(self):
+        d = modes(("Running", 3), ("Running workout", 3))
+        data = region(("Sunrise", 0), ("10/10_W10", 1))
+        for m in d["exercise_modes"]:
+            m["Rules"] = [{"RuleIdx": 0, "UseRule": True, "LogRule": False},
+                          {"RuleIdx": 1, "UseRule": True, "LogRule": False}]
+        existing = WI.apps_entries_with_raw_blocks(data)
+        touched, out, needs = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, False)
+        self.assertEqual(sorted(touched), ["Running", "Running workout"])
+        self.assertEqual((out, needs), ([], []))
+        for m in d["exercise_modes"]:
+            self.assertEqual([r["RuleIdx"] for r in m["Rules"]], [0])   # the Sunrise app stays
+
+    def test_five_slot_limit(self):
+        d = modes(("Running workout", 3), ("Running", 3))
+        d["exercise_modes"][0]["Rules"] = [{"RuleIdx": 0, "UseRule": True, "LogRule": False}] * 3
+        dates = ["2026-10-1%d" % i for i in range(0, 5)]
+        data = region(("Sunrise", 0), *[(TC.entry_label(x, "W" + x[-2:]), 1) for x in dates])
+        existing = WI.apps_entries_with_raw_blocks(data)
+        _, out, _ = TC.auto_start_rules(d, existing, data, plan(*dates), self.TODAY, True)
+        self.assertEqual(len(d["exercise_modes"][0]["Rules"]), WI.SPORT_MODE_APP_LIMIT)
+        self.assertEqual(out[0]["workouts"], ["10/10_W10", "11/10_W11"])
+
+
+class DateGate(unittest.TestCase):
+    def test_gate_managed_gates_once_and_only_known_labels(self):
+        import json
+        import pathlib
+        fx = json.loads((pathlib.Path(__file__).parent / "testdata" / "iamrule_oracle.json").read_text())
+        plain = bytes.fromhex(fx["date_gate_plain"])[len(apps.MAGIC):]
+        data = WI.build_apps_region([], {"name": "10/10_W10", "binary": plain}, entry_type=1)
+        data = WI.build_apps_region(WI.apps_entries_with_raw_blocks(data),
+                                    {"name": "12/10_W12", "binary": plain}, entry_type=1)
+        entries = WI.apps_entries_with_raw_blocks(data)
+        out, names = TC.gate_managed(entries, {"10/10_W10": "2026-10-10"})
+        self.assertEqual(names, ["10/10_W10"])
+        self.assertTrue(TC.is_gated(out[0]["binary"]))
+        self.assertFalse(TC.is_gated(out[1]["binary"]))
+        again = TC.rebuild_apps_region([e["_raw_block"] for e in out])
+        decoded = apps.decode(again)
+        self.assertEqual([e["name"] for e in decoded], ["10/10_W10", "12/10_W12"])
+        self.assertTrue(TC.is_gated(decoded[0]["binary"]))
+        self.assertEqual(TC.gate_managed(out, {"10/10_W10": "2026-10-10"})[1], [])
+
+
 if __name__ == "__main__":
     unittest.main()

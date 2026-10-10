@@ -224,6 +224,100 @@ def add_light_on_step_change(binary):
     return add_lights(binary, on_step_start=range(guidance_sites(binary)["total"]))
 
 
+SLOT_OPS_U16 = (0x14, 0x15, 0x1c, 0x59, 0x54, 0x55)   # load store isinv setstr aload astore
+BUILTIN_DAYS_AFTER_2000 = 0x33   # SUUNTO_DAYS_AFTER_1_1_2000's builtin id (compiler output, 2026-10-10)
+MEM_TYPES = (0x04, 0x20)          # slot types whose 5th field is a data-memory offset (floats/arrays, strings)
+
+
+def add_date_gate(binary, days):
+    """The compiled program, run ONLY on the day the watch's own SUUNTO_DAYS_AFTER_1_1_2000 equals
+    `days` (training_plan.date_to_days2000's value): on any other day the first instructions jump
+    straight to `end`, so an active rule for a workout on another date does nothing at all - no
+    display, no beeps, no step. This is what lets every upcoming workout sit on the watch as an
+    active rule at once and the watch pick the day's one by its own clock, no computer needed
+    (André, 2026-10-10: "try to have a workaround to work properly without connecting").
+
+    Adds the builtin the way the compiler does (diffed 2026-10-10 against its own output for the
+    same source with and without the variable): one more entry in the symbol-offset list, the
+    symbol `[u16 id 0x33]["SUUNTO_DAYS_AFTER_1_1_2000\\0"][pad to even]` after the last builtin,
+    a (4,1,0,0,mem,0) slot record inserted right after the last builtin slot (index
+    1 + n_out + n_builtin), every later data-memory slot moved up 4 bytes and renumbered in the
+    code (load/store/isinv/setstr/aload/astore/arrcpy operands, pushb inside strbeg..strend), the
+    data-offset and the two packed header offsets moved by the bytes inserted before them. Then
+    `load <days>; pushf days; eq; jz -> end` goes in front of the code (the compiler's own
+    encoding of `if (SUUNTO_DAYS_AFTER_1_1_2000 == N)`). Raises if the binary already has the
+    variable or isn't the shape this understands."""
+    if binary[:8] != b"IAMRULE\0":
+        raise ValueError("add_date_gate wants the binary with its IAMRULE magic")
+    name = b"SUUNTO_DAYS_AFTER_1_1_2000\0"
+    if name in binary:
+        raise ValueError("binary already reads SUUNTO_DAYS_AFTER_1_1_2000")
+    validate(binary)
+    lay = layout(binary)
+    data_offset = struct.unpack_from("<I", binary, 24)[0]
+    packed = struct.unpack_from("<I", binary, 28)[0]
+    n_out, n_builtin, n_slots = struct.unpack_from("<HHH", binary, data_offset)
+    # symbol-offset list: u16 offsets (from the start of the binary) ending with 0
+    offs, p = [], 32
+    while True:
+        v = struct.unpack_from("<H", binary, p)[0]
+        p += 2
+        if v == 0:
+            break
+        offs.append(v)
+    if len(offs) != n_out - 1 + n_builtin or (packed & 0xFFFF) != p - 2:
+        raise ValueError("symbol table is not the shape this understands")
+    entry = struct.pack("<H", BUILTIN_DAYS_AFTER_2000) + name
+    if len(entry) % 2:
+        entry += b"\0"
+    grow_list = 2
+    new_offs = [o + grow_list for o in offs] + [data_offset + grow_list]
+    head = bytearray(binary[:32])
+    struct.pack_into("<I", head, 24, data_offset + grow_list + len(entry))
+    struct.pack_into("<I", head, 28, packed + (grow_list << 16) + grow_list)
+    table = b"".join(struct.pack("<H", o) for o in new_offs) + b"\0\0" + binary[p:data_offset] + entry
+
+    k = 1 + n_out + n_builtin
+    recs = [list(struct.unpack_from("<HHHHHH", binary, data_offset + 6 + 12 * i)) for i in range(n_slots)]
+    if recs[k][0] not in MEM_TYPES:
+        raise ValueError(f"slot {k} after the builtins is not a data-memory slot")
+    mem_at = recs[k][4]
+    for r in recs:
+        if r[0] in MEM_TYPES and r[4] >= mem_at:
+            r[4] += 4
+    recs.insert(k, [4, 1, 0, 0, mem_at, 0])
+    records_end = data_offset + 6 + n_slots * 12
+    mem_size, pool_size = struct.unpack_from("<HH", binary, records_end)
+    pool = binary[records_end + 4:records_end + 4 + pool_size]
+    records = struct.pack("<HHH", n_out, n_builtin + 1, n_slots + 1) \
+        + b"".join(struct.pack("<HHHHHH", *r) for r in recs) \
+        + struct.pack("<HH", mem_size + 4, pool_size) + pool
+
+    # code: renumber slots >= k, then the gate in front
+    code = bytearray(binary[lay["code"]:lay["code"] + lay["code_len"]])
+    in_str = False
+    for pc, op, raw in instructions(binary):
+        if op == 0x19:
+            in_str = True
+        elif op == 0x18:
+            in_str = False
+        elif op in SLOT_OPS_U16:
+            s = struct.unpack_from("<H", code, pc + 1)[0]
+            if s >= k:
+                struct.pack_into("<H", code, pc + 1, s + 1)
+        elif op == 0x1b:
+            a, b = struct.unpack_from("<HH", code, pc + 1)
+            struct.pack_into("<HH", code, pc + 1, a + (a >= k), b + (b >= k))
+        elif op == 0x10 and in_str and code[pc + 1] >= k:
+            code[pc + 1] += 1
+    renumbered = bytes(head) + table + records + struct.pack("<H", len(code)) + bytes(code)
+    ins = validate(renumbered)
+    end_pc = [i for i in ins if i[1] == END][-1][0]
+    gate = struct.pack("<BH", 0x14, k) + struct.pack("<Bf", 0x90, float(days)) + b"\x09"
+    gate += struct.pack("<BH", 0x16, len(gate) + 3 + end_pc - len(gate))
+    return splice(renumbered, 0, insert=gate)
+
+
 def disassemble(binary):
     lines = []
     for pc, op, raw in instructions(binary):

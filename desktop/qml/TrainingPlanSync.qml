@@ -145,7 +145,7 @@ QtObject {
             const when = Qt.formatDateTime(new Date(), "ddd HH:mm")
             store.lastAutoSyncOk = r.ok === true
             if (r.ok === true) {
-                const auto = (r.autoStart || []).map(x => x.modes.join(", ") + " → " + x.workout)
+                const auto = (r.autoStart || []).map(x => x.mode + " → " + (x.workouts || []).join(", "))
                 store.lastAutoSync = qsTr("Watch updated %1.").arg(when)
                     + (auto.length ? " " + auto.join("; ") + "." : "")
             } else {

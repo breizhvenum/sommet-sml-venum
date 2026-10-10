@@ -161,5 +161,46 @@ class TargetUnits(unittest.TestCase):
                          {"targetName": "pace", "valueRange": {"min": 5.0, "max": 6.0}})
 
 
+class DateGateMatchesCompiler(unittest.TestCase):
+    """add_date_gate's header, symbol table, slot records and pool must be byte-identical to
+    what the compiler itself emits for the same source plus the date line (2026-10-10)."""
+
+    @staticmethod
+    def _front(binary):
+        import struct
+        do = struct.unpack_from("<I", binary, 24)[0]
+        n_slots = struct.unpack_from("<H", binary, do + 4)[0]
+        rec_end = do + 6 + n_slots * 12
+        pool = struct.unpack_from("<H", binary, rec_end + 2)[0]
+        return binary[:rec_end + 4 + pool]
+
+    def test_plain_and_ownvar(self):
+        for a, b in (("date_gate_plain", "date_gate_plain_gated"),
+                     ("date_gate_ownvar", "date_gate_ownvar_gated")):
+            with self.subTest(a):
+                out = IC.add_date_gate(FX[a], 9777)
+                self.assertEqual(self._front(out), self._front(FX[b]))
+                ins = IC.instructions(out)
+                # the gate: load <days slot>, pushf 9777, eq, jz -> end; the slot is the one the
+                # compiler's own code loads for the variable
+                self.assertEqual([op for _, op, _ in ins[:4]], [0x14, 0x90, 0x09, 0x16])
+                days_slot = int.from_bytes(ins[0][2][1:3], "little")
+                compiler_loads = {int.from_bytes(raw[1:3], "little")
+                                  for _, op, raw in IC.instructions(FX[b]) if op == 0x14}
+                self.assertIn(days_slot, compiler_loads)
+                self.assertEqual(IC.jump_target(ins[3]), [i for i in ins if i[1] == IC.END][-1][0])
+
+    def test_refuses_twice(self):
+        with self.assertRaises(ValueError):
+            IC.add_date_gate(FX["date_gate_plain_gated"], 9777)
+
+    def test_guidance_fixture_gates_and_validates(self):
+        for k in GUIDANCE:
+            with self.subTest(k):
+                out = IC.add_date_gate(FX[k], 9778)
+                IC.validate(out)
+                self.assertEqual(len(IC.instructions(out)), len(IC.instructions(FX[k])) + 4)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

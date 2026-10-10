@@ -7,6 +7,34 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-10: The watch picks the day's workout by itself; the training day is the selector (desktop + tools, unreleased)
+
+André, after the plug-in sync: "and I don't plug what it does?" - "not ideal.. can you go further and try to
+have a workaround to work properly without connecting?" Then, on the card: "when it is training day, the
+watch creates a new screen on main ... it says today 30 min easy (which then switches to w6.3 workout). I
+want to be able to select from here. not automatically when running."
+
+- **Date gate inside the native stepped workout** (`iamrule_code.add_date_gate`): the compiled guidance
+  binary gets `if (SUUNTO_DAYS_AFTER_1_1_2000 == <its day>)` in front of its code - one more symbol, one
+  more slot record, the later slots renumbered, the compiler's own encoding of the test. Diffed against
+  the community compiler's output for the same source with and without the line: header, symbol table,
+  slot records and pool come out byte-identical (two reference pairs now in `testdata/iamrule_oracle.json`).
+  So every upcoming workout can be an ACTIVE rule at once: on its day it runs, on any other day its
+  first four instructions jump to `end` and it does nothing. The watch schedules itself from its clock;
+  the computer only refills the five slots as weeks pass.
+- **The sport's workout mode is the selector** (`training_calendar.WORKOUT_MODE_RE`, "<sport> workout"):
+  the card's Start opens the sport list, and that list is the only choice the firmware offers. So the
+  date-gated rules go into "Running workout" alone: card → Start → "Running workout" runs the day's
+  steps; "Running" is a free run. A sport without such a mode is reported (`needsMode`) and the
+  Training program page offers to create it; the watch at its 10-mode limit (André's) gets an existing
+  mode renamed instead ("Running Couch25k -W1" → "Running workout", the mode made for this program).
+- **Checked before claiming**: the firmware image has no app variable for "started from the card" (no
+  `SUUNTO_` names at all - the watch resolves built-ins by id), so the mode is the honest selector.
+- On André's Peak, 2026-10-10 evening: four workouts (10/10, 12/10, 14/10, 17/10) date-gated, all four
+  rules in "Running workout", none in "Running"; written and read back. Awaiting his run.
+- Auto-start off now reinstalls gated workouts plain (a gated one would do nothing on a WORKOUT-menu
+  pick on another day); a sync that changes no rule no longer rewrites the sport modes.
+
 ## 2026-10-09: The training plan syncs itself when the watch is plugged in (desktop, unreleased)
 
 André's run on the 7th: "I believe the watch didn't match intervals.icu timings... like 8min run..

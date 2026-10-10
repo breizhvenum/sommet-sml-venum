@@ -364,6 +364,19 @@ Item {
     // The draft and the switches (autoStart, autoSync) are TrainingPlanSync's one Settings
     // object, so the plug-in sync sends what is edited here (2026-10-09).
     readonly property var draftStore: TrainingPlanSync.settings
+    // After "Create <sport> workout" (below) the modes come back from the watch; sync again so
+    // the workouts move into the new mode without a second click.
+    property bool pendingResync: false
+    Connections {
+        target: CustomModesService
+        function onModesChanged() {
+            if (!root.pendingResync || TrainingProgramService.installing) return
+            root.pendingResync = false
+            if (HomeViewModel.anyDevice && root.entries.length > 0)
+                TrainingProgramService.syncCalendar(root.entriesWithMode(root.defaultMode), true,
+                                                    draftStore.autoStart)
+        }
+    }
     property bool _draftRestored: false
     function saveDraft() {
         if (!root._draftRestored) return
@@ -876,10 +889,11 @@ Item {
                             wrapMode: Text.WordWrap
                             text: draftStore.autoStart
                                   ? qsTr("On a training day the watch says so on its time screen. "
-                                         + "Press Start, pick the sport, start recording: the workout "
-                                         + "runs step by step. Until the next sync every recording in "
-                                         + "that sport runs the planned workout - end it from the "
-                                         + "watch's options menu (END WORKOUT) if you just want to run. "
+                                         + "Press Start there and pick the sport's workout mode "
+                                         + "(\"Running workout\"): the day's workout runs step by step. "
+                                         + "Any other mode is a free run. The watch picks the day's "
+                                         + "workout by its own clock, and holds the next five; plug in "
+                                         + "now and then so new weeks get loaded. "
                                          + "The watch also turns its HR limits on, wide and out of the way.")
                                   : qsTr("Off: the watch shows nothing on training days; pick the "
                                          + "workout from the sport's WORKOUT menu (hold [Next]).")
@@ -1042,7 +1056,8 @@ Item {
                                 if (n === 0)
                                     return qsTr("Nothing on the watch's time screen; workouts are picked from the WORKOUT menu.")
                                 const auto = (r.autoStart || []).map(
-                                    x => qsTr(" %1 starts %2.").arg(x.modes.join(", ")).arg(x.workout)).join("")
+                                    x => qsTr(" Start → %1 runs the day's workout: %2.")
+                                        .arg(x.mode).arg((x.workouts || []).join(", "))).join("")
                                 const range = (r.nativeCardFirst && r.nativeCardLast
                                                && r.nativeCardFirst !== r.nativeCardLast)
                                     ? qsTr(" (%1 → %2)").arg(r.nativeCardFirst).arg(r.nativeCardLast)
@@ -1052,6 +1067,33 @@ Item {
                             color: Theme.primary
                             font.pixelSize: Theme.fontSizeCaption
                             font.bold: true
+                        }
+                        // A sport with no "<sport> workout" mode yet: the card's Start needs one to
+                        // lead to (training_calendar.WORKOUT_MODE_RE). One click makes it, a copy
+                        // of the sport's default screens; the next sync fills it.
+                        Repeater {
+                            model: TrainingProgramService.lastInstallResult.needsMode || []
+                            delegate: Row {
+                                required property var modelData
+                                spacing: Theme.spacingMedium
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: qsTr("No workout mode for %1 yet: the day's workout needs a "
+                                               + "mode of its own to start from the training day.")
+                                        .arg(modelData.mode)
+                                    color: Theme.warning
+                                    font.pixelSize: Theme.fontSizeCaption
+                                }
+                                RoundedButton {
+                                    text: qsTr("Create \"%1\"").arg(modelData.suggested)
+                                    enabled: CustomModesService.writingMode.length === 0
+                                    onClicked: {
+                                        CustomModesService.createMode(modelData.suggested,
+                                                                      modelData.sport, DeviceService.model)
+                                        root.pendingResync = true
+                                    }
+                                }
+                            }
                         }
                         Text {
                             width: parent.width
