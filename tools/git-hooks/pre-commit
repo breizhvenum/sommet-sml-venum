@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Refuses a commit when an automatic check fails, so a fix cannot quietly break something else.
+# Install (once per computer; the hooks folder is shared by every working copy of the repo):
+#
+#     cp tools/git-hooks/pre-commit "$(git rev-parse --git-common-dir)/hooks/pre-commit"
+#
+# Emergency only: `git commit --no-verify` skips it. Say so in the commit message.
+root="$(git rev-parse --show-toplevel)" || exit 0
+[ -x "$root/tools/check.sh" ] || exit 0      # an older branch without the checks: nothing to run
+if ! out="$("$root/tools/check.sh" 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    echo >&2
+    echo "pre-commit: commit refused - a check failed (see above). Fix it, then commit again." >&2
+    exit 1
+fi
+exit 0

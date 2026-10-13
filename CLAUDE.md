@@ -53,3 +53,34 @@ General
 
 
 
+
+## This file is public
+- This file is in the public GitHub repository. Never write serial numbers, keys, addresses of my
+  devices, or notes about private work here. Those go in the local notes file, which git ignores.
+
+## Before every commit
+- Run `tools/check.sh`. It runs every automatic check that needs no watch (about 12 seconds).
+  If it fails, something that worked before is broken: fix that first, do not commit around it.
+- A change to what is written to a watch is not finished until it was seen working on a real watch.
+  Say plainly when something was only checked without a watch.
+
+## Words
+- Use the words in `CONTEXT.md` (the glossary) in the app, in tickets and when talking to me.
+  If a word I use is not there, ask me and add it.
+
+## Agent skills
+
+### Issue tracker
+
+Tickets are local markdown files under `.scratch/` (a link to a private folder, never GitHub
+Issues). List them with `.scratch/list.sh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels plus `done`, written as a `**Status:**` line in each ticket. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` at the repo root and decisions in `docs/adr/`. See
+`docs/agents/domain.md`.

@@ -123,7 +123,6 @@ desktop/*.exitcode
 /tools/appzone_corpus.py
 /tools/harvest_appzone.py
 /obsolete/
-/CLAUDE.md
 /PROJECT_RULES.md
 /BUGS_ANDRE.md
 /HANDOFF.md
@@ -160,3 +159,12 @@ tools/.compile_key
 
 # Personal activity export (GPS tracks) - never commit
 /garmin-import/
+
+# ---- 2026-10-13 project structure: the task list ("tickets") is private and lives outside
+# this repository; .scratch is only a link to it. Private notes for coding assistants too.
+/.scratch
+/.out-of-scope/
+/CLAUDE.local.md
+# CLAUDE.md is tracked again since 2026-10-13: it is the public rules file that was added as
+# claude.md on 2026-08-27 (Linux only loads the capital-letter name). The file purged on
+# 2026-08-17 had other content. Private facts belong in CLAUDE.local.md, never in CLAUDE.md.

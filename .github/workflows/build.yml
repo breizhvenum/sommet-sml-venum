@@ -24,6 +24,8 @@ jobs:
           python-version: "3.12"
       - name: Compile every Python file
         run: python -m compileall -q tools desktop/backend
+      - name: Run the Python checks (the same ones tools/check.sh runs before every commit)
+        run: tools/check.sh python
 
   # 2) Android: build the debug APK, exactly like ./build-android.sh does.
   android:
@@ -40,6 +42,8 @@ jobs:
       - name: Install JavaScript dependencies
         working-directory: android
         run: npm ci
+      - name: Run the app-logic checks (the same ones tools/check.sh runs before every commit)
+        run: tools/check.sh android
       - name: Build the debug APK
         working-directory: android/android
         run: ./gradlew :app:assembleDebug --no-daemon
