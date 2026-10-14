@@ -73,6 +73,13 @@ def field_meta(schema, key, suffix, product_id):
     else:
         kind = "number"
 
+    # An Off/On enum SuuntoLink shows as a tick box (the Traverse's sunrise and sunset alerts)
+    # is a plain switch for the mobile app too, like the storm alarm.
+    if kind == "enum" and disp.get("control") == "checkbox" \
+            and S._enum_value_set(field) == {0, 1}:
+        kind = "bool"
+        desc = {k: v for k, v in desc.items() if k != "choices"}
+
     out = {"key": key, "entryId": entry_id, "byteWidth": _WIDTH.get(base, 1), "kind": kind}
     if byte_offset:
         out["byteOffset"] = byte_offset
@@ -116,8 +123,10 @@ def field_meta(schema, key, suffix, product_id):
         out["unit"] = disp["unit"]
     if disp.get("step"):
         out["step"] = disp["step"]
+    if disp.get("showWhen"):
+        out["showWhen"] = disp["showWhen"]
     if not is_kailash:
-        screen = S.AMBIT3_KEY_TEMPLATE.get(key)
+        screen = S.key_template(product_id).get(key)
         if screen == "units_mode":
             screen = "units"
         if key == "plans_source":
@@ -133,7 +142,7 @@ def field_meta(schema, key, suffix, product_id):
 
 def device_tables(device, product_id):
     schema = sbem_schema.load(DESCRIPTORS[device])
-    table = S.KAILASH_SETTINGS if device == "kailash" else S.AMBIT3_SETTINGS
+    table = S.settings_table(product_id)
     fields = []
     for key, suffix in table.items():
         # plans_source ("Use training program") is on none of SuuntoLink's own settings screens
@@ -153,11 +162,11 @@ def device_tables(device, product_id):
 
     # Ambit3-family write plumbing: per-screen ordered entry ids, key->screen, enum value sets.
     screens = {}
-    for name, template in S.AMBIT3_WRITE_TEMPLATES.items():
+    for name, template in S.write_templates(product_id).items():
         ids = sorted({resolve(schema, suffix) for suffix in template},
                      key=lambda eid: S._entry_sort_key(schema, eid))
         screens[name] = ids
-    key_screen = {key: S.AMBIT3_KEY_TEMPLATE.get(key) for key in S.AMBIT3_SETTINGS}
+    key_screen = {key: S.key_template(product_id).get(key) for key in table}
     enums, bools = {}, []
     for eid, field in schema.fields.items():
         values = S._enum_value_set(field)

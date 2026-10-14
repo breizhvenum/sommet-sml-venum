@@ -218,6 +218,10 @@ export default function WatchSettingsScreen() {
         )}
 
         {ambitSettings && ambitSettings
+          // A row with `showWhen` appears only while that other setting differs from notValue
+          // (the Traverse's "alert before" minutes, shown while the alert is on) - desktop parity.
+          .filter(row => !row.showWhen
+            || ambitSettings.find(o => o.key === row.showWhen!.field)?.value !== row.showWhen.notValue)
           .map((row, i) => ({ row, i }))
           .sort((a, b) =>
             settingScreenRank(settingScreenOf(a.row)) - settingScreenRank(settingScreenOf(b.row)) || a.i - b.i)

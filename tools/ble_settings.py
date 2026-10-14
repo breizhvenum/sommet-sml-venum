@@ -26,11 +26,21 @@ from write_nav import CMD_SETTINGS_READ
 import sbem_schema
 
 
+# The hello's model string -> the product id settings_write.py keys its tables on. A watch
+# not listed here is read with the Ambit3 tables (`None`).
+_MODEL_PRODUCT_ID = {
+    "Hoopoe": KAILASH_PRODUCT_ID,
+    # Traverse / Traverse Alpha: their own descriptor and their own settings table. Until
+    # 2026-10-14 they fell through to the Ambit3 Peak descriptor here - the same wrong-schema
+    # mistake fixed for the cable on 2026-08-16 (write_nav.descriptor_for_product_id).
+    "Jabiru": 0x002B,
+    "Loon": 0x002D,
+}
+
+
 def product_id_from_model(model):
-    """Kailash's own hello model string is "Hoopoe" - everything else in this watch
-    family shares the Ambit3-family schema (settings_write.py's own
-    descriptor_for_product_id() default, `None`)."""
-    return KAILASH_PRODUCT_ID if model == "Hoopoe" else None
+    """Which of settings_write.py's watch families a Bluetooth hello's model belongs to."""
+    return _MODEL_PRODUCT_ID.get(model)
 
 
 def read_settings(link, model=None):

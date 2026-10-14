@@ -1065,6 +1065,29 @@ export const TRAVERSE_FIELDS: SettingField[] = [
     "screen": "general"
   },
   {
+    "key": "vibration",
+    "entryId": 3,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Buttons off"
+      },
+      {
+        "value": 1,
+        "label": "All on"
+      },
+      {
+        "value": 2,
+        "label": "All off"
+      }
+    ],
+    "label": "Vibration",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
     "key": "display_dark",
     "entryId": 47,
     "byteWidth": 1,
@@ -1123,6 +1146,25 @@ export const TRAVERSE_FIELDS: SettingField[] = [
     "max": 100
   },
   {
+    "key": "backlight_color",
+    "entryId": 36,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "White"
+      },
+      {
+        "value": 1,
+        "label": "Red"
+      }
+    ],
+    "label": "Backlight color",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
     "key": "storm_alarm",
     "entryId": 42,
     "byteWidth": 1,
@@ -1130,6 +1172,56 @@ export const TRAVERSE_FIELDS: SettingField[] = [
     "label": "Storm alarm",
     "control": "checkbox",
     "screen": "general"
+  },
+  {
+    "key": "sunrise_alert",
+    "entryId": 44,
+    "byteWidth": 1,
+    "kind": "bool",
+    "label": "Sunrise alert",
+    "control": "checkbox",
+    "screen": "general"
+  },
+  {
+    "key": "sunrise_alert_minutes",
+    "entryId": 43,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Sunrise alert before",
+    "control": "number",
+    "unit": "min",
+    "showWhen": {
+      "field": "sunrise_alert",
+      "notValue": 0
+    },
+    "screen": "general",
+    "min": 0,
+    "max": 120
+  },
+  {
+    "key": "sunset_alert",
+    "entryId": 46,
+    "byteWidth": 1,
+    "kind": "bool",
+    "label": "Sunset alert",
+    "control": "checkbox",
+    "screen": "general"
+  },
+  {
+    "key": "sunset_alert_minutes",
+    "entryId": 45,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Sunset alert before",
+    "control": "number",
+    "unit": "min",
+    "showWhen": {
+      "field": "sunset_alert",
+      "notValue": 0
+    },
+    "screen": "general",
+    "min": 0,
+    "max": 120
   },
   {
     "key": "alti_baro_profile",
@@ -1780,18 +1872,22 @@ export const WRITE_TEMPLATES: Record<string, Record<string, number[]>> = {
     7,
     5,
     35,
+    36,
     34,
     47,
+    43,
+    44,
+    45,
+    46,
     4,
-    66,
     48,
     21,
     18,
-    19
+    19,
+    3
   ],
   "units": [
     1,
-    66,
     48,
     20,
     9,
@@ -1815,7 +1911,6 @@ export const WRITE_TEMPLATES: Record<string, Record<string, number[]>> = {
     28,
     29,
     27,
-    66,
     48
   ]
 }
@@ -1870,10 +1965,16 @@ export const KEY_SCREEN: Record<string, Record<string, string | null>> = {
   "button_lock_time_mode": "general",
   "button_lock_sport_mode": "general",
   "tones": "general",
+  "vibration": "general",
   "display_dark": "general",
   "backlight_mode": "general",
   "backlight_brightness": "general",
+  "backlight_color": "general",
   "storm_alarm": "general",
+  "sunrise_alert": "general",
+  "sunrise_alert_minutes": "general",
+  "sunset_alert": "general",
+  "sunset_alert_minutes": "general",
   "alti_baro_profile": "general",
   "units_orientation": "general",
   "air_pressure_unit": "units",

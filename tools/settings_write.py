@@ -14,12 +14,14 @@ watch's own screen that it visibly changed - the first real, independently-verif
 confirmation in this project that a cable settings write (`0x1101`) actually takes live
 effect, not just an accepted-and-echoed-but-inert write.
 
-Two curated tables, one per real schema family - `AMBIT3_SETTINGS` (Ambit3/Traverse) only
+Curated tables, one per real schema family - `AMBIT3_SETTINGS` (Ambit3) only
 includes fields visible in SuuntoLink's own real "General Settings" screen (`assets/ambit3
 pcap/v2/general ambit settings/`); `KAILASH_SETTINGS` only includes fields visible in the
 real 7R iOS app's own settings screen (`assets/APK/kailash/IMG_2741.png`, `IMG_2742.png` - a
-real screenshot pair, not the Ambit3's). `settings_table()` picks the right one from a
-product_id, defaulting to the Ambit3 table for every non-Kailash ID. Each field's real
+real screenshot pair, not the Ambit3's). A third, `TRAVERSE_SETTINGS` (Traverse and
+Traverse Alpha), is the Ambit3 table plus the six entries SuuntoLink's own Traverse screen
+adds, with that watch's own write templates. `settings_table()` picks the right one from a
+product_id, defaulting to the Ambit3 table for every other ID. Each field's real
 type/enum comes directly from the schema itself (`<FRM>` tag), not hand-mapped -
 `describe_field()` turns that into a JSON-friendly shape (enum choices, or a numeric range)
 for a UI to render generically.
@@ -328,6 +330,79 @@ AMBIT3_KEY_TEMPLATE = {
     "activity_level": "personal",
 }
 
+
+# ============================ Traverse / Traverse Alpha ============================
+#
+# Real, 2026-10-14, from `assets/pcap/traversegeneralsettings` (SuuntoLink against a real
+# Traverse, fw 2.0.22, 96 captured 0x1101 writes) and the screenshots in
+# `assets/pcap/screens/traverse/`. The Traverse Alpha runs the same firmware byte for byte
+# (the two 2.0.22 files differ only in their 32-byte header), so one table serves both.
+#
+# The Traverse's General Settings screen carries six entries the Ambit3's does not -
+# backlight colour, vibration, and a sunrise and a sunset alert (on/off + minutes before) -
+# and NONE of its three screens carries the Pods group the Ambit3 templates always end
+# with. Until this table existed a Traverse was written with the Ambit3 templates: Pods
+# sent although SuuntoLink never sends it to this watch, the six entries left out.
+TRAVERSE_PRODUCT_IDS = (0x002B, 0x002D)  # Traverse (Jabiru), Traverse Alpha (Loon)
+
+_TRAVERSE_EXTRA = {
+    # after this Ambit3 key -> the Traverse-only keys that follow it on SuuntoLink's screen
+    "backlight_brightness": {"backlight_color": "Display.Backlight.Color"},
+    "tones": {"vibration": "Vibration.Mode"},
+    "storm_alarm": {
+        "sunrise_alert": "EventsToUser.SunriseAlarm.Type",
+        "sunrise_alert_minutes": "EventsToUser.SunriseAlarm.Time",
+        "sunset_alert": "EventsToUser.SunsetAlarm.Type",
+        "sunset_alert_minutes": "EventsToUser.SunsetAlarm.Time",
+    },
+}
+
+TRAVERSE_SETTINGS = {}
+for _key, _suffix in AMBIT3_SETTINGS.items():
+    TRAVERSE_SETTINGS[_key] = _suffix
+    TRAVERSE_SETTINGS.update(_TRAVERSE_EXTRA.get(_key, {}))
+
+_TRAVERSE_ALWAYS_IN_TEMPLATE = ["Sports.Plans.Source"]
+
+TRAVERSE_WRITE_TEMPLATES = {
+    "general": [
+        "AltiBaro.Profile", "AltiBaro.StormAlarm", "Audio.Mode",
+        "ButtonLock.SportMode", "ButtonLock.TimeMode", "Compass.Declination",
+        "Display.Backlight.Brightness", "Display.Backlight.Color",
+        "Display.Backlight.Mode", "Display.Invert",
+        "EventsToUser.SunriseAlarm.Time", "EventsToUser.SunriseAlarm.Type",
+        "EventsToUser.SunsetAlarm.Time", "EventsToUser.SunsetAlarm.Type",
+        "GpsPositionFormat", "Time.GPSTimeKeeping", "Units.Language",
+        "Units.Orientation", "Vibration.Mode",
+    ] + _TRAVERSE_ALWAYS_IN_TEMPLATE,
+    "units": [
+        "Date.Format", "Time.Format", "Units.AirPressure", "Units.Altitude",
+        "Units.Compass", "Units.Distance", "Units.Heartrate", "Units.Height",
+        "Units.Temperature", "Units.VerticalSpeed", "Units.Weight",
+    ] + _TRAVERSE_ALWAYS_IN_TEMPLATE,
+    "units_mode": ["Units.Mode"],
+    "personal": [
+        "Personal.ActivityLevel", "Personal.BirthDay", "Personal.Gender",
+        "Personal.Height", "Personal.MaxHR", "Personal.RestHR", "Personal.Weight",
+    ] + _TRAVERSE_ALWAYS_IN_TEMPLATE,
+}
+
+TRAVERSE_KEY_TEMPLATE = dict(AMBIT3_KEY_TEMPLATE)
+for _extra in _TRAVERSE_EXTRA.values():
+    TRAVERSE_KEY_TEMPLATE.update({_key: "general" for _key in _extra})
+
+
+def write_templates(product_id):
+    """The per-screen write templates SuuntoLink itself uses for this watch."""
+    return TRAVERSE_WRITE_TEMPLATES if product_id in TRAVERSE_PRODUCT_IDS \
+        else AMBIT3_WRITE_TEMPLATES
+
+
+def key_template(product_id):
+    """Which template carries each curated key on this watch."""
+    return TRAVERSE_KEY_TEMPLATE if product_id in TRAVERSE_PRODUCT_IDS \
+        else AMBIT3_KEY_TEMPLATE
+
 # Real numeric bounds, from André's own SuuntoLink UI test 2026-08-10 (he confirmed the
 # UI refuses to accept anything outside these). NOT taken from the captures: he was not
 # always clicking the stops, so a captured value is evidence of an encoding, never of a
@@ -365,6 +440,19 @@ AMBIT3_DISPLAY = {
     "button_lock_sport_mode": {"label": "Button lock, sport mode", "control": "radio"},
     "gps_time_keeping":       {"label": "GPS time keeping", "control": "radio"},
     "storm_alarm":            {"label": "Storm alarm", "control": "checkbox"},
+    # Traverse / Traverse Alpha only (assets/pcap/screens/traverse/traversegeneralsetting*.JPG).
+    # SuuntoLink shows each alert as a tick box "Use sunrise alert" and, only while ticked,
+    # "Alert before (0 - 120 min)".
+    "backlight_color":        {"label": "Backlight color", "control": "radio"},
+    "vibration":              {"label": "Vibration", "control": "radio"},
+    "sunrise_alert":          {"label": "Sunrise alert", "control": "checkbox"},
+    "sunrise_alert_minutes":  {"label": "Sunrise alert before", "control": "number",
+                               "unit": "min",
+                               "showWhen": {"field": "sunrise_alert", "notValue": 0}},
+    "sunset_alert":           {"label": "Sunset alert", "control": "checkbox"},
+    "sunset_alert_minutes":   {"label": "Sunset alert before", "control": "number",
+                               "unit": "min",
+                               "showWhen": {"field": "sunset_alert", "notValue": 0}},
     "gps_position_format":    {"label": "GPS position format", "control": "dropdown"},
     "units_orientation":      {"label": "Orientation", "control": "radio"},
     "alti_baro_profile":      {"label": "Alti-baro profile", "control": "radio"},
@@ -473,6 +561,9 @@ AMBIT3_RANGES = {
     "rest_hr": (30, 240),              # bpm
     "activity_level": (1.0, 10.0),     # activity class (wire: * 10)
     "backlight_brightness": (5, 100),  # %
+    # SuuntoLink's own field label: "Alert before (0 - 120 min)"; the capture writes 0, 60, 120.
+    "sunrise_alert_minutes": (0, 120),
+    "sunset_alert_minutes": (0, 120),
 }
 
 # Two fields whose useful value is not the raw on-wire one, converted symmetrically in
@@ -583,7 +674,9 @@ def settings_table(product_id):
             f"product_id 0x{product_id:04x} is an Ambit1/2 - it doesn't speak SBEM/0x1100 "
             "(confirmed empty reply on real hardware, 2026-08-22). Use tools/legacy_link.py "
             "instead.")
-    return KAILASH_SETTINGS if product_id == KAILASH_PRODUCT_ID else AMBIT3_SETTINGS
+    if product_id == KAILASH_PRODUCT_ID:
+        return KAILASH_SETTINGS
+    return TRAVERSE_SETTINGS if product_id in TRAVERSE_PRODUCT_IDS else AMBIT3_SETTINGS
 
 _ENUM_RE = re.compile(r"^enum:(.+)$")
 
@@ -748,7 +841,7 @@ def read_all(payload, descriptor, product_id=None):
         # enforces, which are much tighter than the raw integer width describe_field()
         # derives (backlight brightness is 5..100, not 0..255).
         writable = (key not in KAILASH_READ_ONLY) if product_id == KAILASH_PRODUCT_ID \
-            else (key in AMBIT3_KEY_TEMPLATE)
+            else (key in key_template(product_id))
         # Real, 2026-08-22: André pushed back on "settings are identical across Peak/Sport/
         # Run" being surprising, correctly - ran SuuntoLink's own compiled sport_mode.js
         # (node, stubbed `electron`) rather than guessed, and `supportsAltiBaroProfile(variant)`
@@ -772,7 +865,8 @@ def read_all(payload, descriptor, product_id=None):
         # Personal) instead of showing 30+ fields in one flat run. None for a field on
         # no screen, and for every Kailash field, whose own 7R app groups differently and
         # has no captured template.
-        screen = AMBIT3_KEY_TEMPLATE.get(key) if product_id != KAILASH_PRODUCT_ID else None
+        screen = key_template(product_id).get(key) \
+            if product_id != KAILASH_PRODUCT_ID else None
         if screen == "units_mode":
             screen = "units"
         # plans_source rides in every write template, so AMBIT3_KEY_TEMPLATE puts it in
@@ -1070,7 +1164,8 @@ def _decode_field(field, data):
     return struct.unpack_from(field.fmt, data, 0)[0]
 
 
-def _write_via_template(link, schema, key, field, raw_new_value, before):
+def _write_via_template(link, schema, key, field, raw_new_value, before,
+                        product_id=None):
     """SuuntoLink's own write path: send only the template of the screen this field lives
     on, values taken from `before`, this one field patched. See AMBIT3_WRITE_TEMPLATES."""
     # Fields whose UI unit differs from the wire's are validated in the unit the caller
@@ -1098,7 +1193,7 @@ def _write_via_template(link, schema, key, field, raw_new_value, before):
     if problem:
         return {"ok": False, "error": problem}
 
-    template_name = AMBIT3_KEY_TEMPLATE.get(key)
+    template_name = key_template(product_id).get(key)
     if template_name is None:
         return {"ok": False, "error": f"{key} ({field.path}) is on no SuuntoLink settings "
                                        "screen - no real write template contains it, so "
@@ -1128,7 +1223,7 @@ def _write_via_template(link, schema, key, field, raw_new_value, before):
         patches = [(field.fid, 0, patched)] if name == template_name else []
         try:
             payload, omitted = build_write_payload(
-                schema, source, AMBIT3_WRITE_TEMPLATES[name], patches)
+                schema, source, write_templates(product_id)[name], patches)
         except (KeyError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
         omitted_all += omitted
@@ -1247,7 +1342,8 @@ def write_one(link, descriptor, key, new_value, product_id=None):
     # echoed the watch's entire settings blob back, BLE bond keys included, on every
     # single write).
     if product_id != KAILASH_PRODUCT_ID:
-        return _write_via_template(link, schema, key, field, raw_new_value, before)
+        return _write_via_template(link, schema, key, field, raw_new_value, before,
+                                   product_id)
 
     # Kailash gets the SINGLE-ENTRY write - not a template, and no longer the full blob.
     #

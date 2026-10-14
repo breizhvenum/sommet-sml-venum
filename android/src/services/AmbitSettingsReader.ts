@@ -75,6 +75,9 @@ export interface SettingField {
   label?: string;
   control?: SettingControl;
   screen?: SettingScreen;
+  // Shown only while another setting's value differs from `notValue` (the Traverse's "alert
+  // before" minutes appear only while that alert is on) - same rule as the desktop page.
+  showWhen?: { field: string; notValue: number };
 }
 
 // Real, live-confirmed 2026-08-08 against André's own Ambit3 Peak - every value below
@@ -205,6 +208,7 @@ export interface DecodedSetting {
   max?: number;
   step?: number;
   unit?: string;
+  showWhen?: { field: string; notValue: number };
   // True for a unit field the watch owns while units_mode is Metric/Imperial: shown but not
   // editable (only "Advanced" frees them), the same rule desktop/settings_write.py enforce.
   locked?: boolean;
@@ -244,6 +248,7 @@ export function decodeSettings(b64: string, fields: SettingField[]): DecodedSett
       max: field.max,
       step: field.step,
       unit: field.unit,
+      showWhen: field.showWhen,
     });
   }
   // The seven unit fields the watch owns while units_mode is Metric(0)/Imperial(1) - shown but
