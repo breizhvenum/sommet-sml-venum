@@ -31,8 +31,7 @@ Reverse Engineering:
 - If I ask to revive a certain feature, don't give me workarounds, unless I tell you so
 - Suunto watches for this project  don't reboot
 - Suunto watches for this project  don't need "refreshing"
-- Suunto ambit 3 family watches + kailash + Traverse + Traverse alpha for this project use the following hardware/have the following specs: Atmel ATSAM4E16E-family candidate
-ARM Cortex-M4 / M4F, up to 120 MHz 128 KiB Main sram 1 MiB internal flash + Nordic nRF51822, Cortex-M0, typically 16 KiB RAM / 256 KiB Flash for BLE Operations. Reverse engineer according and engineer according. 
+- Suunto ambit 3 family watches + kailash + Traverse + Traverse alpha for this project use the following hardware/have the following specs: main processor Texas Instruments MSP430X (MSP430F5xxx class, 16-bit, about 512 KiB of program flash, the watch program starts at address 0xFC00) + Nordic nRF51822, Cortex-M0, typically 16 KiB RAM / 256 KiB Flash for BLE Operations. The ARM code in a firmware file belongs to the Bluetooth chip and to the GPS chip (SiRFstar V), never to the watch itself. (Read from the firmware files of Ambit3 Peak, Ambit3 Vertical, Traverse and Kailash, 2026-09-03 and 2026-10-13; an earlier guess here said Atmel ARM Cortex-M4.) Reverse engineer according and engineer according. 
 - Suunto Ambit 1 and 2 family use even older/lower end hardware, most likely ARM Cortex M3, no bluetooth. ANT+ only.
 - Originally sunto kailash only connected to ios 7r. Now to suunto link with very limited features (no import of activity, no travel log etc). And to linux, and android with sommet app)
 - Movescount was the original cloud/app that managed suunto ambit, which is now dead. Replaced by suunto app for android and ios (lost route sync, poi sync, training plans, scheduled activities, complex workouts, settings, sports modes) and suunto link for pc (to manage settings,sports modes, and apps).
