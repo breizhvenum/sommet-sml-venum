@@ -190,6 +190,27 @@ def build_training_item_emu(activity_id, intensity, name, day_offset=0):
 
 SUUNTO_EPOCH = datetime.date(2000, 1, 1)  # SUUNTO_DAYS_AFTER_1_1_2000 (Finding 58's App date-gate)
 
+# Tag in the top byte of the moveIds Sommet makes up ("S"), so they never look like a real
+# Movescount Plan.ID and are easy to spot in a logbook.
+SOMMET_MOVE_ID_TAG = 0x53000000
+
+
+def plan_move_id(date, ordinal=0):
+    """The moveId Sommet gives a planned move that has none: unique per date (and per move on
+    that date, ordinal 0..15) and the same on every sync, never 0.
+
+    Why it matters (watch program, MSP430 part 0x104, read 2026-10-14): when an exercise started
+    from the card ends with more than 49 % done, FUN_0002a12a marks the item complete AND appends
+    its moveId to the watch's completed-moves list (0x7585e, 60 entries). On every program load
+    FUN_0003bef6 marks complete every item whose moveId is already in that list (and clears the
+    list when nothing matches). With moveId 0 on every item - what Sommet sent until then - one
+    finished card workout made every later program "already done": the card showed "Training
+    program completed!" (seen on André's Peak 2026-10-14, for items dated yesterday, today and
+    tomorrow). A stable id per date keeps a re-synced plan's completed days completed."""
+    if not 0 <= ordinal < 16:
+        raise ValueError(f"at most 16 planned moves on one day ({date})")
+    return SOMMET_MOVE_ID_TAG | ((date - SUUNTO_EPOCH).days << 4) | ordinal
+
 
 def pack_base_date(base_date, date_format):
     """The 4-byte off0 header field. SETTLED 2026-08-19: it is calendar [u16 y][u8 m][u8 d].
@@ -362,12 +383,16 @@ def main():
     if plan_items is not None:
         items = []
         dates = []
+        per_day = {}
         for d, it in plan_items:
+            ordinal = per_day[d] = per_day.get(d, -1) + 1
+            # 0 = "no id": never send it, see plan_move_id().
+            move_id = int(it.get("moveId", 0)) or plan_move_id(d, ordinal)
             items.append(build_training_item(
                 int(it.get("activityId", 3)), int(it.get("durationMinutes", 0)),
                 int(it.get("intensity", 1)), str(it.get("name", "Move")),
                 day_offset=(d - args.date).days, completed=bool(it.get("completed", False)),
-                move_id=int(it.get("moveId", 0)), distance=int(it.get("distance", 0))))
+                move_id=move_id, distance=int(it.get("distance", 0))))
             dates.append(d.isoformat())
         flash, layout = build_training_program(items, base_date=args.date, hr_zones=plan_zones)
         blob = layout[0][2]
@@ -376,6 +401,7 @@ def main():
         for (d, it), item in zip(plan_items, items):
             print(f"    {d.isoformat()}  act={it.get('activityId', 3):<3} "
                   f"{int(it.get('durationMinutes', 0)):>4} min  int={it.get('intensity', 1)}  "
+                  f"moveId=0x{struct.unpack_from('<I', item, 4)[0]:08x}  "
                   f"{str(it.get('name', 'Move'))[:23]!r}")
         send_plan(link, flash, layout, commit=False)
         total = sum(len(payload) for _, payload, _ in link.sent)

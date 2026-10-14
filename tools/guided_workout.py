@@ -250,7 +250,13 @@ def with_lights(binary, workout):
     except ValueError as e:
         print(f"guided_workout: backlight flashes skipped ({e}); using the compiler's binary",
               file=sys.stderr)
-        return list(binary), 0
+        patched, flashes = binary, 0
+    # Steps keep running with no heart rate (no belt, a dry belt, a dropout) - see
+    # iamrule_code.tolerate_missing_hr.
+    try:
+        patched, _ = iamrule_code.tolerate_missing_hr(patched)
+    except ValueError as e:
+        print(f"guided_workout: no-HR fallback skipped ({e})", file=sys.stderr)
     return list(patched), flashes
 
 

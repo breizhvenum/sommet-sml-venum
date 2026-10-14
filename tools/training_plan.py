@@ -60,13 +60,15 @@ EPOCH_2000 = datetime.date(2000, 1, 1)
 MAX_WORKOUTS_PER_APP_GUESS = 2
 
 
-# Hardware-verified 2026-09-02 on André's Ambit3 Sport (Finch): the firmware's actual
-# SUUNTO_DAYS_AFTER_1_1_2000 for a given calendar date is ONE LESS than (date - 2000-01-01).days.
-# A date-gated plan whose entry was today showed "In 1 d" with the watch clock confirmed correct
-# (set over USB the same minute), i.e. the firmware reported today as our_value - 1. The corpus's
-# 0-based-on-2000-01-01 assumption (from weekday math alone, never date-verified) was off by one:
-# the built-in counts days STRICTLY AFTER 2000-01-01, so 2000-01-02 = 0, and today = ours - 1.
-FIRMWARE_DAYS_OFFSET = 1
+# SUUNTO_DAYS_AFTER_1_1_2000 is (date - 2000-01-01).days, 0 on 2000-01-01 - the corpus's
+# weekday math was right. Hardware-confirmed 2026-10-14 on André's Ambit3 Peak (…0900), watch
+# showing 14/10: four guided workouts gated on 9781/9782/9783/9784 were active rules in
+# "Running workout"; on Start only "Day 9783" ran, and (date(2026,10,14) - 2000-01-01).days
+# = 9783. The offset of 1 used from 2026-09-02 (a Finch countdown that showed "In 1 d" for
+# today, read as "the built-in counts days strictly after 2000-01-01") was wrong; with it every
+# gated workout ran one day EARLY, which is why on 2026-10-12 the day's workout never started
+# ("time %"). That countdown was most likely read with the watch clock still on the previous day.
+FIRMWARE_DAYS_OFFSET = 0
 
 
 def date_to_days2000(iso_date):

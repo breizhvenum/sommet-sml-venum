@@ -228,6 +228,59 @@ SLOT_OPS_U16 = (0x14, 0x15, 0x1c, 0x59, 0x54, 0x55)   # load store isinv setstr 
 BUILTIN_DAYS_AFTER_2000 = 0x33   # SUUNTO_DAYS_AFTER_1_1_2000's builtin id (compiler output, 2026-10-10)
 MEM_TYPES = (0x04, 0x20)          # slot types whose 5th field is a data-memory offset (floats/arrays, strings)
 
+# Which arguments of a native call are REFERENCES (`pushw slot; pushw length` - the firmware's
+# call handler turns the slot word into the slot's address, FUN_0004fc84). Seen in the watch
+# program's own interpreter running compiled workouts in the emulator (tools/emu, 2026-10-15):
+# the handler converts exactly these stack slots. A native with arguments and no entry here
+# makes add_date_gate refuse, rather than leave a reference pointing one slot too low.
+NATIVE_REF_ARGS = {
+    0x1b: (), 0x1c: (),
+    0x25: (True, True, False),                      # (text ref, text ref, value)
+    0x26: (False, False, True),                     # (value, value, array ref)
+    0x27: (False,) * 8 + (True,),                   # show step: 8 values + text ref
+    0x28: (False, True),                            # (value, text ref)
+    0x29: (False, True, True, True, True, True, False, False),   # load step: 5 refs
+}
+# net stack effect of the opcodes a native argument expression is built from
+ARG_STACK_EFFECT = {0x90: 1, 0x50: 1, 0x10: 1, 0x14: 1, 0x1c: 1, 0x54: 0, 0x0e: 0,
+                    **dict.fromkeys(range(0x01, 0x0d), -1)}
+
+
+def native_ref_sites(binary):
+    """[(code offset of the `pushw slot` of each reference argument, slot)] for every native
+    call. Walks each call's arguments backwards: a reference is the pair `pushw slot; pushw
+    length`, a value is the shortest instruction run with a net stack effect of +1."""
+    ins = instructions(binary)
+    sites = []
+    for c, (pc, op, raw) in enumerate(ins):
+        if op != 0x21:
+            continue
+        nid, _b, argc = struct.unpack_from("<HHH", raw, 1)
+        sig = NATIVE_REF_ARGS.get(nid)
+        if sig is None:
+            if argc:
+                raise ValueError(f"native 0x{nid:02x} at code+{pc}: argument layout not known")
+            continue
+        if len(sig) != argc:
+            raise ValueError(f"native 0x{nid:02x} at code+{pc}: {argc} args, expected {len(sig)}")
+        i = c - 1
+        for is_ref in reversed(sig):
+            if is_ref:
+                if not (i >= 1 and ins[i][1] == 0x50 and ins[i - 1][1] == 0x50):
+                    raise ValueError(f"native 0x{nid:02x} at code+{pc}: reference argument is not "
+                                     "`pushw slot; pushw length`")
+                sites.append((ins[i - 1][0], struct.unpack_from("<H", ins[i - 1][2], 1)[0]))
+                i -= 2
+            else:
+                need = 1
+                while need > 0:
+                    if i < 0 or ins[i][1] not in ARG_STACK_EFFECT:
+                        raise ValueError(f"native 0x{nid:02x} at code+{pc}: argument expression "
+                                         "not understood")
+                    need -= ARG_STACK_EFFECT[ins[i][1]]
+                    i -= 1
+    return sites
+
 
 def add_date_gate(binary, days):
     """The compiled program, run ONLY on the day the watch's own SUUNTO_DAYS_AFTER_1_1_2000 equals
@@ -295,6 +348,9 @@ def add_date_gate(binary, days):
 
     # code: renumber slots >= k, then the gate in front
     code = bytearray(binary[lay["code"]:lay["code"] + lay["code_len"]])
+    for pos, slot in native_ref_sites(binary):    # `pushw slot` references the natives take
+        if slot >= k:
+            struct.pack_into("<H", code, pos + 1, slot + 1)
     in_str = False
     for pc, op, raw in instructions(binary):
         if op == 0x19:
@@ -316,6 +372,108 @@ def add_date_gate(binary, days):
     gate = struct.pack("<BH", 0x14, k) + struct.pack("<Bf", 0x90, float(days)) + b"\x09"
     gate += struct.pack("<BH", 0x16, len(gate) + 3 + end_pc - len(gate))
     return splice(renumbered, 0, insert=gate)
+
+
+def builtin_slots(binary):
+    """{builtin name: slot} - the compiler numbers slot 0, the outputs, then the builtins in the
+    order of the symbol list (outputs' names first, then builtins', each `[u16 id][name\\0]`)."""
+    data_offset = struct.unpack_from("<I", binary, 24)[0]
+    n_out, n_builtin, _ = struct.unpack_from("<HHH", binary, data_offset)
+    offs, p = [], 32
+    while True:
+        v = struct.unpack_from("<H", binary, p)[0]
+        p += 2
+        if v == 0:
+            break
+        offs.append(v)
+    names = [binary[o + 2:binary.index(b"\0", o + 2)].decode("ascii") for o in offs[n_out - 1:]]
+    if len(names) != n_builtin:
+        raise ValueError("symbol table is not the shape this understands")
+    return {n: 1 + n_out + i for i, n in enumerate(names)}
+
+
+def _hr_sites(binary):
+    """(guard, reads, skip_to) for SUUNTO_HR in a guided workout, or None if it reads no HR.
+    guard = code offset of the `isinv hr` in the compiler's entry check (`isinv a; isinv b; or;
+    ...; jz run; jmp end`), always followed by an `or`; reads = offsets of every other `load hr`;
+    skip_to = where the out-of-limits block ends (the furthest target of a `jz` between the HR
+    read and the alarm beep that jumps past the beep) - the HR is used for nothing else."""
+    slot = builtin_slots(binary).get("SUUNTO_HR")
+    if slot is None:
+        return None
+    ins = instructions(binary)
+    first_onerr = next(k for k, i in enumerate(ins) if i[1] == 0x12)
+    guard = [k for k in range(first_onerr) if ins[k][1] == 0x1c
+             and struct.unpack_from("<H", ins[k][2], 1)[0] == slot]
+    reads = [k for k, i in enumerate(ins) if i[1] == 0x14 and struct.unpack_from("<H", i[2], 1)[0] == slot]
+    beep = guidance_sites(binary)["limits"]
+    if beep is None or not reads:
+        raise ValueError("reads SUUNTO_HR but has no out-of-limits alarm")
+    jumps_past = [i for i in ins if i[1] == 0x16 and reads[0] < i[0] < beep < jump_target(i)]
+    if not jumps_past or any(i[0] >= beep for i in (ins[k] for k in reads)):
+        raise ValueError("SUUNTO_HR is used somewhere this code does not know")
+    return ([ins[k][0] for k in guard if ins[k - 1][1] in (0x1c, 0x0c) and ins[k + 1][1] == 0x0c],
+            [ins[k][0] for k in reads], max(jump_target(i) for i in jumps_past))
+
+
+def tolerate_missing_hr(binary):
+    """The guided workout runs without a heart rate. The compiler's entry check skips the WHOLE
+    program on any tick where one of its inputs is invalid, and a workout with HR targets reads
+    SUUNTO_HR - so with no belt (or a dry one) no step screen, no step timing, no beeps: on
+    André's Peak 2026-10-14 the day's W7 never showed in "Running workout" with no belt on, while
+    the same workout without HR targets ran. HR feeds only the out-of-limits alarm, so: HR leaves
+    the entry check, and every `load hr` gets `isinv hr; jz +6; jmp <end of the alarm block>` in
+    front - no HR = no zone alarm, everything else as compiled. Idempotent; a binary without
+    SUUNTO_HR comes back unchanged. Returns (binary, patched)."""
+    sites = _hr_sites(binary)
+    if sites is None:
+        return binary, False
+    guard, reads, skip_to = sites
+    slot = builtin_slots(binary)["SUUNTO_HR"]
+    ins = instructions(binary)
+    if not guard and all(any(i[0] == r - 9 and i[1] == 0x1c for i in ins) for r in reads):
+        return binary, False   # already patched
+    if len(guard) != 1:
+        raise ValueError("SUUNTO_HR entry check not where expected")
+    out = binary
+    for r in sorted(reads, reverse=True):      # back to front: earlier offsets stay valid
+        jmp_at = r + 6
+        test = struct.pack("<BH", 0x1c, slot) + struct.pack("<BH", 0x16, 6) \
+            + struct.pack("<BH", 0x0d, skip_to + 9 - jmp_at)
+        out = splice(out, r, insert=test)
+        skip_to += 9
+    out = splice(out, guard[0], delete=4)      # `isinv hr; or`
+    return out, True
+
+
+def needs_regate(binary):
+    """True for a date-gated workout whose native references still point one slot too low:
+    add_date_gate did not renumber `pushw` references until 2026-10-15. On the watch such a
+    workout loads no step data: every step ends after one second and the step pop-up never
+    shows (André's Peak, 2026-10-14). Checked on the slot records: a reference (slot, length)
+    to an array or string must name a slot of that length."""
+    if date_gate_days(binary) is None:
+        return False
+    data_offset = struct.unpack_from("<I", binary, 24)[0]
+    n_slots = struct.unpack_from("<H", binary, data_offset + 4)[0]
+    recs = [struct.unpack_from("<HHHHHH", binary, data_offset + 6 + 12 * i) for i in range(n_slots)]
+    ins = instructions(binary)
+    by_pos = {pc: raw for pc, _op, raw in ins}
+    for pos, slot in native_ref_sites(binary):
+        length = struct.unpack_from("<H", by_pos[pos + 3], 1)[0]
+        if slot + 1 < n_slots and recs[slot][1] != length and recs[slot + 1][1] == length:
+            return True
+    return False
+
+
+def date_gate_days(binary):
+    """The day value an add_date_gate() binary runs on, or None if it starts with no such gate.
+    Lets a sync spot a workout gated on the wrong day (the 2026-09-02..10-14 off-by-one, see
+    training_plan.FIRMWARE_DAYS_OFFSET) instead of keeping it."""
+    ins = instructions(binary)
+    if len(ins) >= 4 and [i[1] for i in ins[:4]] == [0x14, 0x90, 0x09, 0x16]:
+        return int(struct.unpack_from("<f", ins[1][2], 1)[0])
+    return None
 
 
 def disassemble(binary):

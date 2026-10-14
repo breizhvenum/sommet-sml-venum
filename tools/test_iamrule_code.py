@@ -202,5 +202,65 @@ class DateGateMatchesCompiler(unittest.TestCase):
                 self.assertEqual(len(IC.instructions(out)), len(IC.instructions(FX[k])) + 4)
 
 
+class DateGateDays(unittest.TestCase):
+    def test_reads_back_the_gated_day(self):
+        for k in GUIDANCE:
+            with self.subTest(k):
+                self.assertEqual(IC.date_gate_days(IC.add_date_gate(FX[k], 9783)), 9783)
+
+    def test_ungated_is_none(self):
+        for k in GUIDANCE:
+            with self.subTest(k):
+                self.assertIsNone(IC.date_gate_days(FX[k]))
+
+
+class ToleratesMissingHr(unittest.TestCase):
+    """A workout with HR targets must keep running its steps with no HR (no belt, dry belt,
+    dropout): HR leaves the compiler's entry check and only the zone alarm is skipped."""
+    HR = "guidance_2step_hr"
+
+    def _hr_slot(self, binary):
+        return IC.builtin_slots(binary)["SUUNTO_HR"]
+
+    def test_entry_check_no_longer_tests_hr(self):
+        out, patched = IC.tolerate_missing_hr(FX[self.HR])
+        self.assertTrue(patched)
+        IC.validate(out)
+        ins = IC.instructions(out)
+        first_onerr = next(k for k, i in enumerate(ins) if i[1] == 0x12)
+        slot = self._hr_slot(out)
+        self.assertFalse([i for i in ins[:first_onerr]
+                          if i[1] == 0x1c and int.from_bytes(i[2][1:3], "little") == slot])
+
+    def test_every_hr_read_is_guarded_and_skips_only_the_alarm(self):
+        out, _ = IC.tolerate_missing_hr(FX[self.HR])
+        ins = IC.instructions(out)
+        by_pc = {pc: k for k, (pc, _, _) in enumerate(ins)}
+        slot = self._hr_slot(out)
+        beep = IC.guidance_sites(out)["limits"]
+        reads = [k for k, i in enumerate(ins)
+                 if i[1] == 0x14 and int.from_bytes(i[2][1:3], "little") == slot]
+        self.assertTrue(reads)
+        for k in reads:
+            isinv, jz, jmp = ins[k - 3], ins[k - 2], ins[k - 1]
+            self.assertEqual((isinv[1], jz[1], jmp[1]), (0x1c, 0x16, 0x0d))
+            self.assertEqual(IC.jump_target(jz), ins[k][0])
+            skip = IC.jump_target(jmp)
+            self.assertIn(skip, by_pc)
+            self.assertGreater(skip, beep)   # lands after the alarm, not in the step code
+
+    def test_idempotent_and_survives_gate(self):
+        once, _ = IC.tolerate_missing_hr(FX[self.HR])
+        self.assertEqual(IC.tolerate_missing_hr(once), (once, False))
+        gated = IC.add_date_gate(once, 9783)
+        IC.validate(gated)
+        self.assertFalse(IC.tolerate_missing_hr(gated)[1])
+
+    def test_workout_without_hr_is_unchanged(self):
+        for k in ("guidance_2step", "guidance_3step"):
+            with self.subTest(k):
+                self.assertEqual(IC.tolerate_missing_hr(FX[k]), (FX[k], False))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

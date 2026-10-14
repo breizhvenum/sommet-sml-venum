@@ -81,6 +81,41 @@ def is_gated(binary):
     return DATE_GATE_MARK in bytes(binary)
 
 
+def gate_day(binary):
+    """The day value a gated, magic-less compiled workout runs on (None if not gated)."""
+    b = bytes(binary)
+    if b[:len(apps.MAGIC)] != apps.MAGIC:
+        b = apps.MAGIC + b
+    try:
+        return IC.date_gate_days(b)
+    except ValueError:
+        return None
+
+
+def needs_regate(binary):
+    """True if a compiled workout was date-gated before 2026-10-15 (its native references
+    point one slot too low, iamrule_code.needs_regate) and must be reinstalled."""
+    b = bytes(binary)
+    if b[:len(apps.MAGIC)] != apps.MAGIC:
+        b = apps.MAGIC + b
+    try:
+        return IC.needs_regate(b)
+    except ValueError:
+        return False
+
+
+def needs_hr_fix(binary):
+    """True if a compiled workout still stops on a missing heart rate (installed before
+    iamrule_code.tolerate_missing_hr, 2026-10-14)."""
+    b = bytes(binary)
+    if b[:len(apps.MAGIC)] != apps.MAGIC:
+        b = apps.MAGIC + b
+    try:
+        return IC.tolerate_missing_hr(b)[1]
+    except ValueError:
+        return False
+
+
 def gated_binary(binary, date_iso):
     """The magic-less compiled workout, run only on `date_iso` by the watch's own clock
     (iamrule_code.add_date_gate; the day value is training_plan.date_to_days2000's, hardware-
@@ -274,15 +309,21 @@ def sync(link, plan, today, write, json_out, auto_start=None):
     decoded = cm.decode(current_cm)
     lang = GW.read_watch_language(link)
     by_label = {entry_label(e["date"], e["workout"]["name"]): e for e in plan["entries"]}
-    if not auto_start:
+    for e in existing:
+        if not (is_managed(e["name"]) and e["_raw_block"] in kept_block_set
+                and e["name"] in by_label):
+            continue
         # A date-gated workout does nothing on any other day, which is wrong for a WORKOUT-
-        # menu pick; the gate cannot be taken out of a compiled binary, so such a kept
-        # workout is reinstalled plain.
-        for e in existing:
-            if (is_managed(e["name"]) and e["_raw_block"] in kept_block_set
-                    and is_gated(e["binary"]) and e["name"] in by_label):
-                kept_block_set.discard(e["_raw_block"])
-                to_add.append(by_label[e["name"]])
+        # menu pick; the gate cannot be taken out of a compiled binary, so without auto-start
+        # such a kept workout is reinstalled plain. With auto-start one gated on another day
+        # than its date (the day-value off-by-one until 2026-10-14) is reinstalled too. And any
+        # kept workout that still stops on a missing heart rate is, and any gated before
+        # 2026-10-15 (references one slot too low: no step data, no step pop-up).
+        if needs_hr_fix(e["binary"]) or needs_regate(e["binary"]) or (is_gated(e["binary"]) and (
+                not auto_start
+                or gate_day(e["binary"]) != TP.date_to_days2000(by_label[e["name"]]["date"]))):
+            kept_block_set.discard(e["_raw_block"])
+            to_add.append(by_label[e["name"]])
     # Kept workouts from before 2026-10-05 carry a per-sport byte (a pick could run another
     # sport's workout) and rule id 0. Repair them while we are rewriting the region anyway.
     current_list, restamped = GW.restamp_rule_ids(

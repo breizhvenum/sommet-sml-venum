@@ -7,6 +7,28 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-15: Training plan on the watch: the right day, no false "completed", no belt needed (desktop 0.2.46 + tools)
+
+Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-14.
+
+- **The day is right.** `SUUNTO_DAYS_AFTER_1_1_2000` is plainly the days since 1 Jan 2000
+  (`training_plan.FIRMWARE_DAYS_OFFSET` 1 → 0): a workout gated on 9783 ran on 14/10. A sync now also
+  reinstalls a kept workout whose gate day is not its date (`iamrule_code.date_gate_days`).
+- **No more "Training program completed!"** The watch keeps a list of finished planned moves by id and,
+  on every load, marks done every card whose id is in it. Sommet sent id 0 for every card, so one
+  finished card exercise ticked off the whole plan. Each card now gets its own stable id
+  (`training_program.plan_move_id`); the card then showed "D14 14 min Easy 56-198".
+- **Workouts run without a heart-rate belt.** The compiler skips the whole workout on any second where
+  one of its inputs is missing, and a workout with HR targets reads the heart rate, so with no belt
+  (or a dry one, or a dropout) nothing ran. HR now feeds only the zone alarm
+  (`iamrule_code.tolerate_missing_hr`): a 4 × 10 s test stepped through on time with no belt.
+- **What the stock watch can't do**, found in its program: a workout that starts on its own (card →
+  Start → "Running workout") runs its steps - timing, light and beep at each change - but the watch
+  only shows the step name and countdown for a workout picked in the WORKOUT menu. A firmware patch
+  to make the card do that pick was tried and refused by the watch's bootloader (E02); stock firmware
+  restored, everything on the watch restored from backup. Next: read that bootloader (ticket
+  watch-emulator/01).
+
 ## 2026-10-10: The watch picks the day's workout by itself; the training day is the selector (desktop + tools, unreleased)
 
 André, after the plug-in sync: "and I don't plug what it does?" - "not ideal.. can you go further and try to
