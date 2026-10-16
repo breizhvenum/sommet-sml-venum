@@ -7674,13 +7674,12 @@ class Handler(BaseHTTPRequestHandler):
         the mode's HR limits on for a planned move (FUN_00026a36), the band being
         zone%[i]..zone%[i+1] of max HR (FUN_0003ed3e); intensity 0 with header zones
         97/98/99/100 gives rest HR .. 97 % of max, the widest the watch allows. Hardware,
-        André's Peak, 2026-10-14: card -> Start -> the workout mode runs the day's workout by
-        itself - step timing, light and beep at each step change, with or without an HR belt -
-        but with NO step name or countdown on screen: the firmware shows the guidance display
-        (sport-mode display type 15) and binds the step texts to it only for a workout picked in
-        the WORKOUT menu (flag 0x92BF, FUN_000179ce / FUN_00052a96), never for one that starts
-        on its own. (An earlier note here claimed "Brisk Walk 5' 1/6" from the card on 10-05;
-        that pop-up came from a WORKOUT-menu pick - the mode had no auto-start rule then.)
+        André's Peak, 2026-10-16: card -> Start -> "Running workout" runs the day's workout by
+        itself with the step pop-ups ("Brisk Walk 0'30", "Jog", "Walk 0'30"), light and beep at
+        each step change, the card's own 50 % / 100 % screens in between. (On 2026-10-14 the
+        pop-ups were empty and every step lasted a second: the date gate had left the step
+        natives' references one slot too low - iamrule_code.native_ref_sites, fixed 2026-10-15.
+        Only the fixed guidance display, sport-mode display type 15, stays WORKOUT-menu only.)
 
         Per entry: name = the workout's name (the card shows it; 23 bytes), duration = the sum
         of its time steps (repeat blocks expanded; rounded up to whole minutes), distance = the

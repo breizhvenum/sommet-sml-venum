@@ -7,6 +7,24 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-16: The training card starts the day's workout with its steps on screen (desktop 0.2.47 + tools)
+
+Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-16, on stock firmware.
+
+- **Card → Start → "Running workout" runs the day's workout with the step pop-ups**: "Brisk Walk 0'30",
+  "Jog", "Walk 0'30", a beep and the light at each change, the card's own 50 % / 100 % screens in
+  between. No WORKOUT-menu pick, no firmware patch.
+- **Why it failed before:** the date gate we put in front of each workout renumbered the workout's
+  slots but not the references the step natives take, so the pop-ups were empty and every step ended
+  after a second. Found by running the workout in the watch emulator (`tools/emu`); fixed in
+  `iamrule_code.add_date_gate`, and a sync reinstalls workouts gated the old way.
+- **Sync fix:** a rule kept in the workout mode now follows its app by name when the app list is
+  rebuilt (it could point at another workout).
+- The 2026-10-15 entry's "what the stock watch can't do" was wrong for the step pop-up; only the
+  fixed guidance screen stays WORKOUT-menu only.
+
+---
+
 ## 2026-10-15: Training plan on the watch: the right day, no false "completed", no belt needed (desktop 0.2.46 + tools)
 
 Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-14.

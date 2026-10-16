@@ -254,16 +254,23 @@ def auto_start_rules(decoded, existing, new_apps_bytes, plan_entries, today, aut
     # Rules are compared at the end, so a sync that changes nothing rewrites no sport mode
     # (the plug-in sync runs on every connection - 2026-10-10).
     before_rules = {m["Settings"]["Name"]: list(m.get("Rules") or []) for m in decoded["exercise_modes"]}
+    # A kept rule follows its app by name: the rebuilt region drops expired entries, so the
+    # others move (André's Peak 2026-10-15: "Workout of the day"'s rule ended on 24/10_W8).
+    installed = {e["name"]: i for i, e in enumerate(apps.decode(new_apps_bytes))}
     for mode in decoded["exercise_modes"]:
-        mode["Rules"] = [r for r in (mode.get("Rules") or [])
-                         if not is_managed(old_names.get(r["RuleIdx"], ""))]
+        kept = []
+        for r in mode.get("Rules") or []:
+            name = old_names.get(r["RuleIdx"], "")
+            if is_managed(name) or name not in installed:
+                continue
+            kept.append(dict(r, RuleIdx=installed[name]))
+        mode["Rules"] = kept
 
     def touched_modes():
         return [m["Settings"]["Name"] for m in decoded["exercise_modes"]
                 if (m.get("Rules") or []) != before_rules[m["Settings"]["Name"]]]
     if not auto_start:
         return touched_modes(), [], []
-    installed = {e["name"]: i for i, e in enumerate(apps.decode(new_apps_bytes))}
     by_sport = {}   # ActivityID -> [label, ...] of the installed upcoming workouts, soonest first
     for e in sorted((e for e in plan_entries if e["date"] >= str(today)), key=lambda e: e["date"]):
         try:
