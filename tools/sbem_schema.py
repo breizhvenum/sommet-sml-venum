@@ -164,13 +164,23 @@ class Schema:
 
 def entries(buf):
     """Walks the `[u8 id][u8 len][data]` entries of an SBEM0102 payload, a `len` of
-    0xff introducing a u32 length."""
+    0xff introducing a u32 length. An id byte of 0xff introduces a u16 id, for the fields
+    numbered 0xff and above: `[ff][u16 id][u8 len][data]`. Seen on a real Ambit3 Peak
+    (fw 2.4.17, 2026-10-18): its DeviceHistory reply carries 0x12e (the daily steps) and
+    0x130 (the timestamp) that way."""
     if buf[:8] != MAGIC:
         raise ValueError(f"SBEM0102 magic expected, saw {buf[:8]!r}")
     off = 8
     while off + 2 <= len(buf):
-        eid, length = buf[off], buf[off + 1]
-        off += 2
+        eid = buf[off]
+        off += 1
+        if eid == 0xFF:
+            if off + 3 > len(buf):
+                break
+            eid, = struct.unpack_from("<H", buf, off)
+            off += 2
+        length = buf[off]
+        off += 1
         if length == 0xFF:
             length, = struct.unpack_from("<I", buf, off)
             off += 4

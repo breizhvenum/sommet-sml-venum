@@ -299,9 +299,10 @@ Item {
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
                 font.pixelSize: Theme.fontSizeCaption
                 text: qsTr("Resting HR, HRV and steps are merged from intervals.icu and Garmin " +
-                           "Connect (plus your watch's HRV and manual entries), de-duplicated by " +
-                           "day. Body battery comes from Garmin. Sleep uses the single source you " +
-                           "pick in Settings.")
+                           "Connect (plus your Ambit3's own steps and HRV, and manual entries), " +
+                           "de-duplicated by day. The Ambit3 keeps 30 days of steps; Sommet keeps " +
+                           "every day it reads at each sync. Body battery comes from Garmin. Sleep " +
+                           "uses the single source you pick in Settings.")
             }
         }
     }

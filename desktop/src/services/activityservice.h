@@ -346,6 +346,10 @@ private:
     void refreshAllWatches();
     void readWatchActivities(int productId, const QString &serial, bool retriedFromZero = false);
     int m_pendingWatchReads = 0;
+    // After a watch read: the watch's own daily step counts (its last 30 days, /api/watch/steps)
+    // are merged into health/watchSteps, which the Health page shows. productId 0 = the pinned
+    // or Bluetooth watch. A watch without daily steps (Kailash, Ambit1/2) is skipped quietly.
+    void readWatchSteps(int productId = 0, const QString &serial = QString());
     QVariantMap intervalsStreamMap() const;
 
     // --- Sommet Sync internals (#SYNC-2) ---

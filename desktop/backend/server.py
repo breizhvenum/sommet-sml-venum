@@ -1263,6 +1263,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_firmware_known()
         elif self.path == "/api/kailash/history":
             self._handle_kailash_history()
+        elif self.path == "/api/watch/steps" or self.path.startswith("/api/watch/steps?"):
+            self._handle_watch_steps()
         elif self.path == "/api/kailash/tracklog":
             self._handle_kailash_tracklog()
         elif self.path == "/api/settings" or self.path.startswith("/api/settings?"):
@@ -4797,6 +4799,56 @@ class Handler(BaseHTTPRequestHandler):
         info = self._parse_last_json_line(out)
         if info is None:
             self._send_json(502, {"ok": False, "error": "kailash_history.py --json produced "
+                                   "no parseable JSON", "raw_output": out, "stderr": err})
+            return
+        self._send_json(200 if info.get("ok") else 502, info)
+
+    def _handle_watch_steps(self):
+        """GET /api/watch/steps[?device=PID&serial=S] - the Ambit3's own daily step counts,
+        the last 30 days, oldest first, the last one being today so far (tools/ambit_steps.py,
+        read-only 0x1200 DeviceHistory query, read off André's Peak over USB 2026-10-18).
+        Reply {"ok", "days": [{"date", "steps", "today"}], "timestamp", ...}. The Kailash and
+        the Ambit1/2 keep no daily steps: they get {"ok": false, "unsupported": true}."""
+        if demo_ambit():
+            import datetime as _dt                           # noqa: PLC0415 - module-level name is the class
+            today = _dt.date.today()
+            counts = [8412, 11250, 6930, 15402, 9876, 4210, 7650, 12034, 9120, 3480]
+            self._send_json(200, {"ok": True, "demo": True, "days": [
+                {"date": (today - _dt.timedelta(days=len(counts) - 1 - i)).isoformat(),
+                 "steps": n, "today": i == len(counts) - 1} for i, n in enumerate(counts)]})
+            return
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        device_pid = None
+        raw_device = query.get("device", [None])[0]
+        if raw_device:
+            try:
+                device_pid = int(raw_device, 16) if raw_device.lower().startswith("0x") \
+                    else int(raw_device)
+            except ValueError:
+                device_pid = None
+        device_serial = (query.get("serial", [None])[0] or "").strip() or None
+        if device_pid is None and device_serial is None:
+            if selected_is_kailash() or selected_is_legacy():
+                self._send_json(200, {"ok": False, "unsupported": True,
+                                      "error": "this watch keeps no daily step counts"})
+                return
+            if use_ble():
+                sys.path.insert(0, str(TOOLS_DIR))
+                import ambit_steps                           # noqa: PLC0415
+                try:
+                    ble_bridge.bridge.set_dry_run(False)
+                    info = ambit_steps.read_steps(ble_bridge.bridge)
+                except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError,
+                        ValueError) as exc:
+                    self._send_json(502, {"ok": False, "error": str(exc)})
+                    return
+                self._send_json(200, {**info, "transport": "ble", "device": device_key()})
+                return
+        code, out, err = run_tool("ambit_steps.py", ["--json"],
+                                  product_id=device_pid, serial=device_serial)
+        info = self._parse_last_json_line(out)
+        if info is None:
+            self._send_json(502, {"ok": False, "error": "ambit_steps.py --json produced "
                                    "no parseable JSON", "raw_output": out, "stderr": err})
             return
         self._send_json(200 if info.get("ok") else 502, info)

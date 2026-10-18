@@ -238,6 +238,15 @@ export function readDeviceLogRaw(): Promise<string> {
 }
 
 /**
+ * Any 0x1200 object query by its id, raw reply in base64 (2026-10-18). Used for the Ambit3's
+ * sml.DeviceHistory (0x97 on fw 2.4.17), its daily steps - see AmbitSteps.ts. The watch must
+ * already be connected (USB or BLE: both use the same native device).
+ */
+export function readObjectRaw(entryId: number): Promise<string> {
+  return NativeAmbit.readObjectRaw(entryId);
+}
+
+/**
  * Ambit3 (and Traverse/Ambit2, same schema family). Reads the watch's raw
  * sml.DeviceSettings reply (0x1100, four zero bytes) in base64. Decoding happens in TS
  * (AmbitSettingsReader.ts). The watch must already be connected.

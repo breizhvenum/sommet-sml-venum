@@ -7,12 +7,14 @@ import { useV3Theme, v3Radius, v3Spacing, v3Type } from '../theme/v3';
 import { MetricChart } from '../components/MetricChart';
 import { fmtDate } from '../i18n';
 import { fetchWellness, WellnessDay } from '../services/WellnessService';
+import { loadWatchSteps } from '../services/AmbitSteps';
 import { isHrStrapAvailable, measureHrv, type HrStrapReading } from '../services/HrStrapService';
 import { isStrapHrvEnabled } from '../services/StrapHrvPref';
 
 // Health — the Android counterpart of desktop/qml/pages/HealthPage.qml (André, 2026-08-26:
 // "port everything to android"). Resting HR, HRV, sleep, steps and VO2max from intervals.icu's
-// wellness feed.
+// wellness feed, plus the Ambit3's own daily steps stored at each sync (AmbitSteps.ts), which
+// win over intervals.icu on a day the watch counted.
 //
 // Honest difference from the desktop version: no Garmin body battery, and no watch-measured
 // morning HRV from the Ambit3's own R-R data. Both of those reach the desktop through the
@@ -39,6 +41,19 @@ const METRICS: Metric[] = [
   { key: 'vo2max',    label: 'VO₂max',             unit: '',     decimals: 0 },
 ];
 
+// The watch's own step counts over intervals.icu's on the same day; days only the watch has are
+// added. Same priority as the desktop (intervals < garmin < watch).
+function withWatchSteps(list: WellnessDay[], watch: Array<{ date: string; steps: number }>): WellnessDay[] {
+  if (watch.length === 0) return list;
+  const byDate = new Map(list.map(d => [d.date, { ...d }]));
+  for (const w of watch) {
+    const d = byDate.get(w.date) ?? { date: w.date };
+    d.steps = w.steps;
+    byDate.set(w.date, d);
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export default function HealthScreen() {
   const t = useV3Theme();
   const navigation = useNavigation<any>();
@@ -49,10 +64,14 @@ export default function HealthScreen() {
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
+    let list: WellnessDay[] = [];
     try {
-      setDays(await fetchWellness(365));
+      list = await fetchWellness(365);
     } catch (e: any) {
       setError(String(e?.message ?? e));
+    }
+    try {
+      setDays(withWatchSteps(list, await loadWatchSteps()));
     } finally {
       setLoading(false);
     }
@@ -179,7 +198,8 @@ export default function HealthScreen() {
         <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
           <Text style={{ color: t.mutedText, fontSize: v3Type.body }}>
             No health data yet. Connect intervals.icu — resting HR, HRV, sleep and
-            steps sync from whatever device feeds it.
+            steps sync from whatever device feeds it. An Ambit3 adds its own daily steps
+            at each sync.
           </Text>
           {/* #9 (André, 2026-09-02): one-tap route to the shared connection settings. */}
           <TouchableOpacity

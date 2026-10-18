@@ -1413,6 +1413,34 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitReadDeviceLogRaw(
 }
 
 /**
+ * nativeAmbitReadObjectRaw
+ *
+ * Any 0x1200 "object by identifier" query, by its query id, base64 of the raw reply (null on
+ * failure). Added 2026-10-18 for the Ambit3's sml.DeviceHistory (query 0x97 on fw 2.4.17):
+ * its 30 daily step counts, decoded in TS (AmbitSteps.ts) like tools/ambit_steps.py. One page:
+ * that reply is ~490 bytes and comes back whole (cursor 0), which the TS decoder checks.
+ */
+JNIEXPORT jstring JNICALL
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitReadObjectRaw(
+        JNIEnv *env, jobject /* thiz */, jint entryId)
+{
+    if (!g_device) { LOGE("nativeAmbitReadObjectRaw: Not connected"); return nullptr; }
+    if (entryId < 0 || entryId > 0xFF) { LOGE("nativeAmbitReadObjectRaw: id %d out of range", entryId); return nullptr; }
+
+    uint8_t *raw = nullptr;
+    size_t rawlen = 0;
+    int ret = ambit3_read_object_by_id_raw(g_device, (uint8_t)entryId, &raw, &rawlen);
+    if (ret != 0) {
+        LOGE("ambit3_read_object_by_id_raw(0x%02x) failed: %d", entryId, ret);
+        return nullptr;
+    }
+    LOGI("nativeAmbitReadObjectRaw(0x%02x): %zu raw bytes", entryId, rawlen);
+    std::string b64 = (raw && rawlen > 0) ? base64Encode(raw, rawlen) : std::string();
+    free(raw);
+    return env->NewStringUTF(b64.c_str());
+}
+
+/**
  * nativeAmbitReadSettingsRaw
  *
  * Real, 2026-08-08 ("Settings on ambit 3 - if they are already cracked to be changed by

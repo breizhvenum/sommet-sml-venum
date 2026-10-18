@@ -102,6 +102,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     private external fun nativeAmbitFwStream(header: ByteArray, payload: ByteArray, doCommit: Boolean, resume: Boolean): Boolean
     private external fun nativeAmbitReadDeviceHistoryRaw(): String?
     private external fun nativeAmbitReadDeviceLogRaw(): String?
+    private external fun nativeAmbitReadObjectRaw(entryId: Int): String?
     private external fun nativeAmbitReadSettingsRaw(): String?
     private external fun nativeAmbitReadPersonalSettings(): String?
     private external fun nativeAmbitReadLegacyNav(): String?
@@ -851,6 +852,26 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
                 else promise.reject("HISTORY_READ_FAILED", "Failed to read device history (see logcat AmbitJNI)")
             } catch (e: Exception) {
                 promise.reject("HISTORY_READ_ERROR", e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    // Any 0x1200 object query by id (2026-10-18), raw reply as base64. Used for the Ambit3's
+    // sml.DeviceHistory (0x97 on fw 2.4.17) - its daily steps, decoded in TS (AmbitSteps.ts).
+    // Same shared native device as every other read, so it works over USB and BLE alike.
+    @ReactMethod
+    fun readObjectRaw(entryId: Int, promise: Promise) {
+        if (!jniLoaded) {
+            promise.reject("JNI_NOT_LOADED", "Native library unavailable")
+            return
+        }
+        executor.execute {
+            try {
+                val b64 = nativeAmbitReadObjectRaw(entryId)
+                if (b64 != null) promise.resolve(b64)
+                else promise.reject("OBJECT_READ_FAILED", "Failed to read object 0x%02x (see logcat AmbitJNI)".format(entryId))
+            } catch (e: Exception) {
+                promise.reject("OBJECT_READ_ERROR", e.message ?: "Unknown error")
             }
         }
     }

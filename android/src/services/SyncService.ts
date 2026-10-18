@@ -120,6 +120,14 @@ export async function runSync(
     }
   }
 
+  // ── 2c. Daily steps (Ambit3) ─────────────────────────────────────────────────
+  // The watch keeps only 30 days of step counts; each sync stores what it has, for the Health
+  // screen. Best-effort and silent: it never fails the sync.
+  if (provider.syncDailySteps) {
+    const n = await provider.syncDailySteps();
+    if (n > 0) console.log(`[steps] ${n} day(s) of steps read from the watch`);
+  }
+
   // ── 3. Écriture des nouveaux logs ────────────────────────────────────────────
   emit({ phase: 'writing', current: 0, total: gpxLogs.length, newCount: 0, deviceName });
   let newCount = 0;

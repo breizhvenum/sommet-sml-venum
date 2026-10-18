@@ -5,6 +5,7 @@ import * as AmbitUsbModule from '../../native/AmbitUsbModule';
 import { DeviceProvider, DeviceInfo } from './DeviceProvider';
 import { SyncProgressEvent } from '../../native/AmbitUsbModule';
 import { markReadLogsSynced } from '../MarkSynced';
+import { syncWatchSteps } from '../AmbitSteps';
 
 export class AmbitDeviceProvider implements DeviceProvider {
   readonly deviceName = 'Suunto Ambit';
@@ -35,6 +36,10 @@ export class AmbitDeviceProvider implements DeviceProvider {
 
   markSyncedLogs(count: number): Promise<number> {
     return markReadLogsSynced(count);
+  }
+
+  syncDailySteps(): Promise<number> {
+    return syncWatchSteps();
   }
 }
 

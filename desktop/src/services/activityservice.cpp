@@ -13,6 +13,7 @@
 #include <QJsonObject>
 #include <QDateTime>
 #include <QHash>
+#include <QMap>
 #include <QNetworkReply>
 #include <QHttpMultiPart>
 #include <QNetworkRequest>
@@ -302,7 +303,51 @@ void ActivityService::readWatchActivities(int productId, const QString &serial,
                 : QString();
             dbInsert(index, device, parsed, gpxText, fitBase64, ruleOutputsJson);
         }
+        readWatchSteps(productId, serial);
         finishOne();
+    });
+}
+
+void ActivityService::readWatchSteps(int productId, const QString &serial)
+{
+    QString path = QStringLiteral("/api/watch/steps");
+    if (productId > 0) {
+        path += QStringLiteral("?device=%1").arg(productId);
+        if (!serial.isEmpty())
+            path += QStringLiteral("&serial=") + QString::fromUtf8(QUrl::toPercentEncoding(serial));
+    }
+    QNetworkReply *reply = m_network.get(QNetworkRequest(QUrl(kBackendBase + path)));
+    connect(reply, &QNetworkReply::finished, this, [reply] {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+        const auto root = QJsonDocument::fromJson(reply->readAll()).object();
+        // Testing mode's sample days are never stored: they would mix into the real history.
+        if (!root.value(QStringLiteral("ok")).toBool() || root.value(QStringLiteral("demo")).toBool())
+            return;
+        // health/watchSteps = [{date, value}], one entry per day, kept beyond the watch's own
+        // 30 days. A newer read of a day replaces the older one (today's count grows; past days
+        // don't change on the watch).
+        QSettings s;
+        QMap<QString, double> byDate;
+        for (const auto &v : QJsonDocument::fromJson(
+                 s.value(QStringLiteral("health/watchSteps")).toString().toUtf8()).array()) {
+            const auto o = v.toObject();
+            byDate.insert(o.value(QStringLiteral("date")).toString(),
+                          o.value(QStringLiteral("value")).toDouble());
+        }
+        for (const auto &v : root.value(QStringLiteral("days")).toArray()) {
+            const auto o = v.toObject();
+            const QString d = o.value(QStringLiteral("date")).toString();
+            if (!d.isEmpty() && o.value(QStringLiteral("steps")).isDouble())
+                byDate.insert(d, o.value(QStringLiteral("steps")).toDouble());
+        }
+        QJsonArray out;
+        for (auto it = byDate.constBegin(); it != byDate.constEnd(); ++it)
+            out.append(QJsonObject{{QStringLiteral("date"), it.key()},
+                                   {QStringLiteral("value"), it.value()}});
+        s.setValue(QStringLiteral("health/watchSteps"),
+                   QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)));
     });
 }
 
@@ -446,6 +491,9 @@ void ActivityService::requestActivities(int knownCount, bool alreadyRetried)
         m_ok = true;
         m_showingCachedData = false;
         emit activitiesChanged();
+
+        if (device != QStringLiteral("demo"))
+            readWatchSteps();
 
         // Auto-export new watch moves to intervals.icu when the scope opts in (suunto/all).
         // exportToIntervals() only uploads rows not already marked exported, so this is a

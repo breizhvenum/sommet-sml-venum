@@ -42,6 +42,10 @@ export interface DeviceProvider {
    *  it no-ops on unsupported devices. Returns how many moves were marked. */
   markSyncedLogs?(count: number): Promise<number>;
 
+  /** The watch's own daily step counts (Ambit3: its last 30 days), stored for the Health
+   *  screen. Optional, best-effort, never throws; returns how many days were read. */
+  syncDailySteps?(): Promise<number>;
+
   /** When true, a sync REFRESHES already-synced activities (overwrites their GPX + row)
    *  instead of skipping them. For a live re-read device like the Kailash, getLogs() rebuilds
    *  every activity from a fresh read of the TrackLog + DeviceHistory each time, so re-syncing

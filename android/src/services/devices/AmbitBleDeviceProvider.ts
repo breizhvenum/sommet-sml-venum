@@ -16,6 +16,7 @@ import * as AmbitUsbModule from '../../native/AmbitUsbModule';
 import { DeviceProvider, DeviceInfo } from './DeviceProvider';
 import { SyncProgressEvent } from '../../native/AmbitUsbModule';
 import { markReadLogsSynced } from '../MarkSynced';
+import { syncWatchSteps } from '../AmbitSteps';
 
 export class AmbitBleDeviceProvider implements DeviceProvider {
   readonly deviceName = 'Suunto Ambit (BLE)';
@@ -56,6 +57,10 @@ export class AmbitBleDeviceProvider implements DeviceProvider {
   // markReadLogsSynced tags the logs so it's clear this is the unproven transport.
   markSyncedLogs(count: number): Promise<number> {
     return markReadLogsSynced(count, ' (BLE, unverified)');
+  }
+
+  syncDailySteps(): Promise<number> {
+    return syncWatchSteps();
   }
 }
 

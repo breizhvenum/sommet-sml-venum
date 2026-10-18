@@ -197,10 +197,26 @@ static QVariantList watchHrvSeries()
     return out;
 }
 
+// The Ambit3's own daily step counts, stored at health/watchSteps as [{date,value}] by
+// ActivityService after every watch read (the watch itself only keeps 30 days). It ranks above
+// the cloud sources on a day it has, like the watch's HRV.
+static QVariantList watchStepsSeries()
+{
+    const QString raw = QSettings().value(QStringLiteral("health/watchSteps")).toString();
+    QVariantList out;
+    for (const auto &v : QJsonDocument::fromJson(raw.toUtf8()).array()) {
+        const auto o = v.toObject();
+        if (o.value(QStringLiteral("value")).isDouble())
+            out.append(QVariantMap{{QStringLiteral("date"), o.value(QStringLiteral("date")).toString()},
+                                   {QStringLiteral("value"), o.value(QStringLiteral("value")).toDouble()}});
+    }
+    return out;
+}
+
 void HealthService::rebuild()
 {
     m_rhr = mergeByDate({m_iRhr, m_gRhr, manualSeries(QStringLiteral("rhr"))});
-    m_steps = mergeByDate({m_iSteps, m_gSteps});
+    m_steps = mergeByDate({m_iSteps, m_gSteps, watchStepsSeries()});
     // HRV is TWO SEPARATE tracks, never blended (they are different measurements - see the
     // header). `m_hrv` is the OVERNIGHT line from the one chosen cloud source (intervals XOR
     // garmin, like sleep); a hand-typed manual entry still rides this line. `m_hrvAmbit` is the
