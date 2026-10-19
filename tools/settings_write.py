@@ -51,7 +51,7 @@ import struct
 import sys
 
 import sbem_schema
-from write_nav import CMD_SETTINGS_READ, Link, descriptor_for_product_id
+from write_nav import CMD_DEVICE_INFO, CMD_SETTINGS_READ, Link, descriptor_for_product_id
 
 CMD_SETTINGS_WRITE = 0x1101
 KAILASH_PRODUCT_ID = 0x002A
@@ -1460,6 +1460,13 @@ def main():
     if not args.json:
         print("read-only unless --set --write is given")
     link.open()
+    # Without this, the watch answers device_info/0x0500-class commands fine but returns
+    # empty replies for 0x1100/0x0b21/0x0b17 (shows "Connect to Moveslink") - real SuuntoLink's
+    # first message is always device_info with this exact payload (sniffed:
+    # assets/pcap/lars_ambit3peak_13032017.pcap), answered with a 0x0002 hello; every other
+    # real write path in this file's own project (restore_apps_custommodes.py, write_nav.py's
+    # poi/reset/route commands) already sends it for the same reason.
+    link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
 
     # Use the actually-connected watch's product_id for the descriptor and the curated table
     # when the caller didn't pin one - the desktop backend doesn't pass --device, so product_id
