@@ -27,6 +27,7 @@ QtObject {
     readonly property string ember: "\uef55"           // local_fire_department (Ember fasting app)
     readonly property string appZone: "\ue86f"         // code (App Zone scripting)
     readonly property string apps: "\ue5c3"            // apps (3x3 grid) - the Apps menu
+    readonly property string edgeScreens: "\ue871"     // dashboard - Edge data-screen editor
 
     readonly property string add: ""
     readonly property string arrowBack: ""

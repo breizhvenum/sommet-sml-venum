@@ -9,7 +9,7 @@ The aim is to provide the same features to Android, Linux and later on if possib
 - **Suunto legacy (experimental):** T6 / T6c / T6d, X6HR, GPS Track Pod
 - **Sensors:** Suunto Smart Sensor (HR belt); Polar Verity Sense (sleep, experimental)
 - **GPS:** Garmin eTrex 10 / 20 / 20x / 30 / 30x
-- **Bike computers:** Bryton Aero 60 (activities, routes, workouts, profile), Magene C406 (activities, workouts), Garmin Edge and Hammerhead Karoo (activity import)
+- **Bike computers:** Bryton Aero 60 (activities, routes, workouts, profile), Magene C406 (activities, workouts), Garmin Edge (activity import + data-screen editor, over USB) and Hammerhead Karoo (activity import)
 
 
 All features that are visible in the app are available by USB/USB-OTG, and some are also available/being tested by bluetooth.
@@ -328,6 +328,9 @@ Built on the real work of others:
   [larshesel/suunto_x6hr_erl](https://github.com/larshesel/suunto_x6hr_erl) and the terre-adelie wiki.
 - **[Taxom/OpenBikeCompanion](https://github.com/Taxom/OpenBikeCompanion)** — Magene C406 BLE protocol notes (GPLv3);
   **[WSTRN/C406pro_Hack](https://github.com/WSTRN/C406pro_Hack)** — C406 Pro hardware reference.
+- **[fullcarbonbike/Activity-Profile-Editor](https://github.com/fullcarbonbike/Activity-Profile-Editor)** (MIT)
+  — the Garmin Edge built-in data-field id→name map and the data-screen arrangement (A/B) survey behind the
+  Edge data-screen editor (`tools/garmin_edge_screens.py`); cross-verified on a real Edge 1040 Solar.
 - **[googlarz/suunto-mcp](https://github.com/googlarz/suunto-mcp)** — workout-guide format for the Coach's Suunto sink.
 - **Eric Banister, Dr. Andrew Coggan, Hunter Allen** — the CTL / ATL / TSB training-load model behind the Coach.
 - **[openathleteorg/openathlete](https://github.com/openathleteorg/openathlete)** (AGPLv3) — the idea of an

@@ -43,6 +43,8 @@ ApplicationWindow {
         firmware: "pages/FirmwarePage.qml",
         watchSettings: "pages/WatchSettingsPage.qml",
         gpsSettings: "pages/GpsSettingsPage.qml",
+        edgeScreens: "pages/EdgeScreensPage.qml",
+        ciqUpdates: "pages/CiqUpdatesPage.qml",
         smartSensor: "pages/SmartSensorPage.qml",
         settings: "pages/SettingsPage.qml",
         sportModes: "pages/SportModesPage.qml",

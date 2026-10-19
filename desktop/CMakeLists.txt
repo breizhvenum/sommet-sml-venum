@@ -297,6 +297,8 @@ qt_add_qml_module(ambitapp
         qml/pages/FirmwarePage.qml
         qml/pages/WatchSettingsPage.qml
         qml/pages/GpsSettingsPage.qml
+        qml/pages/EdgeScreensPage.qml
+        qml/pages/CiqUpdatesPage.qml
         qml/pages/SmartSensorPage.qml
         qml/pages/SettingsPage.qml
         qml/pages/SportModesPage.qml
@@ -372,6 +374,10 @@ qt_add_qml_module(ambitapp
         src/services/tilecacheservice.cpp
         src/services/smartsensorservice.h
         src/services/smartsensorservice.cpp
+        src/services/edgescreensservice.h
+        src/services/edgescreensservice.cpp
+        src/services/ciqupdatesservice.h
+        src/services/ciqupdatesservice.cpp
         src/services/trainingprogramservice.h
         src/services/trainingprogramservice.cpp
     RESOURCES

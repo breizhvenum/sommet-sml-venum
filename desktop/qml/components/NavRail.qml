@@ -255,6 +255,25 @@ Rectangle {
                 selected: root.currentPage === "gpsSettings"
                 onClicked: root.pageSelected("gpsSettings")
             }
+            // Edge data-screen editor - shown only while a Garmin Edge is the active device. Edits
+            // a profile's data screens over USB (no Garmin Connect); see EdgeScreensPage.qml.
+            NavItem {
+                width: parent.width
+                visible: DeviceService.bikeActive && DeviceService.activeBikeKind === "edge"
+                glyph: Icons.edgeScreens
+                label: qsTr("Edge screens")
+                selected: root.currentPage === "edgeScreens"
+                onClicked: root.pageSelected("edgeScreens")
+            }
+            // Connect IQ app update check - Edge-only. Detection via Garmin's public store (no login).
+            NavItem {
+                width: parent.width
+                visible: DeviceService.bikeActive && DeviceService.activeBikeKind === "edge"
+                glyph: Icons.apps
+                label: qsTr("Connect IQ")
+                selected: root.currentPage === "ciqUpdates"
+                onClicked: root.pageSelected("ciqUpdates")
+            }
             // Firmware - Suunto-only, cable-only (hidden over BLE: a flash write is the one mistake
             // that can brick the watch, and flashing was never ported to BLE).
             NavItem {
