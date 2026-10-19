@@ -368,6 +368,8 @@ SELECTED_SERIAL = None
 # /api/devices already work for these unmodified. Settings/waypoints/training-logs route
 # through tools/legacy_link.py instead - see that file and tools/vendor/ambit_legacy_cli/.
 LEGACY_PRODUCT_IDS = {0x0010, 0x0019, 0x001A, 0x001D}  # Bluebird, Duck, Colibri, Greentit
+# Ambit3 Peak / Sport / Run / Vertical: the watches that get direction pins on their routes.
+AMBIT3_PIN_PRODUCT_IDS = {0x001B, 0x001C, 0x001E, 0x002C}
 
 
 def device_key():
@@ -3944,37 +3946,43 @@ class Handler(BaseHTTPRequestHandler):
         # apart from its Start/End. "pins": false sends the GPX exactly as given. If the pins
         # cannot be worked out (too many for the watch, odd file) the route still goes, without.
         self._route_pin_count, self._route_pin_note = None, None
-        if body.get("pins", True):
+        # Only on the Ambit3 family, whose route-waypoint layout is the one build_route.py writes
+        # and the one André tested on an Ambit3 Peak. The Traverse / Traverse Alpha keep their
+        # route waypoints in a different layout that Sommet does not decode yet (write_nav.py
+        # show_navigation), so they get the route without pins. Ambit1/2 and Kailash never come
+        # here (no routes on this path).
+        autopin_if_needed()
+        target_pid = body.get("productId")
+        target_pid = int(target_pid) if str(target_pid or "").isdigit() else SELECTED_PRODUCT_ID
+        def route_pins(extra):
             with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
                 f.write(gpx_text)
                 src_path = f.name
             try:
-                pin_args = [src_path, "--target", "ambit", "--json"]
+                args = [src_path, "--target", "ambit", "--json"] + extra
                 if body.get("name"):
-                    pin_args += ["--name", str(body["name"])]
+                    args += ["--name", str(body["name"])]
                 if body.get("reverse"):
-                    pin_args += ["--reverse"]
-                _c, pin_out, pin_err = run_tool("route_pins.py", pin_args)
+                    args += ["--reverse"]
+                _c, out_, err_ = run_tool("route_pins.py", args)
             finally:
                 Path(src_path).unlink(missing_ok=True)
-            pinned = self._parse_last_json_line(pin_out)
-            if pinned and pinned.get("ok"):
+            return self._parse_last_json_line(out_) or {"ok": False, "error": err_.strip()}
+
+        if body.get("pins", True) and target_pid in AMBIT3_PIN_PRODUCT_IDS:
+            pinned = route_pins([])
+            if pinned.get("ok"):
                 gpx_text = pinned["gpx"]
                 self._route_pin_count = pinned["stats"]["pins"]
             else:
-                self._route_pin_note = (pinned or {}).get("error") or pin_err.strip() or "could not work out the pins"
-                # still send the route: the same file as a plain route (a track-only GPX is not
-                # something write_nav.py accepts as it is)
-                with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
-                    f.write(gpx_text)
-                    src_path = f.name
-                try:
-                    _c, plain_out, _e = run_tool("route_pins.py", [src_path] + pin_args[1:] + ["--plain"])
-                finally:
-                    Path(src_path).unlink(missing_ok=True)
-                plain = self._parse_last_json_line(plain_out)
-                if plain and plain.get("ok"):
-                    gpx_text = plain["gpx"]
+                self._route_pin_note = pinned.get("error") or "could not work out the pins"
+        if self._route_pin_count is None and body.get("pins", True) and "<rtept" not in gpx_text:
+            # No pins (a Traverse, or too many for the watch): still send the route. A track-only
+            # GPX (a Komoot export) is not something write_nav.py accepts as it is, so it goes as
+            # a plain route with a Start/End.
+            plain = route_pins(["--plain"])
+            if plain.get("ok"):
+                gpx_text = plain["gpx"]
         # Optional target (2026-09-26, "imagine I have 3 suunto watches plugged"): one specific
         # USB watch, for this write only - product id + serial, so two Ambit3 Peaks are told
         # apart. The read-back of its existing routes uses the SAME pin, so they're that watch's.

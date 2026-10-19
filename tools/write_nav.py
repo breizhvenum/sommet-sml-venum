@@ -491,7 +491,10 @@ def route_to_gpx(flash, index):
     own = []
     route_key = F.decode_name(F.encode_name(d.name, "utf-8"))
     wh = F.WaypointHeader.parse(flash.read(F.WAYPOINT_BASE, 6))
-    for i in range(wh.count):
+    # Only when the waypoint table decodes (its CRC matches): the Traverse keeps route waypoints
+    # in another layout, and reading it as the Ambit3 one would carry junk names along.
+    wpt_ok = F.crc16_ccitt_false(flash.read(F.WAYPOINT_DESC, 52 * wh.count)) == wh.checksum
+    for i in range(wh.count if wpt_ok else 0):
         w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + 52 * i, 52))
         if w.route_name == route_key:
             own.append((F.WaypointTail.parse(w.tail).rank, w))

@@ -59,7 +59,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Poi: undefined;
   // watch = a route-writable watch is connected; send = a route handed back by the planner's "Send to…"
-  Route: { watch?: boolean; send?: { name: string; points: Array<{ lat: number; lon: number; ele?: number | null }> } } | undefined;
+  Route: { watch?: boolean; pins?: boolean; send?: { name: string; points: Array<{ lat: number; lon: number; ele?: number | null }> } } | undefined;
   // v2.3.2 beta: HomeScreen connects to the Garmin device itself (see its
   // connecting-flow state machine) and hands the already-fetched info over
   // here — neither screen has its own Connect step. Activities sync runs

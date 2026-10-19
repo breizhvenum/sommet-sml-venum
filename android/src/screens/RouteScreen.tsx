@@ -77,7 +77,10 @@ export default function RouteScreen() {
       return { route, pins: null, note: e?.message ?? '' };
     }
   }
-  const pinned = useMemo(() => (pending ? withPins(pending) : null), [pending]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Only on the Ambit3 family (Home says which watch is here): the Traverse keeps route
+  // waypoints in a layout Sommet does not decode yet, so it gets the plain route.
+  const pinsHere: boolean = params.pins ?? false;
+  const pinned = useMemo(() => (pending && pinsHere ? withPins(pending) : null), [pending, pinsHere]);   // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRef = useRef<ScrollView>(null);
 
   // ---- Library + planner (desktop parity) ----------------------------------------------------
