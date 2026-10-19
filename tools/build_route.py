@@ -89,6 +89,21 @@ def serialize(routes):
     descriptor table are contiguous but go out as two 0x0b16."""
     flash = FlashImage()
 
+    # The watch's route memory has fixed room (2026-10-19): 50 routes, 10,000 points over all of
+    # them (the points table runs from ROUTE_POINTS to ROUTE_INDEX, 12 bytes each) and 100 route
+    # waypoints in total. Each route is already cut to MAX_ROUTE_POINTS, but nothing stopped the
+    # sum from running past the table into the index behind it. Refuse before a byte is built.
+    total_points = sum(len(r.points) for r in routes)
+    total_wpts = sum(len(r.waypoints) for r in routes)
+    if len(routes) > F.MAX_ROUTES:
+        raise ValueError(f"{len(routes)} routes, the watch holds {F.MAX_ROUTES}: remove some first")
+    if total_points > F.MAX_TOTAL_ROUTE_POINTS:
+        raise ValueError(f"{total_points} route points in all, the watch holds {F.MAX_TOTAL_ROUTE_POINTS}: "
+                         "remove a route from the watch first")
+    if total_wpts > F.MAX_WAYPOINTS:
+        raise ValueError(f"{total_wpts} route waypoints in all, the watch holds {F.MAX_WAYPOINTS}: "
+                         "remove a route from the watch first")
+
     all_points = [p for r in routes for p in r.points]
     descriptors, points_blob = [], b""
     cursor = 0

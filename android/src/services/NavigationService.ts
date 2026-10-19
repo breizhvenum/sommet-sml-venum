@@ -16,6 +16,7 @@ import { readNavBases } from './MemoryMap';
 // kept in sync by hand, same convention as the other native constants
 // mirrored on the JS side elsewhere in this codebase.
 const MAX_ROUTE_POINTS = 1000;
+const MAX_ROUTE_WAYPOINTS = 100;
 const MAX_NAME_BYTES = 15;
 
 // Transport is auto-detected, not chosen per-call (2026-08-09). connect()/
@@ -120,6 +121,10 @@ export async function pickRouteGpx(): Promise<{ xml: string; name: string } | nu
 /** A GPX text as a route ready to preview/send (simplified to what the watch accepts). */
 export function routeFromGpx(xml: string, fallbackName: string): PendingRoute {
   const parsed = parseRouteGpx(xml, fallbackName);
+  // The watch holds 100 route waypoints in all (tools/build_route.py checks the same).
+  if (parsed.waypoints.length > MAX_ROUTE_WAYPOINTS) {
+    throw new Error(`${parsed.waypoints.length} waypoints on this route, the watch holds ${MAX_ROUTE_WAYPOINTS}`);
+  }
 
   const kept = simplifyRoute(
     parsed.points,
