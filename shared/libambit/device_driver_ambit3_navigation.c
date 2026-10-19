@@ -24,11 +24,9 @@
 #define ROUTE_POINT_LEN       12
 #define ROUTE_INDEX_LEN       20
 #define WAYPOINT_HEADER_LEN    6
-#define WAYPOINT_DESC_LEN     52
 #define WAYPOINT_INDEX_LEN     4
 
 #define ROUTE_HEADER_MAGIC    0x340c  /* Ambit2: 0x3008 */
-#define WAYPOINT_HEADER_MAGIC 0x0334
 #define WAYPOINT_TAIL_MAGIC   0x0771
 #define WAYPOINT_TYPE_DEFAULT 17      /* "Waypoint" on the Ambit enum side */
 #define ROUTE_INDEX_CONST     415
@@ -187,11 +185,21 @@ static void write_route_descriptor(uint8_t *dst, const ambit3_nav_route_t *route
 
 static void write_waypoint_descriptor(uint8_t *dst,
                                       const ambit3_nav_waypoint_t *waypoint,
-                                      const ambit3_nav_route_t *route, uint8_t rank)
+                                      const ambit3_nav_route_t *route, uint8_t rank,
+                                      size_t len)
 {
-    memset(dst, 0, WAYPOINT_DESC_LEN);
+    memset(dst, 0, len);
     put32(dst, (uint32_t)waypoint->latitude);
     put32(dst + 4, (uint32_t)waypoint->longitude);
+    if (len == AMBIT3_WAYPOINT_DESC_LEN_ALT) {
+        /* Traverse: int16 altitude of the route point the waypoint sits on, 30000 = none. */
+        int32_t altitude = AMBIT3_ALTITUDE_NONE;
+        if (waypoint->point_index < route->point_count) {
+            altitude = route->points[waypoint->point_index].altitude;
+        }
+        put16(dst + 8, (uint16_t)(int16_t)altitude);
+        dst += 2;
+    }
     put_name(dst + 8, waypoint->name);
     put_name(dst + 24, route->name);
     put16(dst + 40, WAYPOINT_TAIL_MAGIC);
@@ -263,7 +271,22 @@ void ambit3_navigation_plan_free(ambit3_nav_plan_t *plan)
     plan->write_count = 0;
 }
 
+size_t ambit3_waypoint_len_for_model(const char *model)
+{
+    if (model != NULL && (strcmp(model, "Jabiru") == 0 || strcmp(model, "Loon") == 0)) {
+        return AMBIT3_WAYPOINT_DESC_LEN_ALT;
+    }
+    return AMBIT3_WAYPOINT_DESC_LEN;
+}
+
+static int plan_reset_sized(ambit3_nav_plan_t *plan, size_t waypoint_len);
+
 int ambit3_navigation_plan_reset(ambit3_nav_plan_t *plan)
+{
+    return plan_reset_sized(plan, AMBIT3_WAYPOINT_DESC_LEN);
+}
+
+static int plan_reset_sized(ambit3_nav_plan_t *plan, size_t waypoint_len)
 {
     uint8_t *route = NULL, *waypoint = NULL;
 
@@ -279,7 +302,7 @@ int ambit3_navigation_plan_reset(ambit3_nav_plan_t *plan)
     put16(route, ROUTE_HEADER_MAGIC);
     route[3] = 1;
     memset(waypoint, 0, WAYPOINT_HEADER_LEN);
-    put16(waypoint, WAYPOINT_HEADER_MAGIC);
+    put16(waypoint, (uint16_t)(0x300 + waypoint_len));
     put16(waypoint + 4, 0xffff);  /* crc16 of an empty table = the init value */
 
     add_write(plan, AMBIT3_WAYPOINT_BASE, waypoint, WAYPOINT_HEADER_LEN);
@@ -293,6 +316,12 @@ int ambit3_navigation_plan_reset(ambit3_nav_plan_t *plan)
 int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
                            ambit3_nav_plan_t *plan)
 {
+    return ambit3_navigation_plan_sized(routes, route_count, AMBIT3_WAYPOINT_DESC_LEN, plan);
+}
+
+int ambit3_navigation_plan_sized(const ambit3_nav_route_t *routes, size_t route_count,
+                                 size_t wpt_len, ambit3_nav_plan_t *plan)
+{
     size_t i, total_points = 0, total_waypoints = 0;
     uint8_t *route_region, *waypoint_region;
     uint8_t *desc, *points, *index, *wpt_desc, *wpt_index;
@@ -302,9 +331,11 @@ int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
     int result = -1;
 
     if (route_count == 0) {
-        return ambit3_navigation_plan_reset(plan);
+        return plan_reset_sized(plan, wpt_len);
     }
-    if (route_count > AMBIT3_MAX_ROUTES) {
+    if (route_count > AMBIT3_MAX_ROUTES
+        || (wpt_len != AMBIT3_WAYPOINT_DESC_LEN
+            && wpt_len != AMBIT3_WAYPOINT_DESC_LEN_ALT)) {
         return -1;
     }
     for (i = 0; i < route_count; i++) {
@@ -333,7 +364,7 @@ int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
     memset(points, 0, ROUTE_POINT_LEN * total_points);
     memset(index, 0, ROUTE_INDEX_LEN * route_count);
     memset(wpt_index, 0, WAYPOINT_INDEX_LEN * total_waypoints);
-    memset(wpt_desc, 0, WAYPOINT_DESC_LEN * total_waypoints);
+    memset(wpt_desc, 0, wpt_len * total_waypoints);
 
     /* SuuntoLink lays out the waypoint descriptor table in the REVERSE order of the
      * routes, whereas the index table follows their direct order. The two are
@@ -380,8 +411,9 @@ int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
         waypoint_cursor -= route->waypoint_count;
         block_start = waypoint_cursor;
         for (j = 0; j < route->waypoint_count; j++) {
-            write_waypoint_descriptor(wpt_desc + WAYPOINT_DESC_LEN * (block_start + j),
-                                      &route->waypoints[j], route, (uint8_t)j);
+            write_waypoint_descriptor(wpt_desc + wpt_len * (block_start + j),
+                                      &route->waypoints[j], route, (uint8_t)j,
+                                      wpt_len);
         }
 
         put32(index + ROUTE_INDEX_LEN * i, (uint32_t)(i + 1));
@@ -408,10 +440,10 @@ int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
         }
     }
 
-    put16(waypoint_region, WAYPOINT_HEADER_MAGIC);
+    put16(waypoint_region, (uint16_t)(0x300 + wpt_len));   /* 0x0334, or 0x0336 */
     put16(waypoint_region + 2, (uint16_t)total_waypoints);
     put16(waypoint_region + 4,
-          crc16_ccitt_false(wpt_desc, WAYPOINT_DESC_LEN * total_waypoints));
+          crc16_ccitt_false(wpt_desc, wpt_len * total_waypoints));
 
     {
         /* The route header CRC covers the descriptors followed by the points, which
@@ -436,7 +468,7 @@ int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
      * group then its own. */
     add_write(plan, AMBIT3_WAYPOINT_BASE, waypoint_region, WAYPOINT_HEADER_LEN);
     add_write(plan, AMBIT3_WAYPOINT_DESC, wpt_desc,
-              WAYPOINT_DESC_LEN * total_waypoints);
+              wpt_len * total_waypoints);
     region_hash(waypoint_region, AMBIT3_WAYPOINT_REGION_SIZE, plan->waypoint_hash);
 
     add_write(plan, AMBIT3_ROUTE_BASE, route_region, ROUTE_HEADER_LEN);

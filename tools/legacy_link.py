@@ -30,6 +30,7 @@ memory), so there's nothing safe to send for THAT specific piece yet.
     ./tools/legacy_link.py poi-clear
     ./tools/legacy_link.py gps-orbit-status
     ./tools/legacy_link.py gps-orbit-write FILE
+    ./tools/legacy_link.py route-send ROUTE.gpx... [--write]
 """
 
 import json
@@ -366,10 +367,66 @@ def sport_mode_write(modes, dry_run=False):
         pathlib.Path(path).unlink(missing_ok=True)
 
 
+def route_send(gpx_paths, write=False, backup_dir=None):
+    """Adds routes to an Ambit1/2, keeping every route and POI already on it - the order
+    SuuntoLink uses (Ambit1 capture zzambit1full): the route region (0x041EB0, commit tail
+    0xFFFFFA1A), then the waypoint list rewritten with each new route's own waypoints
+    (direction pins, or Start/End) tagged with the route name and their rank.
+
+    `gpx_paths` are route GPX files (<rtept>, waypoints typed "Waypoint" - what route_pins.py
+    --target ambit / --plain writes). Without `write` nothing is sent: the result says what
+    would be. Before a write the current route region and waypoint list are saved to
+    `backup_dir` (the project's backups/ folder by default) so they can be put back."""
+    import time                                               # noqa: PLC0415
+    import legacy_route                                       # noqa: PLC0415
+    from build_route import route_from_gpx                    # noqa: PLC0415
+
+    new_routes, new_wpts = [], []
+    for path in gpx_paths:
+        r = route_from_gpx(pathlib.Path(path), 0, 0, 0, (1, 1, 0, 0, 0, 0),
+                           max_points=legacy_route.MAX_ROUTE_POINTS)
+        name = r.name.encode("latin-1", "replace")[:15].decode("latin-1")
+        pts = [(lat, lon) for lat, lon, _ in r.points]
+        dist = sum(legacy_route._haversine_km(*a, *b) for a, b in zip(pts, pts[1:])) * 1000
+        new_routes.append({"name": name, "points": pts, "distance_m": int(dist)})
+        new_wpts += legacy_route.route_waypoints(name, [(lat, lon, wn) for lat, lon, wn, _ in r.waypoints])
+
+    region = read_route_region()
+    current = waypoints()
+    if not current.get("ok"):
+        raise RuntimeError(current.get("error", "could not read the watch's waypoint list"))
+    listed = current.get("waypoints", [])
+    blob = legacy_route.append(region, new_routes)           # raises past the route room
+    if len(listed) + len(new_wpts) > legacy_route.MAX_LIST_WAYPOINTS:
+        raise RuntimeError(f"{len(listed)} POIs and route waypoints are on the watch and these "
+                           f"routes add {len(new_wpts)}: it holds {legacy_route.MAX_LIST_WAYPOINTS}. "
+                           "Remove some first")
+    old = legacy_route.parse(region)["routes"] if region else []
+    taken = {r["name"].strip() for r in old}
+    clash = [r["name"] for r in new_routes if r["name"].strip() in taken]
+    if clash:
+        raise RuntimeError(f"the watch already has a route named {clash[0]!r}: rename the new one")
+    result = {"ok": True, "wrote": False, "routes_kept": len(old),
+              "routes_added": [r["name"] for r in new_routes], "points": sum(len(r["points"]) for r in new_routes),
+              "waypoints_added": len(new_wpts), "region_bytes": len(blob)}
+    if not write:
+        return result
+    backup_dir = pathlib.Path(backup_dir or HERE.parent / "backups")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if region:
+        (backup_dir / f"legacy-routes-{stamp}.bin").write_bytes(region)
+    (backup_dir / f"legacy-waypoints-{stamp}.json").write_text(json.dumps(current))
+    restore_route_region(blob)
+    waypoints_restore(listed + new_wpts)
+    result.update(wrote=True, backup=str(backup_dir / f"legacy-waypoints-{stamp}.json"))
+    return result
+
+
 _COMMANDS = ("device-info", "settings", "waypoints", "logs", "poi-add", "poi-clear",
              "gps-orbit-status", "gps-orbit-write",
              "sport-mode-write-presets", "routes", "route-head",
-             "route-region-save", "route-region-restore", "nav-restore-json")
+             "route-region-save", "route-region-restore", "nav-restore-json", "route-send")
 
 
 def main():
@@ -412,6 +469,15 @@ def main():
                 sys.exit(f"usage: {sys.argv[0]} nav-restore-json INFILE")
             payload = json.loads(pathlib.Path(sys.argv[2]).read_text())
             result = waypoints_restore(payload.get("waypoints", payload) if isinstance(payload, dict) else payload)
+        elif cmd == "route-send":
+            # route-send GPX... [--write] : add routes (keeps the watch's routes and POIs).
+            files = [a for a in sys.argv[2:] if not a.startswith("--")]
+            if not files:
+                sys.exit(f"usage: {sys.argv[0]} route-send GPX... [--write]")
+            try:
+                result = route_send(files, write="--write" in sys.argv[2:])
+            except ValueError as exc:
+                result = {"ok": False, "error": str(exc)}
         elif cmd == "sport-mode-write-presets":
             result = sport_mode_write_presets(dry_run="--dry-run" in sys.argv[2:])
         elif cmd == "gps-orbit-write":

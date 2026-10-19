@@ -368,8 +368,9 @@ SELECTED_SERIAL = None
 # /api/devices already work for these unmodified. Settings/waypoints/training-logs route
 # through tools/legacy_link.py instead - see that file and tools/vendor/ambit_legacy_cli/.
 LEGACY_PRODUCT_IDS = {0x0010, 0x0019, 0x001A, 0x001D}  # Bluebird, Duck, Colibri, Greentit
-# Ambit3 Peak / Sport / Run / Vertical: the watches that get direction pins on their routes.
-AMBIT3_PIN_PRODUCT_IDS = {0x001B, 0x001C, 0x001E, 0x002C}
+# The watches that get direction pins on their routes: Ambit3 Peak / Sport / Run / Vertical and
+# Traverse / Traverse Alpha (route waypoints of 54 bytes there; write_nav.py writes that layout).
+AMBIT3_PIN_PRODUCT_IDS = {0x001B, 0x001C, 0x001E, 0x002C, 0x002B, 0x002D}
 
 
 def device_key():
@@ -3946,11 +3947,10 @@ class Handler(BaseHTTPRequestHandler):
         # apart from its Start/End. "pins": false sends the GPX exactly as given. If the pins
         # cannot be worked out (too many for the watch, odd file) the route still goes, without.
         self._route_pin_count, self._route_pin_note = None, None
-        # Only on the Ambit3 family, whose route-waypoint layout is the one build_route.py writes
-        # and the one André tested on an Ambit3 Peak. The Traverse / Traverse Alpha keep their
-        # route waypoints in a different layout that Sommet does not decode yet (write_nav.py
-        # show_navigation), so they get the route without pins. Ambit1/2 and Kailash never come
-        # here (no routes on this path).
+        # On the Ambit3 family and the Traverse / Traverse Alpha (AMBIT3_PIN_PRODUCT_IDS). The
+        # Traverse keeps route waypoints in 54-byte records (an altitude added), which
+        # write_nav.py now writes (2026-10-19, from SuuntoLink's own WaypointsAreaConverter).
+        # Ambit1/2 and Kailash never come here (no routes on this path).
         autopin_if_needed()
         target_pid = body.get("productId")
         target_pid = int(target_pid) if str(target_pid or "").isdigit() else SELECTED_PRODUCT_ID
@@ -3969,7 +3969,10 @@ class Handler(BaseHTTPRequestHandler):
                 Path(src_path).unlink(missing_ok=True)
             return self._parse_last_json_line(out_) or {"ok": False, "error": err_.strip()}
 
-        if body.get("pins", True) and target_pid in AMBIT3_PIN_PRODUCT_IDS:
+        # Ambit1/2: routes go to their own route region (legacy_link.py route-send), with the
+        # same pins as route waypoints in the watch's waypoint list (2026-10-19).
+        legacy = (target_pid in LEGACY_PRODUCT_IDS) if target_pid is not None else selected_is_legacy()
+        if body.get("pins", True) and (target_pid in AMBIT3_PIN_PRODUCT_IDS or legacy):
             pinned = route_pins([])
             if pinned.get("ok"):
                 gpx_text = pinned["gpx"]
@@ -3990,6 +3993,27 @@ class Handler(BaseHTTPRequestHandler):
         pid = int(pid) if isinstance(pid, int) or (isinstance(pid, str) and pid.isdigit()) else None
         serial = (body.get("serial") or "").strip() or None
         targeted = pid is not None or serial is not None
+
+        if legacy:
+            # Ambit1/2: the route region is rebuilt with the existing routes kept byte for
+            # byte, then the waypoint list rewritten with the new route's waypoints; both are
+            # saved to backups/ first. Rehearsal (no "confirm") reads the watch, writes nothing.
+            with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
+                f.write(gpx_text)
+                gpx_path = f.name
+            try:
+                code, out, err = run_tool("legacy_link.py",
+                                          ["route-send", gpx_path] + (["--write"] if confirm else []),
+                                          timeout=900, product_id=pid, serial=serial)
+            finally:
+                Path(gpx_path).unlink(missing_ok=True)
+            res = self._parse_last_json_line(out) or {"ok": False, "error": err.strip() or "route send failed"}
+            self._send_json(200 if res.get("ok") else 502, {
+                "ok": bool(res.get("ok")), "wrote": bool(res.get("wrote")),
+                "routes_kept": res.get("routes_kept", 0), "pins": self._route_pin_count,
+                "pins_note": self._route_pin_note, "error": res.get("error"),
+                "raw_output": out, "stderr": err})
+            return
 
         with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
             f.write(gpx_text)

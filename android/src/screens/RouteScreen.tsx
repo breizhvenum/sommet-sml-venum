@@ -77,8 +77,8 @@ export default function RouteScreen() {
       return { route, pins: null, note: e?.message ?? '' };
     }
   }
-  // Only on the Ambit3 family (Home says which watch is here): the Traverse keeps route
-  // waypoints in a layout Sommet does not decode yet, so it gets the plain route.
+  // Ambit3 family and Traverse / Traverse Alpha (Home says which watch is here); the native
+  // writer picks the Traverse's 54-byte waypoint records by model name.
   const pinsHere: boolean = params.pins ?? false;
   const pinned = useMemo(() => (pending && pinsHere ? withPins(pending) : null), [pending, pinsHere]);   // eslint-disable-line react-hooks/exhaustive-deps
   const scrollRef = useRef<ScrollView>(null);
@@ -226,7 +226,7 @@ export default function RouteScreen() {
     if (!pending || sendBusy) return;
     Alert.alert(
       t.sendRouteConfirmTitle,
-      t.sendRouteConfirmMsg,
+      params.legacy ? t.sendRouteConfirmMsgKeep : t.sendRouteConfirmMsg,
       [
         { text: t.cancel, style: 'cancel' },
         { text: t.sendRouteConfirmBtn, onPress: runUpload },
@@ -237,7 +237,7 @@ export default function RouteScreen() {
   async function runUpload() {
     if (!pending) return;
     try {
-      await uploadRoute(pinned ? pinned.route : pending, setSendState);
+      await uploadRoute(pinned ? pinned.route : pending, setSendState, { legacy: params.legacy ?? false });
       setSendState(s => {
         if (s.phase === 'done') {
           setPending(null);

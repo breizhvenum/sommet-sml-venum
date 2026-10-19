@@ -50,12 +50,10 @@ QtObject {
     property bool supportsRoutes: !_isKailash
     property bool supportsPOIs: !_isKailash
 
-    // Route WRITING is the part that is still SBEM-only: _handle_route_write rebuilds the
-    // whole Routes region through write_nav.py, which this family predates, and no legacy
-    // equivalent is wired. POI writing IS - legacy_link.py poi-add, hardware-validated
-    // 2026-08-22 against openambit's libambit_navigation_write - so only the upload button
-    // is gated, not the page. Reading, exporting and POI add all work.
-    property bool supportsRouteWrite: !_isLegacy && !_isKailash
+    // Route WRITING: Ambit3 family / Traverse through write_nav.py; Ambit1/2 (2026-10-19) through
+    // legacy_link.py route-send - the route region as SuuntoLink writes it (existing routes kept
+    // byte for byte) plus the route's waypoints in the waypoint list. Kailash has no routes.
+    property bool supportsRouteWrite: !_isKailash
 
     // Backup & Restore is write_nav.py's nav --save/restore over the SBEM flash regions.
     // BackupPage used to read supportsRoutes for this, which was fine while the two were the

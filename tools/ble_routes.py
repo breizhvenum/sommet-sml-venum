@@ -37,7 +37,7 @@ import tempfile
 
 from write_nav import (
     CMD_POI_WRITE, build_routes, check_memory_map, existing_routes_as_gpx, nav_summary_json,
-    poi_write_payload, read_memory_map, read_nav_flash, read_pois, send_plan,
+    poi_write_payload, read_memory_map, read_nav_flash, read_pois, send_plan, waypoint_size,
 )
 
 
@@ -79,7 +79,8 @@ def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
                     temp_paths.append(f.name)
             all_gpx_paths = temp_paths + all_gpx_paths
 
-        flash, layout = build_routes([pathlib.Path(p) for p in all_gpx_paths], meta_capture)
+        flash, layout = build_routes([pathlib.Path(p) for p in all_gpx_paths], meta_capture,
+                                     waypoint_size(link))      # 54-byte records on a Traverse
         send_plan(link, flash, layout)
         restored = poi_write_payload(pois)
         if restored:

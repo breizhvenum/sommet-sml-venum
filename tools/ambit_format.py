@@ -75,6 +75,31 @@ REGIONS = {
 }
 
 WAYPOINT_HEADER_MAGIC = 0x0334
+# The waypoint header's magic is 0x300 + the size of one waypoint record: 0x0334 = 52 bytes
+# (Ambit3 Peak/Sport/Run/Vertical), 0x0336 = 54 bytes (Traverse "Jabiru" and Traverse Alpha
+# "Loon"). The two extra bytes are an int16 altitude after the longitude (30000 = none).
+# Source: SuuntoLink's own WaypointsAreaConverter (SDSApplicationServer.exe, decompiled in
+# assets/): it picks 0x36/0x336 when the model is "Jabiru" or "Loon", else 0x34/0x334, and
+# getWaypointPosition() returns (0x336 ? 2 : 0) + 0x34. The Traverse firmware agrees: its
+# waypoint check (FUN_0004dce0 in the 2.0.22 image) wants 0x336 and its CRC loop walks
+# 0x36-byte records, where the Peak's (FUN_0002d558, 2.4.17) wants 0x334 and walks 0x34.
+WAYPOINT_SIZE = 52
+WAYPOINT_SIZE_ALT = 54
+WAYPOINT_ALT_PRODUCT_IDS = {0x002B, 0x002D}   # Traverse, Traverse Alpha
+
+
+def waypoint_size_for_magic(magic):
+    """52 or 54 from a waypoint header's magic, None when it is neither."""
+    return magic - 0x300 if magic in (0x0334, 0x0336) else None
+
+
+def waypoint_size_for_product(product_id):
+    return WAYPOINT_SIZE_ALT if product_id in WAYPOINT_ALT_PRODUCT_IDS else WAYPOINT_SIZE
+
+
+def waypoint_header_reset(size=WAYPOINT_SIZE):
+    return struct.pack("<HHH", 0x300 + size, 0, 0xFFFF)
+
 # Empty nav database: both headers, everything at zero after the magic and marker.
 ROUTE_HEADER_RESET = bytes.fromhex("0c340001") + b"\0" * 28
 WAYPOINT_HEADER_RESET = bytes.fromhex("34030000ffff")
@@ -105,6 +130,7 @@ ROUTE_HEADER = struct.Struct("<HBBHHIHH")          # 16 useful bytes out of 32
 ROUTE_DESCRIPTOR = struct.Struct("<16sIHIiiiiHHHHH")  # 52 B
 ROUTE_POINT = struct.Struct("<iiHH")                # 12 B
 WAYPOINT_DESCRIPTOR = struct.Struct("<ii16s16s12s")  # 52 B
+WAYPOINT_DESCRIPTOR_ALT = struct.Struct("<iih16s16s12s")  # 54 B, Traverse: + altitude
 WAYPOINT_TAIL = struct.Struct("<HBBBBBBB3s")        # 12 B, descriptor tail
 ROUTE_INDEX_ENTRY = struct.Struct("<IIIBBBBI")      # 20 B
 
@@ -228,10 +254,14 @@ class WaypointHeader:
         magic, count, checksum = cls.STRUCT.unpack(blob[:6])
         return cls(count, checksum, magic)
 
+    @property
+    def size(self):
+        """Bytes per waypoint record this header announces (52, or 54 on a Traverse)."""
+        return waypoint_size_for_magic(self.magic) or WAYPOINT_SIZE
+
     @classmethod
-    def build_for(cls, descriptor_blob, count):
-        return cls.STRUCT.pack(WAYPOINT_HEADER_MAGIC, count,
-                               crc16_ccitt_false(descriptor_blob))
+    def build_for(cls, descriptor_blob, count, size=WAYPOINT_SIZE):
+        return cls.STRUCT.pack(0x300 + size, count, crc16_ccitt_false(descriptor_blob))
 
 
 class RouteDescriptor:
@@ -342,22 +372,32 @@ class RouteIndexEntry:
 
 
 class WaypointDescriptor:
-    def __init__(self, lat, lon, name, route_name, tail=b"\0" * 12):
+    """One route waypoint: 52 bytes, or 54 on a Traverse (int16 altitude after the longitude,
+    ALTITUDE_NONE when unknown - SuuntoLink writes 30000 for a waypoint without altitude)."""
+
+    def __init__(self, lat, lon, name, route_name, tail=b"\0" * 12, altitude=None):
         self.lat, self.lon = lat, lon
         self.name, self.route_name, self.tail = name, route_name, tail
+        self.altitude = altitude
 
     @classmethod
     def parse(cls, blob):
+        if len(blob) == WAYPOINT_SIZE_ALT:
+            lat, lon, alt, name, route_name, tail = WAYPOINT_DESCRIPTOR_ALT.unpack(blob)
+            return cls(lat, lon, decode_name(name), decode_name(route_name), tail,
+                       None if alt == ALTITUDE_NONE else alt)
         lat, lon, name, route_name, tail = WAYPOINT_DESCRIPTOR.unpack(blob)
         return cls(lat, lon, decode_name(name), decode_name(route_name), tail)
 
-    def build(self):
+    def build(self, size=WAYPOINT_SIZE):
         # The observed names are UTF-8 ("Andre" with its accent encoded c3 a9),
         # unlike the route names, which route.js announces as ISO-8859-15.
-        return WAYPOINT_DESCRIPTOR.pack(self.lat, self.lon,
-                                        encode_name(self.name, "utf-8"),
-                                        encode_name(self.route_name, "utf-8"),
-                                        self.tail)
+        name = encode_name(self.name, "utf-8")
+        route_name = encode_name(self.route_name, "utf-8")
+        if size == WAYPOINT_SIZE_ALT:
+            alt = ALTITUDE_NONE if self.altitude is None else max(-32768, min(32767, int(self.altitude)))
+            return WAYPOINT_DESCRIPTOR_ALT.pack(self.lat, self.lon, alt, name, route_name, self.tail)
+        return WAYPOINT_DESCRIPTOR.pack(self.lat, self.lon, name, route_name, self.tail)
 
 
 # --- SBEM payload of the 0x0b25 --------------------------------------------

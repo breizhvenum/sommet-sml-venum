@@ -1,5 +1,6 @@
 import { readLegacyRegion, writeLegacyRegion, writeLegacyWaypoints, readLegacyNav, connect, disconnect, isBleTransportActive } from '../native/AmbitUsbModule';
 import { base64ToBytes, bytesToBase64 } from './Base64';
+import { appendLegacyRoutes, legacyRouteWaypoints, parseRoutes, routeDistanceM, MAX_LIST_WAYPOINTS } from './LegacyRoute';
 
 // Ambit1/2 (Bluebird) route-region BACKUP + RESTORE (2026-08-27, André: "legacy nav backup +
 // restore"). The legacy family has no SBEM 0x0b21 memory map, so the generic NavBackupService
@@ -178,4 +179,50 @@ export async function restoreLegacyWaypoints(wps: LegacyWaypoint[]): Promise<{ c
   } finally {
     if (!overBle) await disconnect().catch(() => {});
   }
+}
+
+// ─── Route send (2026-10-19) ─────────────────────────────────────────────────────────────────
+// Adds ONE route, keeping every route and POI on the watch - SuuntoLink's order on an Ambit1
+// (capture zzambit1full): the route region (existing routes copied byte for byte, the new one
+// after them, 0x0b18 tail 0xFFFFFA1A), then the waypoint list rewritten with the new route's
+// waypoints (direction pins or Start/End) tagged with its name and their rank. Same as desktop
+// tools/legacy_link.py route_send. Assumes the connection is open (uploadRoute opens it).
+
+function listedWaypoints(nav: any): LegacyWaypoint[] {
+  return (nav?.waypoints ?? []).map((w: any) => ({
+    name: String(w.name ?? ''), routeName: String(w.routeName ?? ''),
+    lat_e7: Number(w.lat_e7) | 0, lon_e7: Number(w.lon_e7) | 0, type: Number(w.type) & 0xff,
+    ctime_year: Number(w.ctime_year ?? 0), ctime_month: Number(w.ctime_month ?? 0),
+    ctime_day: Number(w.ctime_day ?? 0), ctime_hour: Number(w.ctime_hour ?? 0),
+    ctime_minute: Number(w.ctime_minute ?? 0), ctime_second: Number(w.ctime_second ?? 0),
+  }));
+}
+
+export async function sendLegacyRoute(route: {
+  name: string; points: { lat: number; lon: number }[]; waypoints: { lat: number; lon: number; name: string }[];
+}): Promise<{ routesKept: number }> {
+  const name = route.name.slice(0, 15);
+  const region = await readLegacyRouteRegion();
+  const existing = region ? parseRoutes(bytesToBase64(region.bytes)) : [];
+  if (existing.some((r) => r.name.trim() === name.trim())) {
+    throw new Error(`The watch already has a route named "${name}". Rename the new one.`);
+  }
+  const listed = listedWaypoints(JSON.parse(await readLegacyNav()));
+  const added = legacyRouteWaypoints(name, route.waypoints);
+  if (listed.length + added.length > MAX_LIST_WAYPOINTS) {
+    throw new Error(`${listed.length} POIs and route waypoints are on the watch and this route adds ${added.length}; it holds ${MAX_LIST_WAYPOINTS}. Remove some first.`);
+  }
+  const blob = appendLegacyRoutes(region?.bytes ?? null,
+    [{ name, points: route.points, distanceM: routeDistanceM(route.points) }]);
+  if (!(await writeLegacyRegion(ROUTE_REGION, bytesToBase64(blob), ROUTE_COMMIT_EXTRA))) {
+    throw new Error('The watch did not accept the route write.');
+  }
+  if ((await writeLegacyWaypoints(bytesToBase64(encodeWaypoints([...listed, ...added])))) < 0) {
+    throw new Error('Route written, but the watch did not accept its waypoints.');
+  }
+  const back = base64ToBytes(await readLegacyRegion(ROUTE_REGION, 64));
+  if (back.length < 32 || u16(back, 0) !== HEAD_MAGIC || u16(back, 4) !== u16(blob, 4)) {
+    throw new Error('The route region did not read back as written.');
+  }
+  return { routesKept: region?.routeCount ?? 0 };
 }

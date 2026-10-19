@@ -82,11 +82,15 @@ def route_from_gpx(path, distance, ascent, descent, stamp, max_points=None):
                  distance, ascent, descent, stamp)
 
 
-def serialize(routes):
+def serialize(routes, wpt_size=F.WAYPOINT_SIZE):
     """Returns (flash image, layout), the layout being the ordered list of
     (address, bytes) as SuuntoLink writes it. Do not derive it from
     FlashImage.ranges(), which merges adjacent writes: the route header and the
-    descriptor table are contiguous but go out as two 0x0b16."""
+    descriptor table are contiguous but go out as two 0x0b16.
+
+    `wpt_size` is the watch's waypoint record size: 52, or 54 on a Traverse / Traverse Alpha
+    (F.waypoint_size_for_product / the watch's own waypoint header). Everything else in the
+    navigation memory is the same on both."""
     flash = FlashImage()
 
     # The watch's route memory has fixed room (2026-10-19): 50 routes, 10,000 points over all of
@@ -128,9 +132,10 @@ def serialize(routes):
         index_rows.append((number, seconds, len(route.waypoints)))
         for rank, (lat, lon, wname, point_index) in enumerate(route.waypoints):
             tail = F.WaypointTail(month, day, hour, minute, second, rank).build()
+            alt = route.points[point_index][2] if 0 <= point_index < len(route.points) else None
             waypoint_rows.append((
                 F.WaypointDescriptor(round(lat * 1e7), round(lon * 1e7), wname,
-                                     route.name, tail).build(),
+                                     route.name, tail, altitude=alt).build(wpt_size),
                 point_index, number))
         cursor += len(route.points)
 
@@ -165,7 +170,7 @@ def serialize(routes):
     layout = [
         # waypoint group, closed by its 0x0b18
         ("waypoint header", F.WAYPOINT_BASE,
-         F.WaypointHeader.build_for(wpt_blob, len(waypoint_rows))),
+         F.WaypointHeader.build_for(wpt_blob, len(waypoint_rows), wpt_size)),
         ("waypoint descriptors", F.WAYPOINT_DESC, wpt_blob),
         ("tail", F.WAYPOINT_BASE, None),
         # route group
@@ -202,8 +207,9 @@ def stamp_from_capture(flash, msgs, index):
     entry = F.RouteIndexEntry.parse(flash.read(F.ROUTE_INDEX + 20 * index, 20))
     header = F.WaypointHeader.parse(flash.read(F.WAYPOINT_BASE, 6))
     tail = None
+    size = header.size
     for i in range(header.count):
-        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + 52 * i, 52))
+        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + size * i, size))
         if w.route_name == F.decode_name(F.encode_name(d.name, "utf-8")):
             tail = F.WaypointTail.parse(w.tail)
             break

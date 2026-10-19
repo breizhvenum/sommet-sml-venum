@@ -12,7 +12,9 @@ import { Buffer } from 'buffer';
  * back; openambit was only a cross-check on field names, and the hardware overruled it on the
  * table size. See docs/ambit1_route_region.md for the full write-up.
  *
- * Read-only. Nothing here writes to a watch.
+ * parse* read; appendLegacyRoutes/legacyRouteWaypoints BUILD the bytes for a route send (same
+ * as tools/legacy_route.py append/route_waypoints, parity-tested) - the write itself is
+ * AmbitLegacyNav.sendLegacyRoute.
  */
 
 export const ROUTE_REGION_ADDR = 0x041eb0;
@@ -84,4 +86,118 @@ export function parseRoutes(b64: string): LegacyRoute[] {
     if (points.length > 0) out.push({ name, distanceM, points });
   }
   return out;
+}
+
+// ─── Building (route send) ──────────────────────────────────────────────────────────────────
+// Port of tools/legacy_route.py build()/append()/route_waypoints(); keep the two in step.
+
+/** Room on the watch: SuuntoLink's route.js limits, and the user guides' 100-entry list. */
+export const MAX_ROUTE_POINTS = 1000;
+export const MAX_TOTAL_POINTS = 10000;
+export const MAX_LIST_WAYPOINTS = 100;
+const ROUTE_SLOTS = ROUTE_INFO_SLOTS;
+
+export interface NewLegacyRoute { name: string; points: { lat: number; lon: number }[]; distanceM: number }
+
+/** Python's round(): half to even, so the packed integers match tools/legacy_route.py. */
+function pyRound(x: number): number {
+  const f = Math.floor(x); const d = x - f;
+  if (d > 0.5) return f + 1;
+  if (d < 0.5) return f;
+  return f % 2 === 0 ? f : f + 1;
+}
+
+function haversineKm(latA: number, lonA: number, latB: number, lonB: number): number {
+  const r = Math.PI / 180;
+  const la = latA * r, lb = latB * r, oa = lonA * r, ob = lonB * r;
+  const t = Math.sin((lb - la) / 2) ** 2 + Math.cos(la) * Math.cos(lb) * Math.sin((ob - oa) / 2) ** 2;
+  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(t), Math.sqrt(1 - t));
+}
+
+export function routeDistanceM(points: { lat: number; lon: number }[]): number {
+  let km = 0;
+  for (let i = 1; i < points.length; i++) km += haversineKm(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+  return Math.trunc(km * 1000);
+}
+
+function crc16(data: Uint8Array): number {
+  let crc = 0xffff;
+  for (const b of data) {
+    crc ^= b << 8;
+    for (let k = 0; k < 8; k++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+}
+
+/** One route's 48-byte info entry and its 8-byte points, start index `start`. */
+function packRoute(r: NewLegacyRoute, start: number): { info: Uint8Array; pts: Uint8Array } {
+  const latI = r.points.map((p) => pyRound(p.lat * 1e7));
+  const lonI = r.points.map((p) => pyRound(p.lon * 1e7));
+  const span = (v: number[]) => Math.max(...v) - Math.floor((Math.max(...v) - Math.min(...v)) / 2);
+  const alat = span(latI); const alon = span(lonI);
+  const mlat = alat / 1e7; const mlon = alon / 1e7;
+  const pts = new Uint8Array(POINT_LEN * r.points.length);
+  const pv = new DataView(pts.buffer);
+  let mx = 0, my = 0;
+  r.points.forEach((p, i) => {
+    let rx = Math.trunc(haversineKm(mlat, mlon, mlat, p.lon) * 1000);
+    if (lonI[i] < alon) rx = -rx;
+    let ry = Math.trunc(haversineKm(mlat, mlon, p.lat, mlon) * 1000);
+    if (latI[i] < alat) ry = -ry;
+    pv.setInt32(POINT_LEN * i, rx, true); pv.setInt32(POINT_LEN * i + 4, ry, true);
+    if (i === 0 || rx > mx) mx = rx;
+    if (i === 0 || ry > my) my = ry;
+  });
+  const info = new Uint8Array(INFO_LEN);
+  const iv = new DataView(info.buffer);
+  const name = Buffer.from(r.name, 'latin1').subarray(0, 15);
+  info.set(name, 0);
+  iv.setUint32(16, start, true); iv.setUint16(20, r.points.length, true);
+  iv.setUint32(22, r.distanceM >>> 0, true); iv.setInt32(26, alat, true); iv.setInt32(30, alon, true);
+  iv.setInt32(34, Math.max(0, mx), true); iv.setInt32(38, Math.max(0, my), true);
+  iv.setUint16(42, 0xffff, true); iv.setUint16(44, 0xffff, true); iv.setUint16(46, 0, true);
+  return { info, pts };
+}
+
+/** The route region with `routes` added after the ones already in `region` (null = none). The
+ *  existing routes are copied byte for byte; only the head is rewritten. Throws past the room. */
+export function appendLegacyRoutes(region: Uint8Array | null, routes: NewLegacyRoute[]): Uint8Array {
+  let count = 0, points = 0;
+  let oldInfo = new Uint8Array(0), oldPts = new Uint8Array(0);
+  if (region && region.length >= HEAD_LEN && (region[0] | (region[1] << 8)) === HEAD_MAGIC) {
+    const dv = new DataView(region.buffer, region.byteOffset, region.byteLength);
+    count = dv.getUint16(4, true); points = dv.getUint32(8, true);
+    oldInfo = region.slice(HEAD_LEN, HEAD_LEN + INFO_LEN * count);
+    oldPts = region.slice(POINTS_OFFSET, POINTS_OFFSET + POINT_LEN * points);
+  }
+  for (const r of routes) {
+    if (r.points.length > MAX_ROUTE_POINTS) throw new Error(`Route "${r.name}" has ${r.points.length} points; the watch takes ${MAX_ROUTE_POINTS} per route.`);
+    if (r.points.length === 0) throw new Error(`Route "${r.name}" has no points.`);
+  }
+  if (count + routes.length > ROUTE_SLOTS) throw new Error(`The watch holds ${ROUTE_SLOTS} routes and has ${count}: remove some first.`);
+  const total = points + routes.reduce((n, r) => n + r.points.length, 0);
+  if (total > MAX_TOTAL_POINTS) throw new Error(`${total} route points in all; the watch holds ${MAX_TOTAL_POINTS}. Remove a route from the watch first.`);
+
+  const infos: Uint8Array[] = [oldInfo]; const ptss: Uint8Array[] = [oldPts];
+  let start = points;
+  for (const r of routes) { const p = packRoute(r, start); infos.push(p.info); ptss.push(p.pts); start += r.points.length; }
+  const cat = (a: Uint8Array[]) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let k = 0; for (const x of a) { o.set(x, k); k += x.length; } return o; };
+  const info = cat(infos); const pts = cat(ptss);
+  const out = new Uint8Array(POINTS_OFFSET + pts.length);
+  const ov = new DataView(out.buffer);
+  ov.setUint16(0, HEAD_MAGIC, true); out[2] = 0; out[3] = 1;
+  ov.setUint16(4, count + routes.length, true); ov.setUint16(6, 0, true);
+  ov.setUint32(8, total, true); ov.setUint16(12, crc16(cat([info, pts])), true);
+  out.set(info, HEAD_LEN); out.set(pts, POINTS_OFFSET);
+  return out;
+}
+
+/** A route's waypoints as waypoint-list entries, as SuuntoLink writes them on an Ambit1: the
+ *  route's name, type 17, and 1970-01-01 00:00:<rank> - the seconds are the place in the route. */
+export function legacyRouteWaypoints(routeName: string, wps: { lat: number; lon: number; name: string }[]) {
+  return wps.map((w, rank) => ({
+    name: w.name, routeName, lat_e7: pyRound(w.lat * 1e7), lon_e7: pyRound(w.lon * 1e7), type: 17,
+    ctime_year: 1970, ctime_month: 1, ctime_day: 1, ctime_hour: 0,
+    ctime_minute: Math.floor(rank / 60), ctime_second: rank % 60,
+  }));
 }

@@ -997,7 +997,7 @@ export default function HomeScreen() {
         ]
       : [
           { id: 'routes', label: t.homeRoutesBtn, icon: 'route' as const,
-            onPress: () => navigation.navigate('Route', { watch: connected && deviceType === 'ambit' && !isKailash(ambitInfo), pins: connected && deviceType === 'ambit' && ['Emu', 'Finch', 'Ibisbill', 'Kaka'].includes(ambitInfo?.model ?? '') }), group: 'watch' as const },
+            onPress: () => navigation.navigate('Route', { watch: connected && deviceType === 'ambit' && !isKailash(ambitInfo), pins: connected && deviceType === 'ambit' && ['Emu', 'Finch', 'Ibisbill', 'Kaka', 'Jabiru', 'Loon', 'Bluebird', 'Duck', 'Colibri', 'Greentit'].includes(ambitInfo?.model ?? ''), legacy: connected && deviceType === 'ambit' && isAmbit12(ambitInfo) }), group: 'watch' as const },
           ...(connected && !isKailash(ambitInfo)
             ? [{ id: 'pois', label: t.homePoisBtn, icon: 'poi' as const, onPress: () => navigation.navigate('Poi'), group: 'watch' as const }]
             : []),

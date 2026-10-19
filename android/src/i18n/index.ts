@@ -370,6 +370,10 @@ const fr = {
     "synchronisation SuuntoLink, ou même la simple proximité Bluetooth de l'app Suunto, " +
     "la remplacera. C'est fait pour charger une route juste avant de partir, pas pour " +
     "la stocker durablement.",
+  sendRouteConfirmMsgKeep:
+    "La route est ajoutée à celles déjà présentes sur la montre ; vos routes et POIs sont " +
+    "conservés. Une synchronisation SuuntoLink peut toutefois remplacer les routes qu'elle " +
+    "ne connaît pas.",
   sendRouteConfirmBtn: 'Envoyer',
   routeScreenTitle:   'Routes',
   routeSendSection:   'Importer une route',
@@ -1209,6 +1213,9 @@ const en: typeof fr = {
     "automatically. Note: this route isn't permanent — the next SuuntoLink sync, or " +
     "even just the Suunto phone app coming into Bluetooth range, will replace it. " +
     "This is for loading a route right before you go, not for permanent storage.",
+  sendRouteConfirmMsgKeep:
+    "The route is added to the ones already on the watch; your routes and POIs are kept. " +
+    "A SuuntoLink sync may still replace routes it doesn't know.",
   sendRouteConfirmBtn: 'Send',
   routeScreenTitle:   'Routes',
   routeSendSection:   'Import a route',

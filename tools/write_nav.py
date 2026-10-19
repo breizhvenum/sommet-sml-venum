@@ -410,7 +410,8 @@ def show_navigation(flash):
     # An empty database carries a literal zero rather than the CRC of nothing, which is
     # what the reset plan writes and what routedelete shows.
     crc = F.crc16_ccitt_false(descriptors + body) if routes else 0
-    wpt_blob = flash.read(F.WAYPOINT_DESC, 52 * waypoint_header.count)
+    wsize = waypoint_header.size          # 52, or 54 on a Traverse (F.WAYPOINT_SIZE_ALT)
+    wpt_blob = flash.read(F.WAYPOINT_DESC, wsize * waypoint_header.count)
     wpt_crc = F.crc16_ccitt_false(wpt_blob)
     print(f"  {'OK   ' if crc == header.checksum else 'FAIL '} route CRC "
           f"0x{crc:04x} against 0x{header.checksum:04x}"
@@ -430,7 +431,7 @@ def show_navigation(flash):
                                          f"{len(alt)}/{len(section)} points"
                                          if alt else "absent on every point"))
     for i in range(waypoint_header.count):
-        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + 52 * i, 52))
+        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + wsize * i, wsize))
         tail = F.WaypointTail.parse(w.tail)
         print(f"  waypoint[{i}] {w.name!r} route={w.route_name!r}  "
               f"{w.lat / 1e7:.7f}, {w.lon / 1e7:.7f}  type {tail.type} rank {tail.rank}")
@@ -491,11 +492,12 @@ def route_to_gpx(flash, index):
     own = []
     route_key = F.decode_name(F.encode_name(d.name, "utf-8"))
     wh = F.WaypointHeader.parse(flash.read(F.WAYPOINT_BASE, 6))
-    # Only when the waypoint table decodes (its CRC matches): the Traverse keeps route waypoints
-    # in another layout, and reading it as the Ambit3 one would carry junk names along.
-    wpt_ok = F.crc16_ccitt_false(flash.read(F.WAYPOINT_DESC, 52 * wh.count)) == wh.checksum
+    # Records are 52 bytes, 54 on a Traverse (the header's magic says which). Only when the
+    # table decodes (its CRC matches): a table that doesn't would carry junk names along.
+    ws = wh.size
+    wpt_ok = F.crc16_ccitt_false(flash.read(F.WAYPOINT_DESC, ws * wh.count)) == wh.checksum
     for i in range(wh.count if wpt_ok else 0):
-        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + 52 * i, 52))
+        w = F.WaypointDescriptor.parse(flash.read(F.WAYPOINT_DESC + ws * i, ws))
         if w.route_name == route_key:
             own.append((F.WaypointTail.parse(w.tail).rank, w))
     cursor, wpt_lines = 0, []
@@ -1064,9 +1066,9 @@ def send_plan(link, flash, layout, commit=True):
         link.command(CMD_NAV_COMMIT)
 
 
-def build_reset():
+def build_reset(wpt_size=F.WAYPOINT_SIZE):
     flash = FlashImage()
-    layout = [("waypoint header", F.WAYPOINT_BASE, F.WAYPOINT_HEADER_RESET),
+    layout = [("waypoint header", F.WAYPOINT_BASE, F.waypoint_header_reset(wpt_size)),
               ("tail", F.WAYPOINT_BASE, None),
               ("route header", F.ROUTE_BASE, F.ROUTE_HEADER_RESET),
               ("tail", F.ROUTE_BASE, None)]
@@ -1108,12 +1110,13 @@ def build_restore(prefix):
         points += F.RouteDescriptor.parse(blob).point_count
     wpt_blob = b""
     base = F.WAYPOINT_DESC - F.WAYPOINT_BASE
+    ws = F.WaypointHeader.parse(waypoints[:6]).size     # 52, or 54 on a Traverse
     for i in range(F.MAX_WAYPOINTS):
-        blob = waypoints[base + 52 * i:base + 52 * (i + 1)]
+        blob = waypoints[base + ws * i:base + ws * (i + 1)]
         if blob[:1] == b"\xff" or blob[:8] == b"\0" * 8:
             break
         wpt_blob += blob
-    route_count, waypoint_count = len(descriptors) // 52, len(wpt_blob) // 52
+    route_count, waypoint_count = len(descriptors) // 52, len(wpt_blob) // ws
     print(f"  recovered {route_count} route(s), {points} points, "
           f"{waypoint_count} waypoint(s)")
     if not route_count:
@@ -1122,7 +1125,7 @@ def build_restore(prefix):
     body = routes[F.ROUTE_POINTS - F.ROUTE_BASE:][:12 * points]
     route_header = F.RouteHeader(
         route_count, points, F.crc16_ccitt_false(descriptors + body)).build()
-    waypoint_header = F.WaypointHeader.build_for(wpt_blob, waypoint_count)
+    waypoint_header = F.WaypointHeader.build_for(wpt_blob, waypoint_count, ws)
 
     # The flash image holds the whole region so the closing hash is computed over what the
     # watch will really contain; only the headers are in the layout, so only they go out.
@@ -1136,7 +1139,26 @@ def build_restore(prefix):
     return flash, layout
 
 
-def build_routes(gpx_paths, meta_capture):
+def waypoint_size(link):
+    """The watch's waypoint record size: 52, or 54 on a Traverse / Traverse Alpha.
+
+    A live link asks the watch itself - its waypoint header's magic is 0x300 + the size, and a
+    factory-fresh Traverse already carries 0x0336 (backups/traverse-fw1.0.4-pristine) - so a
+    wrong product id can't make us write the other layout. A rehearsal has no watch to ask and
+    goes by the product id."""
+    pid = getattr(link, "opened_product_id", None) or getattr(link, "product_id", None)
+    if not getattr(link, "dry_run", False):
+        try:
+            magic = int.from_bytes(read_flash(link, F.WAYPOINT_BASE, 6, label="Waypoints")[:2], "little")
+            size = F.waypoint_size_for_magic(magic)
+            if size:
+                return size
+        except Exception:                                    # noqa: BLE001 - fall back to the model
+            pass
+    return F.waypoint_size_for_product(pid)
+
+
+def build_routes(gpx_paths, meta_capture, wpt_size=F.WAYPOINT_SIZE):
     stamps = []
     if meta_capture:
         msgs = messages(meta_capture)
@@ -1151,7 +1173,7 @@ def build_routes(gpx_paths, meta_capture):
     for route in routes:
         print(f"  route {route.name!r}: {len(route.points)} points, "
               f"{len(route.waypoints)} waypoint(s)")
-    return serialize(routes)
+    return serialize(routes, wpt_size)
 
 
 def compare_with_capture(link, capture):
@@ -1377,12 +1399,15 @@ def main():
     pois = read_pois(link, args.compare or args.meta)
     check_memory_map(read_memory_map(link))
 
+    wsize = waypoint_size(link)
+    if wsize != F.WAYPOINT_SIZE:
+        print(f"  waypoint records of {wsize} bytes (Traverse layout)")
     if args.action == "reset":
-        flash, layout = build_reset()
+        flash, layout = build_reset(wsize)
     elif args.action == "restore":
         flash, layout = build_restore(args.gpx[0])
     else:
-        flash, layout = build_routes([pathlib.Path(p) for p in args.gpx], args.meta)
+        flash, layout = build_routes([pathlib.Path(p) for p in args.gpx], args.meta, wsize)
     send_plan(link, flash, layout)
 
     # The 0x0b04 commit in send_plan() just cleared the POI SBEM region, so the 0x0b25 below

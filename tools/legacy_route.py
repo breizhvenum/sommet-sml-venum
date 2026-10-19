@@ -188,6 +188,67 @@ def build(routes):
     return head + table + bytes(pts_blob)
 
 
+# Room on the watch, as SuuntoLink's route.js counts it for every Ambit (maxRoutePoints 0x3e8,
+# maxTotalRoutePoints 0x2710, 0x32 routes) - the 50 matches the route_info table's fixed slots.
+# The waypoint list (POIs + route waypoints) holds 100: "You can store up to 100 POIs ... also
+# routes take up this quota" (Ambit and Ambit2 user guides, assets/manuals).
+MAX_ROUTE_POINTS = 1000
+MAX_TOTAL_POINTS = 10000
+MAX_LIST_WAYPOINTS = 100
+
+
+def append(region, new_routes):
+    """The route region with `new_routes` ([{name, points, distance_m}]) added after the routes
+    already in `region` (bytes read off the watch, or None when it has none).
+
+    The existing routes are kept BYTE FOR BYTE - their info entries and point blocks are copied,
+    not decoded and rebuilt, so sending a route never moves an old one by the ~1 m a rebuild
+    costs. Only the head (counts, CRC) is new. Raises ValueError past the watch's room."""
+    if region and int.from_bytes(region[:2], "little") == HEAD_MAGIC:
+        _m, _u2, _u3, count, _u4, points, _crc, _pad = struct.unpack(_HEAD, region[:HEAD_LEN])
+        old_info = region[HEAD_LEN:HEAD_LEN + INFO_LEN * count]
+        old_points = region[POINTS_OFFSET:POINTS_OFFSET + POINT_LEN * points]
+    else:
+        count, points, old_info, old_points = 0, 0, b"", b""
+    for r in new_routes:
+        if len(r["points"]) > MAX_ROUTE_POINTS:
+            raise ValueError(f"route {r.get('name')!r} has {len(r['points'])} points, "
+                             f"the watch takes {MAX_ROUTE_POINTS} per route")
+    total = points + sum(len(r["points"]) for r in new_routes)
+    if count + len(new_routes) > ROUTE_INFO_SLOTS:
+        raise ValueError(f"the watch holds {ROUTE_INFO_SLOTS} routes and has {count}: remove some first")
+    if total > MAX_TOTAL_POINTS:
+        raise ValueError(f"{total} route points in all, the watch holds {MAX_TOTAL_POINTS}: "
+                         "remove a route from the watch first")
+    fresh = build(new_routes)
+    new_info = bytearray(fresh[HEAD_LEN:HEAD_LEN + INFO_LEN * len(new_routes)])
+    for i in range(len(new_routes)):                    # their points follow the old ones
+        o = INFO_LEN * i + 16
+        start = struct.unpack_from("<I", new_info, o)[0]
+        struct.pack_into("<I", new_info, o, start + points)
+    new_points = fresh[POINTS_OFFSET:]
+    info_blob = old_info + bytes(new_info)
+    pts_blob = old_points + new_points
+    checksum = crc16_ccitt_false(info_blob + pts_blob)
+    head = struct.pack(_HEAD, HEAD_MAGIC, 0, 1, count + len(new_routes), 0, total, checksum,
+                       b"\x00" * 18)
+    return head + info_blob.ljust(INFO_LEN * ROUTE_INFO_SLOTS, b"\x00") + pts_blob
+
+
+def route_waypoints(route_name, waypoints):
+    """A route's own waypoints as entries of the watch's waypoint list, the way SuuntoLink
+    writes them on an Ambit1 (capture zzambit1full, 0x0b05): name, the route's name, type 17
+    ("Waypoint"), and a timestamp of 1970-01-01 00:00:<rank> - the seconds give the waypoint's
+    place in its route (Pont-Thibault 0, Voie Verte 1 ... Arras Town Hall 8)."""
+    out = []
+    for rank, (lat, lon, name) in enumerate(waypoints):
+        minute, second = divmod(rank, 60)
+        out.append({"name": name, "route_name": route_name, "lat": lat, "lon": lon, "type": 17,
+                    "ctime_year": 1970, "ctime_month": 1, "ctime_day": 1, "ctime_hour": 0,
+                    "ctime_minute": minute, "ctime_second": second})
+    return out
+
+
 def test_roundtrip(blob):
     """Proof, runnable offline: parse -> build -> parse must preserve every route.
 

@@ -142,6 +142,32 @@ def compare_reset():
     return ok
 
 
+def compare_traverse(capture, gpx_names):
+    """The Traverse layout (54-byte waypoint records, magic 0x0336): no capture exists, so
+    the C output is held to the Python reference built with the same size, and the waypoint
+    table is checked to decode back with the 54-byte reader (names, route names, altitude)."""
+    msgs = messages(CAPTURES / capture)
+    reference = FlashImage(write_packs(msgs))
+    routes = [route_from_gpx(CAPTURES / name, *stamp_from_capture(reference, msgs, i))
+              for i, name in enumerate(gpx_names)]
+    built, layout = serialize(routes, F.WAYPOINT_SIZE_ALT)
+    want = [(a, len(b), b) for c, a, b in emit_packs(built, layout) if c == 0x0B16]
+    got, _ = run_harness("WPTLEN 54\n" + fixture(routes))
+    ok = got == want
+    header = F.WaypointHeader.parse(built.read(F.WAYPOINT_BASE, 6))
+    names = [F.WaypointDescriptor.parse(built.read(F.WAYPOINT_DESC + 54 * i, 54))
+             for i in range(header.count)]
+    expected = sorted(F.decode_name(F.encode_name(n, "utf-8"))     # 15 bytes on the watch
+                      for r in routes for _, _, n, _ in r.waypoints)
+    ok &= (header.magic == 0x0336 and header.size == 54
+           and sorted(w.name for w in names) == expected
+           and all(w.route_name for w in names)
+           and F.crc16_ccitt_false(built.read(F.WAYPOINT_DESC, 54 * header.count)) == header.checksum)
+    print(f"  {'OK   ' if ok else 'FAIL '} {capture} in the Traverse layout: C identical to "
+          f"Python, {header.count} waypoints of 54 bytes decode back")
+    return ok
+
+
 def main():
     if not HARNESS.exists():
         print(f"harness missing: {HARNESS}. Run make -C csrc")
@@ -149,6 +175,8 @@ def main():
     ok = compare_reset()
     for capture, gpx_names in CASES:
         ok &= compare(capture, gpx_names)
+    for capture, gpx_names in CASES:
+        ok &= compare_traverse(capture, gpx_names)
     print("\nC serializer conforms to the reference" if ok
           else "\nC serializer DIVERGENT")
     return 0 if ok else 1

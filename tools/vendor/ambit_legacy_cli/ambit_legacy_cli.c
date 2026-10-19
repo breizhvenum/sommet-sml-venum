@@ -330,9 +330,16 @@ static int cmd_waypoints(void) {
         rname[15] = '\0';
         printf("%s    {\"name\": ", emitted ? ",\n" : "");
         json_str(stdout, wname);
+        /* ctime [36..42]: sec, min, hour, day, month, year u16. On a ROUTE waypoint SuuntoLink
+         * writes 1970-01-01 00:00:<rank> - the seconds are its place in the route (Ambit1
+         * capture zzambit1full: Pont-Thibault 0, Voie Verte 1 ... Arras Town Hall 8) - so a
+         * rewrite of the list must carry them back or every route waypoint becomes rank 0. */
         printf(", \"lat\": %.7f, \"lon\": %.7f, \"altitude_m\": 0, \"type\": %u, "
-               "\"index\": %u, \"route_name\": ",
-               lat / 10000000.0, lon / 10000000.0, type, widx);
+               "\"index\": %u, \"ctime_second\": %u, \"ctime_minute\": %u, \"ctime_hour\": %u, "
+               "\"ctime_day\": %u, \"ctime_month\": %u, \"ctime_year\": %u, \"route_name\": ",
+               lat / 10000000.0, lon / 10000000.0, type, widx,
+               reply[36], reply[37], reply[38], reply[39], reply[40],
+               (unsigned)reply[41] | ((unsigned)reply[42] << 8));
         json_str(stdout, rname);
         printf("}");
         emitted++;
@@ -431,9 +438,11 @@ static int cmd_settings(void) {
             json_str(stdout, wname);
         }
         printf(", \"lat\": %.7f, \"lon\": %.7f, \"altitude_m\": %u, \"type\": %u, "
-               "\"index\": %u, \"route_name\": ",
+               "\"index\": %u, \"ctime_second\": %u, \"ctime_minute\": %u, \"ctime_hour\": %u, "
+               "\"ctime_day\": %u, \"ctime_month\": %u, \"ctime_year\": %u, \"route_name\": ",
                w->latitude / 10000000.0, w->longitude / 10000000.0, w->altitude, w->type,
-               w->index);
+               w->index, w->ctime_second, w->ctime_minute, w->ctime_hour, w->ctime_day,
+               w->ctime_month, w->ctime_year);
         /* On the Ambit1/2 a "route" is a set of waypoints sharing a route_name (libambit
          * reads them as waypoints, never fills ps->routes) - surface it so the backend can
          * regroup them into routes. Same strncpy(15)-no-terminator bound as name above. */

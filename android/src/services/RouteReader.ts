@@ -20,6 +20,12 @@ const AMBIT3_ROUTE_BASE = 0x14c080;
 const AMBIT3_ROUTE_REGION_SIZE = 130000;
 
 const WAYPOINT_HEADER_MAGIC = 0x0334;
+// The waypoint header's magic is 0x300 + the record size: 0x0334 = 52 bytes (Ambit3), 0x0336 =
+// 54 bytes on the Traverse / Traverse Alpha, whose records add an int16 altitude after the
+// longitude (SuuntoLink's WaypointsAreaConverter; tools/ambit_format.py has the details).
+const WAYPOINT_HEADER_MAGIC_ALT = 0x0336;
+const waypointSize = (magic: number): number | null =>
+  magic === WAYPOINT_HEADER_MAGIC ? 52 : magic === WAYPOINT_HEADER_MAGIC_ALT ? 54 : null;
 const ROUTE_HEADER_MAGIC = 0x340c;
 const ALTITUDE_NONE = 30000;
 
@@ -107,9 +113,10 @@ export function navUsedSizes(
   let routeUsed = routeFull;
   try {
     const w = base64ToBytes(waypointHeaderB64);
-    if (w.length >= 4 && readU16(w, 0) === WAYPOINT_HEADER_MAGIC) {
+    const size = w.length >= 4 ? waypointSize(readU16(w, 0)) : null;
+    if (size) {
       const n = readU16(w, 2);
-      waypointUsed = Math.min(waypointFull, WAYPOINT_DESC_OFFSET + 52 * n + 4);
+      waypointUsed = Math.min(waypointFull, WAYPOINT_DESC_OFFSET + size * n + 4);
     }
   } catch { /* keep full */ }
   try {
@@ -139,14 +146,16 @@ export function decodeNavigation(waypointsB64: string, routesB64: string): Watch
   const wptMagic = readU16(wRegion, 0);
   const wptCount = readU16(wRegion, 2);
   const waypoints: WatchWaypoint[] = [];
-  if (wptMagic === WAYPOINT_HEADER_MAGIC) {
+  const wsize = waypointSize(wptMagic);
+  if (wsize) {
+    const shift = wsize - 52; // 2 on a Traverse: the altitude sits before the names
     for (let i = 0; i < wptCount; i++) {
-      const off = WAYPOINT_DESC_OFFSET + 52 * i;
-      if (off + 52 > wRegion.length) break;
+      const off = WAYPOINT_DESC_OFFSET + wsize * i;
+      if (off + wsize > wRegion.length) break;
       const latitude = readI32(wRegion, off) / 1e7;
       const longitude = readI32(wRegion, off + 4) / 1e7;
-      const name = readNulString(wRegion, off + 8, 16);
-      const routeName = readNulString(wRegion, off + 24, 16);
+      const name = readNulString(wRegion, off + 8 + shift, 16);
+      const routeName = readNulString(wRegion, off + 24 + shift, 16);
       waypoints.push({ name: name || 'Waypoint', routeName, latitude, longitude });
     }
   }

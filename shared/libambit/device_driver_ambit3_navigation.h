@@ -96,6 +96,22 @@ typedef struct ambit3_nav_plan_s {
 int ambit3_navigation_plan(const ambit3_nav_route_t *routes, size_t route_count,
                            ambit3_nav_plan_t *plan);
 
+/*
+ * Same, for a given waypoint record size: AMBIT3_WAYPOINT_DESC_LEN (52) on the Ambit3
+ * Peak/Sport/Run/Vertical, AMBIT3_WAYPOINT_DESC_LEN_ALT (54) on the Traverse ("Jabiru") and
+ * Traverse Alpha ("Loon"), whose records carry an int16 altitude after the longitude. The
+ * waypoint header's magic is 0x300 + that size (0x0334 / 0x0336). Source: SuuntoLink's own
+ * WaypointsAreaConverter, which picks 0x36/0x336 for exactly those two models, and the
+ * Traverse 2.0.22 firmware, whose waypoint CRC walks 0x36-byte records.
+ */
+#define AMBIT3_WAYPOINT_DESC_LEN      52
+#define AMBIT3_WAYPOINT_DESC_LEN_ALT  54
+int ambit3_navigation_plan_sized(const ambit3_nav_route_t *routes, size_t route_count,
+                                 size_t waypoint_len, ambit3_nav_plan_t *plan);
+
+/* 54 for the models "Jabiru" / "Loon" (device_info.model), else 52. */
+size_t ambit3_waypoint_len_for_model(const char *model);
+
 void ambit3_navigation_plan_free(ambit3_nav_plan_t *plan);
 
 /* Plan that empties the navigation database: both headers alone, counters at zero. */

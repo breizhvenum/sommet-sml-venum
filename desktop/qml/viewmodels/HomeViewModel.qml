@@ -108,7 +108,7 @@ QtObject {
     }
     readonly property var routeWatches: {
         const ws = DeviceService.connectedWatches || []
-        const noRoutes = ["Bluebird", "Duck", "Colibri", "Greentit", "Hoopoe"]
+        const noRoutes = ["Hoopoe"]   // Kailash; Ambit1/2 take routes since 2026-10-19
         if (ws.length === 0)
             return connected && DeviceCapabilities.supportsRouteWrite
                 ? [{ productId: -1, serial: "", label: deviceDisplayName }] : []

@@ -17,7 +17,7 @@ import sys
 
 import ambit_format as F
 from write_nav import (CMD_DEVICE_INFO, CMD_POI_WRITE, POI_ENTRY, SBEM_WRITE_PREFIX, Link,
-                       build_poi_record, build_reset, build_routes, check_memory_map,
+                       build_poi_record, build_reset, build_routes, check_memory_map, waypoint_size,
                        read_memory_map, read_pois, send_plan)
 
 
@@ -55,12 +55,13 @@ def main():
     check_memory_map(read_memory_map(link))
 
     # 1. Clear everything (this erases the POI store too - we intentionally never restore it).
-    flash, layout = build_reset()
+    wsize = waypoint_size(link)                    # 54-byte waypoint records on a Traverse
+    flash, layout = build_reset(wsize)
     send_plan(link, flash, layout)
 
     # 2. Write the routes, if any (build_routes rebuilds the whole Routes region from these).
     if args.route:
-        flash, layout = build_routes([pathlib.Path(p) for p in args.route], None)
+        flash, layout = build_routes([pathlib.Path(p) for p in args.route], None, wsize)
         send_plan(link, flash, layout)
 
     # 3. Write exactly the fresh POI list onto the now-empty POI store.

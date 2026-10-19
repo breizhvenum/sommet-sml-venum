@@ -10,6 +10,7 @@ import {
   WatchNavigation, WatchRoute, WatchWaypoint,
 } from './RouteReader';
 import { readNavBases } from './MemoryMap';
+import { sendLegacyRoute } from './AmbitLegacyNav';
 
 // AMBIT3_MAX_ROUTE_POINTS / AMBIT3_MAX_NAME_BYTES from
 // android/app/src/main/cpp/libambit/device_driver_ambit3_navigation.h —
@@ -178,7 +179,8 @@ export function routeFromGpx(xml: string, fallbackName: string): PendingRoute {
  * choose or pass. If a BLE link is already up it's used as-is (no re-scan/re-pair);
  * otherwise the cable is opened.
  */
-export async function uploadRoute(route: PendingRoute, onState: Listener): Promise<void> {
+export async function uploadRoute(route: PendingRoute, onState: Listener,
+                                  opts: { legacy?: boolean } = {}): Promise<void> {
   const emit = (s: SendRouteState) => onState(s);
   const meta = { routeName: route.name, pointCount: route.points.length, waypointCount: route.waypoints.length };
 
@@ -192,7 +194,13 @@ export async function uploadRoute(route: PendingRoute, onState: Listener): Promi
 
   emit({ phase: 'writing', ...meta });
   try {
-    await writeRoute(route);
+    if (opts.legacy) {
+      // Ambit1/2: their own route region + the waypoint list (AmbitLegacyNav.sendLegacyRoute);
+      // unlike the Ambit3 path this keeps the routes already on the watch.
+      await sendLegacyRoute(route);
+    } else {
+      await writeRoute(route);
+    }
     await clearNavigationCache(); // real watch state just changed - see below
     emit({ phase: 'done', ...meta });
   } catch (e: any) {

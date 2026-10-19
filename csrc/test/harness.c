@@ -7,6 +7,7 @@
  *   POINT <lat_e7> <lon_e7> <altitude>
  *   WPT   <lat_e7> <lon_e7> <point_index> <name>
  *   RESET
+ *   WPTLEN <52|54>   (waypoint record size; 54 = Traverse layout, default 52)
  *
  * Output:
  *   W <hex_address> <length> <hex_bytes>
@@ -40,6 +41,7 @@ int main(void)
     char line[512];
     size_t route_count = 0;
     int reset = 0;
+    size_t wpt_len = AMBIT3_WAYPOINT_DESC_LEN;
     ambit3_nav_plan_t plan;
     size_t i;
 
@@ -47,6 +49,8 @@ int main(void)
         trim(line);
         if (strncmp(line, "RESET", 5) == 0) {
             reset = 1;
+        } else if (strncmp(line, "WPTLEN ", 7) == 0) {
+            wpt_len = (size_t)strtoul(line + 7, NULL, 10);
         } else if (strncmp(line, "ROUTE ", 6) == 0) {
             ambit3_nav_route_t *r;
             unsigned distance, ascent, descent, stamp, mo, da, ho, mi, se;
@@ -117,7 +121,7 @@ int main(void)
             fprintf(stderr, "reset plan impossible\n");
             return 1;
         }
-    } else if (ambit3_navigation_plan(routes, route_count, &plan) != 0) {
+    } else if (ambit3_navigation_plan_sized(routes, route_count, wpt_len, &plan) != 0) {
         fprintf(stderr, "plan impossible\n");
         return 1;
     }

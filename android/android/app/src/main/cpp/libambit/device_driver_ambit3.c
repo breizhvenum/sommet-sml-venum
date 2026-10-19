@@ -1434,7 +1434,11 @@ int ambit3_write_route_to_watch(ambit_object_t *object, const ambit3_nav_route_t
         return -1;
     }
 
-    if (ambit3_navigation_plan(routes, route_count, &plan) != 0) {
+    /* Waypoint records are 54 bytes on the Traverse / Traverse Alpha (an altitude after the
+     * longitude), 52 elsewhere - chosen by model name, as SuuntoLink does. */
+    if (ambit3_navigation_plan_sized(routes, route_count,
+                                     ambit3_waypoint_len_for_model(object->device_info.model),
+                                     &plan) != 0) {
         LOG_ERROR("ambit3_write_route_to_watch: failed to build the navigation plan "
                    "(a limit was likely exceeded -- see AMBIT3_MAX_* in the header)");
         return -1;
