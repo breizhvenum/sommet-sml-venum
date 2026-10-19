@@ -7,6 +7,45 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-19: Card-started workouts play the step melody and show "Workout ended" (firmware patch, desktop 0.2.49)
+
+Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-19, hardware-confirmed.
+
+- **Card → Start → Running now plays the step melody at each step change and shows "Workout ended"
+  at the finish**, matching what starting the same workout from the WORKOUT menu has always done.
+  Previously the card-start path only gave the step pop-up, the light and the HR-zone beep (see
+  2026-10-18 entry) - no melody, no end screen - because only the WORKOUT-menu's own start
+  registers the firmware's guidance listener. A 14-byte MSP430X trampoline at the card-start call
+  site now registers that same listener before the original call runs.
+- **This is a one-off firmware patch to this specific watch**, not an automatic app behavior - it
+  required finding and fixing a real bug in the firmware container's per-packet CRC handling (the
+  watch's own updater silently drops any 512-byte block whose inner USB-packet CRCs don't all
+  check out, which is why two earlier, address-correct attempts both failed with E02 before this
+  one). Full account, including the two real failures and what they taught:
+  `.scratch/watch-emulator/issues/01-run-the-ambit3-watch-program-on-the-pc.md`.
+- The very first step of a workout (no prior step to transition *from*) doesn't get a melody,
+  on the card-start path or the WORKOUT-menu path - expected, not a regression.
+
+---
+
+## 2026-10-18: Training day runs from plain "Running" (desktop 0.2.48 + tools)
+
+Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-18, on stock firmware.
+
+- **Card → Start → plain "Running" runs the day's workout with its step pop-ups**: "Brisk Walk",
+  "Jog", "Walk", ... then the end of the workout, matching the watch emulator second by second. On
+  other days Running is a free run. The separate "Running workout" sport mode is no longer needed.
+- **Sync:** with "Training day on the watch" on, the upcoming workouts (up to five, each gated on
+  its date) become rules of the sport mode the plan names. The rules go on the exercise mode that
+  sport mode's own `Exercises` list points to, never the one at the same position. A real sync on
+  the Peak was read back: Running held 19, 21, 24, 26 and 28/10, every gate on its date, no rules
+  left elsewhere. The "Create <sport> workout" prompt is gone.
+- **Beep:** a step change gives the pop-up and the light. The workout's only beep is its HR-zone
+  alarm (HR outside the step's zone), so a step whose zone the HR is already in changes silently.
+- The 2026-10-16 entry's "Running workout" mode is replaced by plain Running.
+
+---
+
 ## 2026-10-16: The training card starts the day's workout with its steps on screen (desktop 0.2.47 + tools)
 
 Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-16, on stock firmware.
