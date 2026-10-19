@@ -3,6 +3,13 @@ __pycache__/
 csrc/build/
 venv/
 
+# Stray downloaded files that landed in the repo root - never commit these to the public repo
+# (a third-party .xapk, scratch jpegs, an exported polygon dump). Root-anchored, so real assets
+# under subdirectories are unaffected.
+/*.xapk
+/*.jpeg
+/ele_polys.txt
+
 # Personal, local-only training-coach scaffold. It is its own git repo (coach/.git)
 # with NO remote, so it can never be pushed/published from this repository.
 /coach/
