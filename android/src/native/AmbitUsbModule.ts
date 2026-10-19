@@ -144,9 +144,10 @@ export interface NativeRoute {
   timestampSec: number; // timestamp Unix réel ; la conversion vers l'epoch de la montre se fait côté natif
 }
 
-/** La montre doit déjà être connectée (connect() appelé avant). */
-export function writeRoute(route: NativeRoute): Promise<boolean> {
-  return NativeAmbit.writeRoute(route);
+/** Writes the watch's whole route list in one go: pass the routes already on it along with
+ *  the new one (RouteMerge.mergeRoutes), or they are gone. The watch must be connected. */
+export function writeRoutes(routes: NativeRoute[]): Promise<boolean> {
+  return NativeAmbit.writeRoutes(routes);
 }
 
 /**

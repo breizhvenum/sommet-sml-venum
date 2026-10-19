@@ -226,7 +226,7 @@ export default function RouteScreen() {
     if (!pending || sendBusy) return;
     Alert.alert(
       t.sendRouteConfirmTitle,
-      params.legacy ? t.sendRouteConfirmMsgKeep : t.sendRouteConfirmMsg,
+      t.sendRouteConfirmMsgKeep,
       [
         { text: t.cancel, style: 'cancel' },
         { text: t.sendRouteConfirmBtn, onPress: runUpload },

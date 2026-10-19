@@ -50,6 +50,49 @@ EXTS = (".gpx", ".tcx", ".fit")
 BACKUP_DIR = os.path.join(os.path.expanduser("~"), "AmbitAppBackups", "wahoo")
 
 
+# Wahoo's routing page (support.wahoofitness.com, "Routes for ELEMNT computers", read 2026-10-19):
+# turn-by-turn is limited to 200 km for a route file without embedded cues. The route still goes
+# on the ELEMNT and is followed as a line; only the turn prompts stop.
+TURN_BY_TURN_LIMIT_KM = 200
+
+
+def _km(points):
+    import math
+    total = 0.0
+    for (a, b), (c, d) in zip(points, points[1:]):
+        p1, p2 = math.radians(a), math.radians(c)
+        h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(d - b) / 2) ** 2
+        total += 2 * 6371.0 * math.asin(min(1.0, math.sqrt(h)))
+    return total
+
+
+def turn_by_turn_note(path):
+    """A note for the rider when the ELEMNT will give no turn prompts past 200 km: a GPX or TCX
+    longer than that with no cues in it (GPX <wpt>, TCX <CoursePoint>). None otherwise, and for
+    FIT files (their course points are not read here)."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".gpx", ".tcx"):
+        return None
+    text = open(path, encoding="utf-8", errors="replace").read()
+    if ext == ".gpx":
+        cues = re.search(r"<(?:\w+:)?wpt\b", text)
+        pts = []
+        for tag in re.findall(r"<(?:\w+:)?(?:trkpt|rtept)\b[^>]*>", text):   # lat/lon in any order
+            lat, lon = re.search(r'\blat="([-\d.]+)"', tag), re.search(r'\blon="([-\d.]+)"', tag)
+            if lat and lon:
+                pts.append((float(lat.group(1)), float(lon.group(1))))
+    else:
+        cues = re.search(r"<(?:\w+:)?CoursePoint\b", text)
+        pts = [(float(a), float(b)) for a, b in re.findall(
+            r"<(?:\w+:)?LatitudeDegrees>([-\d.]+)</(?:\w+:)?LatitudeDegrees>\s*"
+            r"<(?:\w+:)?LongitudeDegrees>([-\d.]+)</", text)]
+    km = _km(pts)
+    if cues or km <= TURN_BY_TURN_LIMIT_KM:
+        return None
+    return ("%d km with no turn cues: Wahoo gives turn-by-turn only up to %d km on a route "
+            "without cues. Split it, or send one with cues." % (round(km), TURN_BY_TURN_LIMIT_KM))
+
+
 def named_copy(path, name, tmpdir):
     """A copy of the route whose own name is `name` - the ELEMNT shows the name stored INSIDE a
     GPX / TCX, not the file name (seen 2026-10-03). FIT files are sent as they are."""
@@ -237,6 +280,9 @@ def main():
             if os.path.splitext(path)[1].lower() not in EXTS:
                 raise ValueError("the ELEMNT takes GPX, TCX or FIT routes")
             out = {"route": _usb_send(serial, path, name) if how == "usb" else _ble_send(path, name)}
+            note = turn_by_turn_note(path)
+            if note:
+                out["warning"] = note
         else:
             if how != "usb":
                 raise RuntimeError("deleting a route needs the USB cable (it edits the ELEMNT's database)")

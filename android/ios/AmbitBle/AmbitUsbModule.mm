@@ -6,7 +6,7 @@
 //  On iOS there is no USB — the name is kept only because the JS layer imports
 //  the module by that name and every watch operation is transport-agnostic: it
 //  acts on the shared connected device (ambit_ios_active_device()), which the
-//  BLE handshake in AmbitBleModule produced. So the same getLogs/writeRoute/
+//  BLE handshake in AmbitBleModule produced. So the same getLogs/writeRoutes/
 //  readRegion/settings/sport-mode operations work over BLE with no JS changes,
 //  exactly as they do over USB/JNI on Android.
 //
@@ -820,51 +820,62 @@ RCT_EXPORT_METHOD(setDateTime:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromi
 }
 
 // ── Navigation: route + POI writes ─────────────────────────────────────────
-RCT_EXPORT_METHOD(writeRoute:(NSDictionary *)route resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
+// The watch's whole route list in one write: the JS side (RouteMerge.ts) passes the routes
+// already on the watch along with the new one, which is how a send keeps them (routes/05).
+RCT_EXPORT_METHOD(writeRoutes:(NSArray *)routes resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
     ambit_object_t *dev = ambit_ios_active_device();
     if (!dev) { reject(@"NOT_CONNECTED", @"Watch not connected", nil); return; }
+    if (routes.count == 0 || routes.count > AMBIT3_MAX_ROUTES) { reject(@"BAD_ROUTE", @"1 to 50 routes", nil); return; }
 
-    NSArray *pts = route[@"points"];  NSArray *wpts = route[@"waypoints"];
-    if (pts.count < 2) { reject(@"BAD_ROUTE", @"route has fewer than 2 points", nil); return; }
-    if (wpts.count == 0) { reject(@"BAD_ROUTE", @"route has no waypoints — it would not show on the watch", nil); return; }
-
-    std::vector<ambit3_nav_point_t> points(pts.count);
-    for (NSUInteger i = 0; i < pts.count; i++) {
-        NSDictionary *p = pts[i];
-        points[i].latitude  = (int32_t)llround([p[@"lat"] doubleValue] * 1e7);
-        points[i].longitude = (int32_t)llround([p[@"lon"] doubleValue] * 1e7);
-        id alt = p[@"alt"];
-        points[i].altitude  = (alt == nil || alt == NSNull.null) ? 0 : (int)[alt intValue];
-    }
-    std::vector<ambit3_nav_waypoint_t> waypoints(wpts.count);
-    for (NSUInteger i = 0; i < wpts.count; i++) {
-        NSDictionary *w = wpts[i];
-        waypoints[i].latitude    = (int32_t)llround([w[@"lat"] doubleValue] * 1e7);
-        waypoints[i].longitude   = (int32_t)llround([w[@"lon"] doubleValue] * 1e7);
-        waypoints[i].point_index = (uint16_t)[w[@"pointIndex"] intValue];
-        const char *n = [(w[@"name"] ?: @"") UTF8String];
-        strncpy(waypoints[i].name, n, sizeof(waypoints[i].name) - 1);
-        waypoints[i].name[sizeof(waypoints[i].name) - 1] = '\0';
-    }
-
+    // One vector per route, kept alive until the write (the route structs point into them).
+    std::vector<std::vector<ambit3_nav_point_t>> points(routes.count);
+    std::vector<std::vector<ambit3_nav_waypoint_t>> waypoints(routes.count);
+    std::vector<ambit3_nav_route_t> rs(routes.count);
     // The route index timestamp uses the watch's own non-Unix epoch — same
     // offset jni_bridge.cpp applies (unix_epoch - route_epoch, precomputed).
     static const int64_t AMBIT3_ROUTE_EPOCH_OFFSET_SEC = 508055296;
-    long long tsSec = [route[@"timestampSec"] longLongValue];
 
-    ambit3_nav_route_t r = {};
-    strncpy(r.name, [(route[@"name"] ?: @"") UTF8String], sizeof(r.name) - 1);
-    r.points = points.data();     r.point_count = (uint16_t)pts.count;
-    r.distance = (uint32_t)[route[@"distanceM"] intValue];
-    r.ascent   = (uint16_t)[route[@"ascentM"] intValue];
-    r.descent  = (uint16_t)[route[@"descentM"] intValue];
-    r.timestamp = (uint32_t)(tsSec + AMBIT3_ROUTE_EPOCH_OFFSET_SEC);
-    r.waypoints = waypoints.data(); r.waypoint_count = (uint16_t)wpts.count;
-    time_t t = (time_t)tsSec; struct tm tmv; gmtime_r(&t, &tmv);
-    r.month = (uint8_t)(tmv.tm_mon + 1); r.day = (uint8_t)tmv.tm_mday;
-    r.hour = (uint8_t)tmv.tm_hour; r.minute = (uint8_t)tmv.tm_min; r.second = (uint8_t)tmv.tm_sec;
+    for (NSUInteger k = 0; k < routes.count; k++) {
+        NSDictionary *route = routes[k];
+        NSArray *pts = route[@"points"];  NSArray *wpts = route[@"waypoints"];
+        if (pts.count < 2) { reject(@"BAD_ROUTE", @"route has fewer than 2 points", nil); return; }
+        if (wpts.count == 0) { reject(@"BAD_ROUTE", @"route has no waypoints — it would not show on the watch", nil); return; }
 
-    if (ambit3_write_route_to_watch(dev, &r, 1) == 0) resolve(@YES);
+        points[k].resize(pts.count);
+        for (NSUInteger i = 0; i < pts.count; i++) {
+            NSDictionary *p = pts[i];
+            points[k][i].latitude  = (int32_t)llround([p[@"lat"] doubleValue] * 1e7);
+            points[k][i].longitude = (int32_t)llround([p[@"lon"] doubleValue] * 1e7);
+            id alt = p[@"alt"];
+            points[k][i].altitude  = (alt == nil || alt == NSNull.null) ? 30000 /* AMBIT3_ALTITUDE_NONE */ : (int)[alt intValue];
+        }
+        waypoints[k].resize(wpts.count);
+        for (NSUInteger i = 0; i < wpts.count; i++) {
+            NSDictionary *w = wpts[i];
+            ambit3_nav_waypoint_t &wp = waypoints[k][i];
+            wp = {};
+            wp.latitude    = (int32_t)llround([w[@"lat"] doubleValue] * 1e7);
+            wp.longitude   = (int32_t)llround([w[@"lon"] doubleValue] * 1e7);
+            wp.point_index = (uint16_t)[w[@"pointIndex"] intValue];
+            strncpy(wp.name, [(w[@"name"] ?: @"") UTF8String], sizeof(wp.name) - 1);
+        }
+
+        long long tsSec = [route[@"timestampSec"] longLongValue];
+        ambit3_nav_route_t &r = rs[k];
+        r = {};
+        strncpy(r.name, [(route[@"name"] ?: @"") UTF8String], sizeof(r.name) - 1);
+        r.points = points[k].data();     r.point_count = (uint16_t)pts.count;
+        r.distance = (uint32_t)[route[@"distanceM"] intValue];
+        r.ascent   = (uint16_t)[route[@"ascentM"] intValue];
+        r.descent  = (uint16_t)[route[@"descentM"] intValue];
+        r.timestamp = (uint32_t)(tsSec + AMBIT3_ROUTE_EPOCH_OFFSET_SEC);
+        r.waypoints = waypoints[k].data(); r.waypoint_count = (uint16_t)wpts.count;
+        time_t t = (time_t)tsSec; struct tm tmv; gmtime_r(&t, &tmv);
+        r.month = (uint8_t)(tmv.tm_mon + 1); r.day = (uint8_t)tmv.tm_mday;
+        r.hour = (uint8_t)tmv.tm_hour; r.minute = (uint8_t)tmv.tm_min; r.second = (uint8_t)tmv.tm_sec;
+    }
+
+    if (ambit3_write_route_to_watch(dev, rs.data(), rs.size()) == 0) resolve(@YES);
     else reject(@"WRITE_ROUTE_FAILED", @"ambit3_write_route_to_watch failed", nil);
 }
 

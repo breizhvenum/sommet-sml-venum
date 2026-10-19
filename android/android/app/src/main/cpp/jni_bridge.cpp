@@ -1077,123 +1077,124 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSendSgee(
 }
 
 /**
- * nativeAmbitWriteRoute
+ * nativeAmbitWriteRoutes
  *
- * Writes a single route (already simplified to <= AMBIT3_MAX_ROUTE_POINTS
- * points on the JS side — see src/services/RouteSimplify.ts) to the watch's
- * navigation database, via ambit3_write_route_to_watch() in
- * device_driver_ambit3.c. Route points and waypoints are passed as parallel
- * primitive arrays since that's what crosses the JNI boundary cheaply;
- * everything else (GPX parsing, simplification, the caller-supplied
- * distance/ascent/descent/timestamp) already happened on the JS side.
+ * Writes the watch's whole route list in one go, via ambit3_write_route_to_watch() in
+ * device_driver_ambit3.c. The watch takes its navigation database as one block, so the JS
+ * side (RouteMerge.ts) passes the routes already on the watch along with the new one: that is
+ * how a send keeps them (routes/05, desktop parity). Each route is already simplified to
+ * <= AMBIT3_MAX_ROUTE_POINTS points (RouteSimplify.ts).
  *
- * @return true on success. On false, check logcat tag "AmbitJNI" for which
- * step failed — the native side logs a specific reason for every failure
- * path (see device_driver_ambit3.c's ambit3_write_route_to_watch).
+ * Several routes cross the JNI boundary as flat primitive arrays: route r owns the next
+ * ptCounts[r] points and wptCounts[r] waypoints, in order. wptPointIndex is relative to the
+ * route's own points.
+ *
+ * @return true on success. On false, check logcat tag "AmbitJNI" for which step failed.
  */
 JNIEXPORT jboolean JNICALL
-Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitWriteRoute(
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitWriteRoutes(
         JNIEnv *env, jobject /* thiz */,
-        jstring routeName,
+        jobjectArray routeNames, jintArray ptCounts, jintArray wptCounts,
+        jintArray distanceM, jintArray ascentM, jintArray descentM, jlongArray timestampSec,
         jdoubleArray ptLat, jdoubleArray ptLon, jintArray ptAlt,
-        jdoubleArray wptLat, jdoubleArray wptLon, jobjectArray wptName, jintArray wptPointIndex,
-        jint distanceM, jint ascentM, jint descentM, jlong timestampSec)
+        jdoubleArray wptLat, jdoubleArray wptLon, jobjectArray wptName, jintArray wptPointIndex)
 {
-    if (!g_device) { LOGE("nativeAmbitWriteRoute: Not connected"); return JNI_FALSE; }
+    if (!g_device) { LOGE("nativeAmbitWriteRoutes: Not connected"); return JNI_FALSE; }
 
-    jsize point_count = env->GetArrayLength(ptLat);
-    jsize waypoint_count = wptLat ? env->GetArrayLength(wptLat) : 0;
-
-    if (point_count < 2) {
-        LOGE("nativeAmbitWriteRoute: route has fewer than 2 points (%d)", point_count);
-        return JNI_FALSE;
-    }
-    if (waypoint_count == 0) {
-        // Not just a style nit: a route with zero on-device waypoints reads back
-        // self-consistent (both CRCs match) but never appears in the watch's own
-        // Navigation menu, confirmed on real hardware. The caller (RouteSimplify /
-        // NavigationService) must always synthesize a Start/End pair when the
-        // source GPX has no type="Waypoint" entries -- this is the last line of
-        // defense, not the intended fix point.
-        LOGE("nativeAmbitWriteRoute: route has no waypoints, refusing -- it would "
-             "write successfully but never show up on the watch");
+    const jsize route_count = env->GetArrayLength(routeNames);
+    const jsize total_points = env->GetArrayLength(ptLat);
+    const jsize total_wpts = env->GetArrayLength(wptLat);
+    if (route_count == 0 || route_count > AMBIT3_MAX_ROUTES) {
+        LOGE("nativeAmbitWriteRoutes: %d routes (1..%d)", route_count, AMBIT3_MAX_ROUTES);
         return JNI_FALSE;
     }
 
-    const char *name_utf8 = env->GetStringUTFChars(routeName, nullptr);
+    std::vector<jint> pc(route_count), wc(route_count), dist(route_count), asc(route_count), desc(route_count);
+    std::vector<jlong> ts(route_count);
+    env->GetIntArrayRegion(ptCounts, 0, route_count, pc.data());
+    env->GetIntArrayRegion(wptCounts, 0, route_count, wc.data());
+    env->GetIntArrayRegion(distanceM, 0, route_count, dist.data());
+    env->GetIntArrayRegion(ascentM, 0, route_count, asc.data());
+    env->GetIntArrayRegion(descentM, 0, route_count, desc.data());
+    env->GetLongArrayRegion(timestampSec, 0, route_count, ts.data());
 
-    jdouble *lat = env->GetDoubleArrayElements(ptLat, nullptr);
-    jdouble *lon = env->GetDoubleArrayElements(ptLon, nullptr);
-    jint    *alt = env->GetIntArrayElements(ptAlt, nullptr);
+    std::vector<jdouble> lat(total_points), lon(total_points), wlat(total_wpts), wlon(total_wpts);
+    std::vector<jint> alt(total_points), widx(total_wpts);
+    env->GetDoubleArrayRegion(ptLat, 0, total_points, lat.data());
+    env->GetDoubleArrayRegion(ptLon, 0, total_points, lon.data());
+    env->GetIntArrayRegion(ptAlt, 0, total_points, alt.data());
+    env->GetDoubleArrayRegion(wptLat, 0, total_wpts, wlat.data());
+    env->GetDoubleArrayRegion(wptLon, 0, total_wpts, wlon.data());
+    env->GetIntArrayRegion(wptPointIndex, 0, total_wpts, widx.data());
 
-    std::vector<ambit3_nav_point_t> points(point_count);
-    for (jsize i = 0; i < point_count; i++) {
+    std::vector<ambit3_nav_point_t> points(total_points);
+    for (jsize i = 0; i < total_points; i++) {
         points[i].latitude  = (int32_t)llround(lat[i] * 1e7);
         points[i].longitude = (int32_t)llround(lon[i] * 1e7);
         points[i].altitude  = alt[i];
     }
-
-    jdouble *wlat = env->GetDoubleArrayElements(wptLat, nullptr);
-    jdouble *wlon = env->GetDoubleArrayElements(wptLon, nullptr);
-    jint    *widx = env->GetIntArrayElements(wptPointIndex, nullptr);
-
-    std::vector<ambit3_nav_waypoint_t> waypoints(waypoint_count);
-    std::vector<std::string> wpt_names_utf8(waypoint_count); // keep alive until the call below
-    for (jsize i = 0; i < waypoint_count; i++) {
+    std::vector<ambit3_nav_waypoint_t> waypoints(total_wpts);
+    for (jsize i = 0; i < total_wpts; i++) {
         auto jname = (jstring)env->GetObjectArrayElement(wptName, i);
         const char *n = env->GetStringUTFChars(jname, nullptr);
-        wpt_names_utf8[i] = n;
+        waypoints[i] = {};
+        strncpy(waypoints[i].name, n, sizeof(waypoints[i].name) - 1);
         env->ReleaseStringUTFChars(jname, n);
         env->DeleteLocalRef(jname);
-
         waypoints[i].latitude    = (int32_t)llround(wlat[i] * 1e7);
         waypoints[i].longitude   = (int32_t)llround(wlon[i] * 1e7);
         waypoints[i].point_index = (uint16_t)widx[i];
-        strncpy(waypoints[i].name, wpt_names_utf8[i].c_str(), sizeof(waypoints[i].name) - 1);
-        waypoints[i].name[sizeof(waypoints[i].name) - 1] = '\0';
     }
 
-    // The route index's timestamp is seconds since an empirically-found, non-standard
-    // epoch (1953-11-25T17:31:44 UTC) -- not Unix time. HANDOFF.md: "the exact epoch
-    // ... is not a known round date", pinned to the second by matching a real capture,
-    // never explained further. `timestampSec` below is a real Unix timestamp (also
-    // used as-is for the calendar-component fields further down via gmtime_r); this
-    // offset converts it to what the route index itself expects.
-    static const int64_t AMBIT3_ROUTE_EPOCH_OFFSET_SEC = 508055296; // unix_epoch - route_epoch, precomputed
+    // The route index's timestamp is seconds since an empirically-found, non-standard epoch
+    // (1953-11-25T17:31:44 UTC), pinned to the second by matching a real capture.
+    // timestampSec is Unix time; this offset converts it.
+    static const int64_t AMBIT3_ROUTE_EPOCH_OFFSET_SEC = 508055296; // unix_epoch - route_epoch
 
-    ambit3_nav_route_t route = {};
-    strncpy(route.name, name_utf8, sizeof(route.name) - 1);
-    route.points = points.data();
-    route.point_count = (uint16_t)point_count;
-    route.distance = (uint32_t)distanceM;
-    route.ascent = (uint16_t)ascentM;
-    route.descent = (uint16_t)descentM;
-    route.timestamp = (uint32_t)((int64_t)timestampSec + AMBIT3_ROUTE_EPOCH_OFFSET_SEC);
-    route.waypoints = waypoints.data();
-    route.waypoint_count = (uint16_t)waypoint_count;
+    std::vector<ambit3_nav_route_t> routes(route_count);
+    jsize p_off = 0, w_off = 0;
+    for (jsize r = 0; r < route_count; r++) {
+        if (pc[r] < 2 || wc[r] < 1 || p_off + pc[r] > total_points || w_off + wc[r] > total_wpts) {
+            // A route with no waypoint writes fine but never shows in the watch's Navigation
+            // menu (seen on a real watch): the JS side always gives one at least a Start/End.
+            LOGE("nativeAmbitWriteRoutes: route %d has %d points, %d waypoints - refusing", r, pc[r], wc[r]);
+            return JNI_FALSE;
+        }
+        auto jname = (jstring)env->GetObjectArrayElement(routeNames, r);
+        const char *n = env->GetStringUTFChars(jname, nullptr);
+        ambit3_nav_route_t &route = routes[r];
+        route = {};
+        strncpy(route.name, n, sizeof(route.name) - 1);
+        env->ReleaseStringUTFChars(jname, n);
+        env->DeleteLocalRef(jname);
 
-    // month/day/hour/minute/second: the waypoint descriptor's own last-modification
-    // stamp, no year (see tools/README.md). Derived from timestampSec, UTC.
-    time_t t = (time_t)timestampSec;
-    struct tm tmv;
-    gmtime_r(&t, &tmv);
-    route.month  = (uint8_t)(tmv.tm_mon + 1);
-    route.day    = (uint8_t)tmv.tm_mday;
-    route.hour   = (uint8_t)tmv.tm_hour;
-    route.minute = (uint8_t)tmv.tm_min;
-    route.second = (uint8_t)tmv.tm_sec;
+        route.points = points.data() + p_off;
+        route.point_count = (uint16_t)pc[r];
+        route.waypoints = waypoints.data() + w_off;
+        route.waypoint_count = (uint16_t)wc[r];
+        route.distance = (uint32_t)dist[r];
+        route.ascent = (uint16_t)asc[r];
+        route.descent = (uint16_t)desc[r];
+        route.timestamp = (uint32_t)((int64_t)ts[r] + AMBIT3_ROUTE_EPOCH_OFFSET_SEC);
 
-    LOGI("nativeAmbitWriteRoute: writing '%s', %d points, %d waypoints", name_utf8, point_count, waypoint_count);
-    int ret = ambit3_write_route_to_watch(g_device, &route, 1);
+        // month/day/hour/minute/second: the waypoint descriptor's last-modification stamp
+        // (no year, see tools/README.md), from timestampSec in UTC.
+        time_t t = (time_t)ts[r];
+        struct tm tmv;
+        gmtime_r(&t, &tmv);
+        route.month  = (uint8_t)(tmv.tm_mon + 1);
+        route.day    = (uint8_t)tmv.tm_mday;
+        route.hour   = (uint8_t)tmv.tm_hour;
+        route.minute = (uint8_t)tmv.tm_min;
+        route.second = (uint8_t)tmv.tm_sec;
 
-    env->ReleaseDoubleArrayElements(ptLat, lat, JNI_ABORT);
-    env->ReleaseDoubleArrayElements(ptLon, lon, JNI_ABORT);
-    env->ReleaseIntArrayElements(ptAlt, alt, JNI_ABORT);
-    env->ReleaseDoubleArrayElements(wptLat, wlat, JNI_ABORT);
-    env->ReleaseDoubleArrayElements(wptLon, wlon, JNI_ABORT);
-    env->ReleaseIntArrayElements(wptPointIndex, widx, JNI_ABORT);
-    env->ReleaseStringUTFChars(routeName, name_utf8);
+        p_off += pc[r];
+        w_off += wc[r];
+    }
 
+    LOGI("nativeAmbitWriteRoutes: writing %d routes, %d points, %d waypoints",
+         route_count, total_points, total_wpts);
+    int ret = ambit3_write_route_to_watch(g_device, routes.data(), (size_t)route_count);
     if (ret != 0) { LOGE("ambit3_write_route_to_watch failed: %d", ret); return JNI_FALSE; }
     return JNI_TRUE;
 }
@@ -1202,7 +1203,7 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitWriteRoute(
  * nativeAmbitAddPoi
  *
  * Adds one POI to the watch, preserving every POI already there. Much
- * smaller/lower-risk than nativeAmbitWriteRoute: doesn't touch the
+ * smaller/lower-risk than nativeAmbitWriteRoutes: doesn't touch the
  * Waypoints/Routes flash regions at all, only the POI SBEM list.
  */
 JNIEXPORT jboolean JNICALL
@@ -2064,7 +2065,7 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitDisconnect(
  * indication, re-discovered services, found the custom service's write/
  * notify characteristics by UUID, and enabled notifications before calling
  * this — see AmbitBleModule.kt). Reuses the SAME g_device global as the USB
- * path: every other native export in this file (nativeAmbitWriteRoute,
+ * path: every other native export in this file (nativeAmbitWriteRoutes,
  * nativeAmbitReadRegion, nativeAmbitDisconnect, etc.) already operates on
  * g_device without caring how it was constructed, so BLE gets all of that
  * for free — only connection setup and the BLE frame codec (protocol_ble.c)
@@ -2108,7 +2109,7 @@ Java_com_ambitsyncmodern_ble_AmbitBleModule_nativeAmbitBleInit(
  * Called by AmbitBleModule.kt's onCharacteristicChanged for every raw GATT
  * notification received on the watch's notify characteristic. Forwards the
  * bytes into protocol_ble.c's frame reassembly — NOT called from the same
- * thread that nativeAmbitWriteRoute/etc. (and therefore
+ * thread that nativeAmbitWriteRoutes/etc. (and therefore
  * libambit_protocol_command_ble's blocking wait) run on.
  */
 JNIEXPORT void JNICALL

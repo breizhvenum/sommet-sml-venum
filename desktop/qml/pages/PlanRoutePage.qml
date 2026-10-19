@@ -260,10 +260,11 @@ Item {
                                   : qsTr("Sending to the ELEMNT…")
         api("POST", "/api/wahoo/route", { name: cleanName(), gpx: plannedGpx, via: via }, function(status, res) {
             busy = false
-            if (res && res.ok)
+            if (res && res.ok) {
                 statusMsg = via === "ble" ? qsTr("On the ELEMNT — open Routes there and press SYNC to import it.")
                                           : qsTr("On the ELEMNT — it's in its Routes list.")
-            else
+                if (res.warning) statusMsg += " " + res.warning   // over 200 km without cues
+            } else
                 statusMsg = res && res.error ? res.error : qsTr("Send to ELEMNT failed")
         })
     }

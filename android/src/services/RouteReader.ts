@@ -85,6 +85,8 @@ export interface WatchWaypoint {
   routeName: string;
   latitude: number;
   longitude: number;
+  /** Order of the waypoint in its route, from 0 (the tail's rank byte); absent on Ambit1/2. */
+  rank?: number;
 }
 
 export interface WatchNavigation {
@@ -156,7 +158,9 @@ export function decodeNavigation(waypointsB64: string, routesB64: string): Watch
       const longitude = readI32(wRegion, off + 4) / 1e7;
       const name = readNulString(wRegion, off + 8 + shift, 16);
       const routeName = readNulString(wRegion, off + 24 + shift, 16);
-      waypoints.push({ name: name || 'Waypoint', routeName, latitude, longitude });
+      // Tail = the last 12 bytes: u16 magic, month, day, hour, minute, second, rank, type, pad.
+      const rank = wRegion[off + wsize - 12 + 7];
+      waypoints.push({ name: name || 'Waypoint', routeName, latitude, longitude, rank });
     }
   }
 

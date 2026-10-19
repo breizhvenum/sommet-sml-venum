@@ -1,6 +1,6 @@
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { connect, disconnect, pickGpxFile, writeRoute, readRegion, saveToDownloads, getDeviceInfo, readLegacyNav, readLegacyRegion } from '../native/AmbitUsbModule';
+import { connect, disconnect, pickGpxFile, writeRoutes, readRegion, saveToDownloads, getDeviceInfo, readLegacyNav, readLegacyRegion } from '../native/AmbitUsbModule';
 import { ROUTE_REGION_ADDR, POINTS_OFFSET, parseHead, parseRoutes } from './LegacyRoute';
 import { isAmbit12 } from './AmbitSettingsService';
 import { parseRouteGpx, nearestPointIndex, RoutePoint } from './RouteGpxParser';
@@ -11,6 +11,7 @@ import {
 } from './RouteReader';
 import { readNavBases } from './MemoryMap';
 import { sendLegacyRoute } from './AmbitLegacyNav';
+import { mergeRoutes } from './RouteMerge';
 
 // AMBIT3_MAX_ROUTE_POINTS / AMBIT3_MAX_NAME_BYTES from
 // android/app/src/main/cpp/libambit/device_driver_ambit3_navigation.h —
@@ -75,8 +76,8 @@ export function computeDistanceAscentDescent(points: RoutePoint[]): { distanceM:
  * it: a route written this way is NOT durable. Any subsequent SuuntoLink
  * cable sync, or the Suunto phone app merely coming into BLE range, will
  * silently wholesale-replace whatever is in the watch's Routes region —
- * confirmed on hardware. POIs are preserved automatically on the native
- * side; existing on-watch routes are not. This is a "load right before you
+ * confirmed on hardware. POIs are kept on the native side, and the routes
+ * already on the watch are sent back with the new one. This is a "load right before you
  * go" feature, not a save.
  *
  * Transport (BLE vs USB) is auto-detected via the shared connect()/disconnect()
@@ -97,7 +98,7 @@ export interface PendingRoute {
 // old single sendRouteToWatch() into pick+parse / upload, matching desktop's own real
 // RouteService.pendingRoute pattern (RoutesPage.qml: import shows a live preview + a real
 // "Upload to watch" tap, not one opaque button that picks-and-immediately-writes). Same
-// underlying calls as before (pickGpxFile/parseRouteGpx/simplifyRoute/writeRoute), just the
+// underlying calls as before (pickGpxFile/parseRouteGpx/simplifyRoute/writeRoutes), just the
 // intermediate parsed route is now a real value the caller can render before committing to
 // a write, instead of being hidden inside one function.
 export async function pickAndParseRoute(): Promise<PendingRoute | null> {
@@ -171,8 +172,9 @@ export function routeFromGpx(xml: string, fallbackName: string): PendingRoute {
  * IMPORTANT, surfaced to the caller via SendRouteState so the UI can show it: a route
  * written this way is NOT durable. Any subsequent SuuntoLink cable sync, or the Suunto phone
  * app merely coming into BLE range, will silently wholesale-replace whatever is in the
- * watch's Routes region - confirmed on hardware. POIs are preserved automatically on the
- * native side; existing on-watch routes are not. This is a "load right before you go"
+ * watch's Routes region - confirmed on hardware. POIs are kept on the native side, and the
+ * routes already on the watch are read first and sent back with the new one (routes/05).
+ * This is a "load right before you go"
  * feature, not a save.
  *
  * Transport (BLE vs USB) is auto-detected via the shared connect()/disconnect() - nothing to
@@ -199,7 +201,17 @@ export async function uploadRoute(route: PendingRoute, onState: Listener,
       // unlike the Ambit3 path this keeps the routes already on the watch.
       await sendLegacyRoute(route);
     } else {
-      await writeRoute(route);
+      // Ambit3 / Traverse: the watch takes its whole route list in one write, so the routes
+      // already on it are read first and go back with the new one (desktop parity, routes/05).
+      // A failed read stops here: writing without them would delete them.
+      let nav: WatchNavigation;
+      try {
+        nav = await readAmbit3Navigation();
+      } catch (e: any) {
+        throw new Error("Couldn't read the routes already on the watch, nothing was written " +
+          `(they would have been lost): ${e?.message ?? e}`);
+      }
+      await writeRoutes(mergeRoutes(nav, route));
     }
     await clearNavigationCache(); // real watch state just changed - see below
     emit({ phase: 'done', ...meta });
@@ -323,27 +335,32 @@ export async function readOnWatchNavigation(): Promise<WatchNavigation> {
       }
     } catch { /* not legacy, or detection failed - fall through to the SBEM path */ }
 
-    const bases = await readNavBases();
-    // Size the reads down first (André, 2026-08-30 "routes take ~1min"): the routes region is
-    // ~130 KB allocated but only a few KB used, and over BLE every extra KB is many round trips.
-    // Read each region's small header, compute the USED length, then read only that. navUsedSizes
-    // falls back to the full size on any parse hiccup, so this never truncates real data.
-    const { waypointHeaderLen, routeHeaderLen } = navHeaderReadLen();
-    const [wHead, rHead] = await Promise.all([
-      readRegion(bases.waypointBase, Math.min(bases.waypointSize, waypointHeaderLen)),
-      readRegion(bases.routeBase, Math.min(bases.routeSize, routeHeaderLen)),
-    ]);
-    const { waypointUsed, routeUsed } = navUsedSizes(wHead, rHead, bases.waypointSize, bases.routeSize);
-    const [waypointsB64, routesB64] = await Promise.all([
-      readRegion(bases.waypointBase, waypointUsed),
-      readRegion(bases.routeBase, routeUsed),
-    ]);
-    const data = decodeNavigation(waypointsB64, routesB64);
+    const data = await readAmbit3Navigation();
     await AsyncStorage.setItem(NAV_CACHE_KEY, JSON.stringify(data)).catch(() => {});
     return data;
   } finally {
     await disconnect().catch(() => {});
   }
+}
+
+/** The Ambit3 / Traverse Routes and Waypoints regions, decoded. The watch must be connected. */
+async function readAmbit3Navigation(): Promise<WatchNavigation> {
+  const bases = await readNavBases();
+  // Size the reads down first (André, 2026-08-30 "routes take ~1min"): the routes region is
+  // ~130 KB allocated but only a few KB used, and over BLE every extra KB is many round trips.
+  // Read each region's small header, compute the USED length, then read only that. navUsedSizes
+  // falls back to the full size on any parse hiccup, so this never truncates real data.
+  const { waypointHeaderLen, routeHeaderLen } = navHeaderReadLen();
+  const [wHead, rHead] = await Promise.all([
+    readRegion(bases.waypointBase, Math.min(bases.waypointSize, waypointHeaderLen)),
+    readRegion(bases.routeBase, Math.min(bases.routeSize, routeHeaderLen)),
+  ]);
+  const { waypointUsed, routeUsed } = navUsedSizes(wHead, rHead, bases.waypointSize, bases.routeSize);
+  const [waypointsB64, routesB64] = await Promise.all([
+    readRegion(bases.waypointBase, waypointUsed),
+    readRegion(bases.routeBase, routeUsed),
+  ]);
+  return decodeNavigation(waypointsB64, routesB64);
 }
 
 /** Exports one already-read on-watch route/waypoint as its own GPX file in Downloads -

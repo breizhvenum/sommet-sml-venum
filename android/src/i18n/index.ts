@@ -364,15 +364,9 @@ const fr = {
   routeDoneMsg: (name: string, points: number, waypoints: number) =>
     `« ${name} » envoyée (${points} points, ${waypoints} waypoint${waypoints !== 1 ? 's' : ''})`,
   sendRouteConfirmTitle: 'Envoyer une route',
-  sendRouteConfirmMsg:
-    "Ceci va remplacer toute route déjà présente sur la montre. Vos POIs sont préservés " +
-    "automatiquement. Attention : cette route n'est pas permanente — la prochaine " +
-    "synchronisation SuuntoLink, ou même la simple proximité Bluetooth de l'app Suunto, " +
-    "la remplacera. C'est fait pour charger une route juste avant de partir, pas pour " +
-    "la stocker durablement.",
   sendRouteConfirmMsgKeep:
     "La route est ajoutée à celles déjà présentes sur la montre ; vos routes et POIs sont " +
-    "conservés. Une synchronisation SuuntoLink peut toutefois remplacer les routes qu'elle " +
+    "conservés. Une route du même nom est remplacée. Une synchronisation SuuntoLink peut toutefois remplacer les routes qu'elle " +
     "ne connaît pas.",
   sendRouteConfirmBtn: 'Envoyer',
   routeScreenTitle:   'Routes',
@@ -1208,14 +1202,9 @@ const en: typeof fr = {
   routeDoneMsg: (name: string, points: number, waypoints: number) =>
     `"${name}" sent (${points} points, ${waypoints} waypoint${waypoints !== 1 ? 's' : ''})`,
   sendRouteConfirmTitle: 'Send a route',
-  sendRouteConfirmMsg:
-    "This will replace any route already on the watch. Your POIs are preserved " +
-    "automatically. Note: this route isn't permanent — the next SuuntoLink sync, or " +
-    "even just the Suunto phone app coming into Bluetooth range, will replace it. " +
-    "This is for loading a route right before you go, not for permanent storage.",
   sendRouteConfirmMsgKeep:
     "The route is added to the ones already on the watch; your routes and POIs are kept. " +
-    "A SuuntoLink sync may still replace routes it doesn't know.",
+    "A route with the same name is replaced. A SuuntoLink sync may still replace routes it doesn't know.",
   sendRouteConfirmBtn: 'Send',
   routeScreenTitle:   'Routes',
   routeSendSection:   'Import a route',

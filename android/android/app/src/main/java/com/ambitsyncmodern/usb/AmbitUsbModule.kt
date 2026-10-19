@@ -86,11 +86,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     private external fun nativeAmbitGetLogAsFit(index: Int): String?
     private external fun nativeAmbitMarkReadLogsSynced(): Int
     private external fun nativeAmbitSendSgee(data: ByteArray): Boolean
-    private external fun nativeAmbitWriteRoute(
-        routeName: String,
+    private external fun nativeAmbitWriteRoutes(
+        routeNames: Array<String>, ptCounts: IntArray, wptCounts: IntArray,
+        distanceM: IntArray, ascentM: IntArray, descentM: IntArray, timestampSec: LongArray,
         ptLat: DoubleArray, ptLon: DoubleArray, ptAlt: IntArray,
-        wptLat: DoubleArray, wptLon: DoubleArray, wptName: Array<String>, wptPointIndex: IntArray,
-        distanceM: Int, ascentM: Int, descentM: Int, timestampSec: Long
+        wptLat: DoubleArray, wptLon: DoubleArray, wptName: Array<String>, wptPointIndex: IntArray
     ): Boolean
     private external fun nativeAmbitAddPoi(name: String, lat: Double, lon: Double, type: Int): Boolean
     private external fun nativeAmbitReadRegion(address: Long, length: Long): String?
@@ -532,50 +532,56 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
         activity.startActivityForResult(intent, SAVE_FILE_AS_REQUEST_CODE)
     }
 
-    // ─── writeRoute() ─────────────────────────────────────────────────────────
-    // Écrit une route (déjà simplifiée côté JS, <= AMBIT3_MAX_ROUTE_POINTS points)
-    // sur la montre. Remplace toute la base de données de navigation ; les POIs
-    // sont préservés côté natif (lecture 0x0b24 avant, restauration 0x0b25 après).
-    // Non durable : voir device_driver_ambit3.c, ambit3_write_route_to_watch().
+    // ─── writeRoutes() ────────────────────────────────────────────────────────
+    // Writes the watch's whole route list (each already simplified on the JS side,
+    // <= AMBIT3_MAX_ROUTE_POINTS points). The navigation database is rewritten as one block, so
+    // the caller passes the routes already on the watch along with the new one (RouteMerge.ts).
+    // POIs are kept on the native side (0x0b24 read before, 0x0b25 restore after).
     @ReactMethod
-    fun writeRoute(route: ReadableMap, promise: Promise) {
+    fun writeRoutes(routes: ReadableArray, promise: Promise) {
         if (!jniLoaded) {
             promise.reject("JNI_NOT_LOADED", "Native library unavailable")
             return
         }
         executor.execute {
             try {
-                val name = route.getString("name") ?: "Route"
-                val pts = route.getArray("points") ?: throw Exception("points manquant")
-                val ptLat = DoubleArray(pts.size())
-                val ptLon = DoubleArray(pts.size())
-                val ptAlt = IntArray(pts.size())
-                for (i in 0 until pts.size()) {
-                    val p = pts.getMap(i)!!
-                    ptLat[i] = p.getDouble("lat")
-                    ptLon[i] = p.getDouble("lon")
-                    ptAlt[i] = if (p.hasKey("alt") && !p.isNull("alt")) p.getInt("alt") else 30000 // AMBIT3_ALTITUDE_NONE
+                val n = routes.size()
+                val names = Array(n) { "" }
+                val ptCounts = IntArray(n); val wptCounts = IntArray(n)
+                val dist = IntArray(n); val asc = IntArray(n); val desc = IntArray(n)
+                val ts = LongArray(n)
+                val ptLat = ArrayList<Double>(); val ptLon = ArrayList<Double>(); val ptAlt = ArrayList<Int>()
+                val wptLat = ArrayList<Double>(); val wptLon = ArrayList<Double>()
+                val wptName = ArrayList<String>(); val wptIdx = ArrayList<Int>()
+                for (r in 0 until n) {
+                    val route = routes.getMap(r) ?: throw Exception("route $r missing")
+                    names[r] = route.getString("name") ?: "Route"
+                    val pts = route.getArray("points") ?: throw Exception("points missing")
+                    for (i in 0 until pts.size()) {
+                        val p = pts.getMap(i)!!
+                        ptLat.add(p.getDouble("lat"))
+                        ptLon.add(p.getDouble("lon"))
+                        ptAlt.add(if (p.hasKey("alt") && !p.isNull("alt")) p.getInt("alt") else 30000) // AMBIT3_ALTITUDE_NONE
+                    }
+                    val wpts = route.getArray("waypoints") ?: throw Exception("waypoints missing")
+                    for (i in 0 until wpts.size()) {
+                        val w = wpts.getMap(i)!!
+                        wptLat.add(w.getDouble("lat"))
+                        wptLon.add(w.getDouble("lon"))
+                        wptName.add(w.getString("name") ?: "")
+                        wptIdx.add(w.getInt("pointIndex"))
+                    }
+                    ptCounts[r] = pts.size()
+                    wptCounts[r] = wpts.size()
+                    dist[r] = route.getInt("distanceM")
+                    asc[r] = route.getInt("ascentM")
+                    desc[r] = route.getInt("descentM")
+                    ts[r] = route.getDouble("timestampSec").toLong()
                 }
-
-                val wpts = route.getArray("waypoints") ?: throw Exception("waypoints manquant")
-                val wptLat = DoubleArray(wpts.size())
-                val wptLon = DoubleArray(wpts.size())
-                val wptName = Array(wpts.size()) { "" }
-                val wptPointIndex = IntArray(wpts.size())
-                for (i in 0 until wpts.size()) {
-                    val w = wpts.getMap(i)!!
-                    wptLat[i] = w.getDouble("lat")
-                    wptLon[i] = w.getDouble("lon")
-                    wptName[i] = w.getString("name") ?: ""
-                    wptPointIndex[i] = w.getInt("pointIndex")
-                }
-
-                val ok = nativeAmbitWriteRoute(
-                    name,
-                    ptLat, ptLon, ptAlt,
-                    wptLat, wptLon, wptName, wptPointIndex,
-                    route.getInt("distanceM"), route.getInt("ascentM"), route.getInt("descentM"),
-                    route.getDouble("timestampSec").toLong()
+                val ok = nativeAmbitWriteRoutes(
+                    names, ptCounts, wptCounts, dist, asc, desc, ts,
+                    ptLat.toDoubleArray(), ptLon.toDoubleArray(), ptAlt.toIntArray(),
+                    wptLat.toDoubleArray(), wptLon.toDoubleArray(), wptName.toTypedArray(), wptIdx.toIntArray()
                 )
                 if (ok) promise.resolve(true)
                 else promise.reject("ROUTE_WRITE_FAILED", "Route write failed (see logcat AmbitJNI)")
@@ -587,7 +593,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
 
     // ─── addPoi() ─────────────────────────────────────────────────────────────
     // Ajoute un POI sur la montre en préservant ceux déjà présents. Contrairement
-    // à writeRoute(), ne touche pas aux régions Waypoints/Routes de la flash.
+    // à writeRoutes(), ne touche pas aux régions Waypoints/Routes de la flash.
     // `type` is the Ambit POI type byte 0-17 (the icon the watch shows); React Native passes
     // JS numbers as Double, so it arrives as Double and is narrowed to Int for the JNI call.
     @ReactMethod

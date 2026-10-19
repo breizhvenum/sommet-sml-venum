@@ -53,7 +53,7 @@ Started 2026-08-28. See memory `sommet-ios-ble-central-model` /
    `SWIFT_OBJC_BRIDGING_HEADER`), and enable a module for the C entry points.
 4. **The data-method bridge (`AmbitCore`) — the main remaining code.** The Android
    `jni_bridge.cpp` (~1400 lines) exposes the g_device operations the sync flow
-   uses (`getDeviceInfo`, `getLogs`, `writeRoute`, `addPoi`, `readRegion`,
+   uses (`getDeviceInfo`, `getLogs`, `writeRoutes`, `addPoi`, `readRegion`,
    settings, sport modes, …) under `NativeModules.AmbitUsbModule` /
    `AmbitCatalog` / `AmbitSmartSensor`. iOS needs an Objective-C++ twin that
    registers the same module names and calls the **same C functions** —

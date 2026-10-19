@@ -40,7 +40,7 @@ Kailash — plus Garmin eTrex 10/20/30 handheld GPS units.
   outside. Works for both GPS and GLONASS satellites on the watches that support them.
 
 ### 🗺️ Routes
-- **Send a route to your watch** from a GPX file so you can follow it on your wrist: Ambit3, Traverse and Ambit1/2 (not the Kailash, which has no routes).
+- **Send a route to your watch** from a GPX file so you can follow it on your wrist: Ambit3, Traverse and Ambit1/2 (not the Kailash, which has no routes). The routes already on the watch are kept.
 - **Direction pins on the watch** — waypoints ("Left 1.2") added by themselves where the route meets itself; the watch announces them in order as you approach.
 - **Read routes back** off the watch and save them as GPX files.
 - A **preview map** shows you exactly what the route will look like before you send it.
