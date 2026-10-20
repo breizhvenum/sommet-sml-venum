@@ -3,7 +3,10 @@
 Apps - the from-scratch replacement for the Movescount-era "Training programs / planned
 moves" feature (`docs/training_program_andre.md` Finding 57).
 
-Why this design, given the native route is walled off: the watch's dedicated
+Why this design, given the native route was BELIEVED walled off (CORRECTED 2026-10-20: it is NOT —
+the native "Today" card surfaces with Sports.Plans.Source != 0, hardware-confirmed on André's Peak;
+the TrainingProgram region is reachable but SIMPLE-only, which is the real reason date-gated COMPLEX
+workouts take the route below; see docs/reference/training-workouts-stock-vs-patch.md): the watch's dedicated
 `TrainingProgram` flash region is fully decoded and writable, but the firmware never
 surfaces what we write there (Findings 30-32 - the load/display trigger needs ground truth
 only a live Movescount could give). This tool takes the other, fully-proven road instead:

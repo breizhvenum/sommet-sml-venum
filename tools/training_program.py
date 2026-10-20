@@ -284,7 +284,10 @@ def main():
                           " install a REAL native guidance workout (WORKOUT-menu entry). Now it"
                           " can. So install one first, note its ruleId + activityId, then set"
                           " --move-id=<ruleId> --activity-id=<activityId> here so the planned move"
-                          " points at a workout that IS present. 0 = the old (workout-absent) tests.")
+                          " points at a workout that IS present. 0 = the old (workout-absent) tests. DISPROVEN 2026-10-20 (firmware re-derive): move_id is read ONLY"
+                          " at the logbook stamp (0x2a166), never to select a workout — the card does"
+                          " NOT launch a guided workout for any move_id; keep 0 (plan_move_id, for"
+                          " completion tracking). See docs/reference/training-workouts-stock-vs-patch.md")
     ap.add_argument("--distance", type=int, default=0,
                      help="item planned distance in METRES (the day screen shows activity/"
                           "duration/distance). 0 = the earlier tests.")
