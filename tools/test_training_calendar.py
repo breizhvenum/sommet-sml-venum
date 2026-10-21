@@ -14,6 +14,12 @@ import workout_install as WI
 BIN = bytes(range(16))
 
 
+def lbl(date_iso):
+    """The on-watch label the tool writes for plan()'s workout (name "W<dd>") on `date_iso` —
+    tracks TC.entry_label so these tests don't hardcode the naming format."""
+    return TC.entry_label(date_iso, "W" + date_iso[-2:])
+
+
 def region(*entries):
     """[(name, entry_type)] -> Apps region bytes, built the way the installer builds it."""
     current = []
@@ -63,24 +69,24 @@ class PlanDiffWindow(unittest.TestCase):
         kept, to_add, waiting = TC.plan_diff(data, entries, self.TODAY)
         self.assertEqual([e["date"] for e in to_add],
                          ["2026-09-26", "2026-09-28", "2026-09-30", "2026-10-03"])
-        self.assertEqual(waiting, ["05/10_W05", "07/10_W07"])
+        self.assertEqual(waiting, [lbl("2026-10-05"), lbl("2026-10-07")])
         self.assertEqual(len(kept), 2)
 
     def test_erases_installed_ones_outside_the_window(self):
-        data = region(("Sunrise", 0), ("24/09_W24", 1), ("26/09_W26", 1), ("28/09_W28", 1),
-                      ("30/09_W30", 1), ("03/10_W03", 1), ("05/10_W05", 1), ("07/10_W07", 1))
-        entries = plan("2026-09-24", "2026-09-26", "2026-09-28", "2026-09-30", "2026-10-03",
-                       "2026-10-05", "2026-10-07")
+        dates = ["2026-09-24", "2026-09-26", "2026-09-28", "2026-09-30", "2026-10-03",
+                 "2026-10-05", "2026-10-07"]
+        data = region(("Sunrise", 0), *[(lbl(d), 1) for d in dates])
+        entries = plan(*dates)
         kept, to_add, waiting = TC.plan_diff(data, entries, self.TODAY)
         self.assertEqual(names(TC.rebuild_apps_region(kept)),
-                         [("Sunrise", 0), ("26/09_W26", 1), ("28/09_W28", 1), ("30/09_W30", 1),
-                          ("03/10_W03", 1), ("05/10_W05", 1)])
-        self.assertEqual((to_add, waiting), ([], ["07/10_W07"]))
+                         [("Sunrise", 0)] + [(lbl(d), 1) for d in
+                          ["2026-09-26", "2026-09-28", "2026-09-30", "2026-10-03", "2026-10-05"]])
+        self.assertEqual((to_add, waiting), ([], [lbl("2026-10-07")]))
 
     def test_full_manual_menu_leaves_no_room(self):
         data = region(*[(f"M{i}", 1) for i in range(5)])
         _, to_add, waiting = TC.plan_diff(data, plan("2026-09-28"), self.TODAY)
-        self.assertEqual((to_add, waiting), ([], ["28/09_W28"]))
+        self.assertEqual((to_add, waiting), ([], [lbl("2026-09-28")]))
 
 
 class BuilderMenuFull(unittest.TestCase):
@@ -119,55 +125,65 @@ def modes(*spec):
 
 
 class AutoStartRules(unittest.TestCase):
-    """2026-10-10: every installed upcoming workout is an active rule of the sport's WORKOUT
-    mode (date-gated on the watch), soonest first; other modes of the sport carry none."""
+    """2026-10-17: every installed upcoming workout is an active rule of the sport mode the plan
+    names (plain "Running", date-gated on the watch), soonest first; other modes carry none."""
     TODAY = TC.datetime.date(2026, 10, 10)
 
-    def test_all_upcoming_into_the_workout_mode_only(self):
-        d = modes(("Running", 3), ("Running workout", 3), ("Cycling", 4))
-        data = region(("Sunrise", 0), ("10/10_W10", 1), ("12/10_W12", 1), ("14/10_W14", 1))
+    def test_all_upcoming_into_the_named_mode_only(self):
+        d = modes(("Cycling", 4), ("Running", 3), ("Running workout", 3))
+        data = region(("Sunrise", 0), (lbl("2026-10-10"), 1), (lbl("2026-10-12"), 1),
+                      (lbl("2026-10-14"), 1))
         existing = WI.apps_entries_with_raw_blocks(data)
-        touched, out, needs = TC.auto_start_rules(
+        touched, out = TC.auto_start_rules(
             d, existing, data, plan("2026-10-14", "2026-10-12", "2026-10-10"), self.TODAY, True)
-        self.assertEqual(touched, ["Running workout"])
-        self.assertEqual(out, [{"sport": 3, "mode": "Running workout",
-                                "workouts": ["10/10_W10", "12/10_W12", "14/10_W14"]}])
-        self.assertEqual(needs, [])
+        self.assertEqual(touched, ["Running"])
+        self.assertEqual(out, [{"sport": 3, "mode": "Running",
+                                "workouts": [lbl("2026-10-10"), lbl("2026-10-12"), lbl("2026-10-14")]}])
         by_name = {m["Settings"]["Name"]: m["Rules"] for m in d["exercise_modes"]}
-        self.assertEqual([r["RuleIdx"] for r in by_name["Running workout"]], [1, 2, 3])
-        self.assertEqual(by_name["Running"], [])
+        self.assertEqual([r["RuleIdx"] for r in by_name["Running"]], [1, 2, 3])
+        self.assertEqual(by_name["Running workout"], [])
+        self.assertEqual(by_name["Cycling"], [])
 
-    def test_no_workout_mode_is_reported_not_guessed(self):
-        d = modes(("Running", 3), ("Running Couch25k", 3))
+    def test_rules_left_in_an_old_workout_mode_move_to_the_named_mode(self):
+        d = modes(("Running", 3), ("Running workout", 3))
+        data = region(("Sunrise", 0), (lbl("2026-10-10"), 1))
+        d["exercise_modes"][1]["Rules"] = [{"RuleIdx": 1, "UseRule": True, "LogRule": False}]
+        existing = WI.apps_entries_with_raw_blocks(data)
+        touched, out = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, True)
+        self.assertEqual(sorted(touched), ["Running", "Running workout"])
+        self.assertEqual([r["RuleIdx"] for r in d["exercise_modes"][0]["Rules"]], [1])
+        self.assertEqual(d["exercise_modes"][1]["Rules"], [])
+
+    def test_unknown_mode_gets_no_rules(self):
+        d = modes(("Cycling", 4))
         data = region(("10/10_W10", 1))
         existing = WI.apps_entries_with_raw_blocks(data)
-        _, out, needs = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, True)
+        _, out = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, True)
         self.assertEqual(out, [])
-        self.assertEqual(needs, [{"sport": 3, "mode": "Running", "suggested": "Running workout"}])
-        self.assertTrue(all(m["Rules"] == [] for m in d["exercise_modes"]))
+        self.assertEqual(d["exercise_modes"][0]["Rules"], [])
 
     def test_off_drops_managed_rules_everywhere(self):
         d = modes(("Running", 3), ("Running workout", 3))
-        data = region(("Sunrise", 0), ("10/10_W10", 1))
+        data = region(("Sunrise", 0), (lbl("2026-10-10"), 1))
         for m in d["exercise_modes"]:
             m["Rules"] = [{"RuleIdx": 0, "UseRule": True, "LogRule": False},
                           {"RuleIdx": 1, "UseRule": True, "LogRule": False}]
         existing = WI.apps_entries_with_raw_blocks(data)
-        touched, out, needs = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, False)
+        touched, out = TC.auto_start_rules(d, existing, data, plan("2026-10-10"), self.TODAY, False)
         self.assertEqual(sorted(touched), ["Running", "Running workout"])
-        self.assertEqual((out, needs), ([], []))
+        self.assertEqual(out, [])
         for m in d["exercise_modes"]:
             self.assertEqual([r["RuleIdx"] for r in m["Rules"]], [0])   # the Sunrise app stays
 
     def test_five_slot_limit(self):
-        d = modes(("Running workout", 3), ("Running", 3))
+        d = modes(("Running", 3), ("Running workout", 3))
         d["exercise_modes"][0]["Rules"] = [{"RuleIdx": 0, "UseRule": True, "LogRule": False}] * 3
         dates = ["2026-10-1%d" % i for i in range(0, 5)]
         data = region(("Sunrise", 0), *[(TC.entry_label(x, "W" + x[-2:]), 1) for x in dates])
         existing = WI.apps_entries_with_raw_blocks(data)
-        _, out, _ = TC.auto_start_rules(d, existing, data, plan(*dates), self.TODAY, True)
+        _, out = TC.auto_start_rules(d, existing, data, plan(*dates), self.TODAY, True)
         self.assertEqual(len(d["exercise_modes"][0]["Rules"]), WI.SPORT_MODE_APP_LIMIT)
-        self.assertEqual(out[0]["workouts"], ["10/10_W10", "11/10_W11"])
+        self.assertEqual(out[0]["workouts"], [lbl("2026-10-10"), lbl("2026-10-11")])
 
 
 class DateGate(unittest.TestCase):

@@ -2,7 +2,7 @@ import { AppEntry, NAME_LEN } from './AppsCodec';
 import { GUIDANCE_ENTRY_TYPE, WORKOUT_MENU_MAX } from './GuidedWorkoutCore';
 
 // Pure (native-free) core of the Calendar feature - André's locked design (2026-08-21):
-// dated native guided workouts named "dd/mm_name" in the WORKOUT menu, sidestepping the
+// dated native guided workouts named "Www dd/mm name" in the WORKOUT menu, sidestepping the
 // unreachable native TrainingProgram flash region entirely (see
 // assets/Firmware/re-out/training_program_CONCLUSION.md). Exact port of the pure parts of
 // tools/training_calendar.py's entry_label/is_managed/is_expired/plan_diff/
@@ -14,14 +14,19 @@ import { GUIDANCE_ENTRY_TYPE, WORKOUT_MENU_MAX } from './GuidedWorkoutCore';
 // "dd/mm" in the app name, no year, so expiry compares (month, day) only - correct for
 // planning days/weeks/months ahead within one calendar year, wrong across a Dec->Jan boundary.
 
-const MANAGED_RE = /^(\d{2})\/(\d{2})_/;
+// Managed entries read "Www dd/mm name"; older syncs wrote "dd/mm_name", still matched so a
+// re-sync renames rather than duplicates. Mirrors tools/training_calendar.py's MANAGED_RE.
+const MANAGED_RE = /^(?:[A-Z][a-z]{2} )?(\d{2})\/(\d{2})[ _]/;
+const WEEKDAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']; // Date.getDay(): Sun=0
 
-/** "dd/mm_name", truncated to fit the on-watch name field (AppsCodec.NAME_LEN). */
+/** "Www dd/mm name" (e.g. "Tue 20/10 Beep5s"), truncated to fit the on-watch name field
+ * (AppsCodec.NAME_LEN). Weekday in fixed English abbreviations, byte-identical to
+ * tools/training_calendar.py's entry_label (André 2026-10-20: weekday + date). */
 export function entryLabel(dateIso: string, workoutName: string): string {
   const d = new Date(dateIso + 'T00:00:00');
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const prefix = `${dd}/${mm}_`;
+  const prefix = `${WEEKDAY_ABBR[d.getDay()]} ${dd}/${mm} `;
   const budget = Math.max((NAME_LEN - 1) - prefix.length, 0);
   return prefix + workoutName.slice(0, budget);
 }
@@ -30,7 +35,7 @@ export function isManaged(name: string): boolean {
   return MANAGED_RE.test(name || '');
 }
 
-/** True if a managed "dd/mm_..." name's (month, day) is before today's - see the module
+/** True if a managed "...dd/mm..." name's (month, day) is before today's - see the module
  * docstring on why this ignores year. */
 export function isExpired(name: string, today: Date): boolean {
   const m = MANAGED_RE.exec(name || '');

@@ -8,7 +8,7 @@ import { entryLabel, isManaged, planDiff, rebuildAppsRegion, CalendarEntry } fro
 
 // Orchestration for the Calendar feature (native I/O) - the Android counterpart to
 // tools/training_calendar.py's sync(), reusing the same read/write/verify shape as
-// AppInstall.installCompiledApp. On sync: every managed "dd/mm_..." entry dated before today
+// AppInstall.installCompiledApp. On sync: every managed "...dd/mm..." entry dated before today
 // is erased, and every plan entry dated today or later that already has a compiled binary
 // attached gets installed, all in one Apps-region rewrite + one CustomModes rewrite (adding a
 // guidance display to any newly-used mode).

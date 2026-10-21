@@ -364,19 +364,6 @@ Item {
     // The draft and the switches (autoStart, autoSync) are TrainingPlanSync's one Settings
     // object, so the plug-in sync sends what is edited here (2026-10-09).
     readonly property var draftStore: TrainingPlanSync.settings
-    // After "Create <sport> workout" (below) the modes come back from the watch; sync again so
-    // the workouts move into the new mode without a second click.
-    property bool pendingResync: false
-    Connections {
-        target: CustomModesService
-        function onModesChanged() {
-            if (!root.pendingResync || TrainingProgramService.installing) return
-            root.pendingResync = false
-            if (HomeViewModel.anyDevice && root.entries.length > 0)
-                TrainingProgramService.syncCalendar(root.entriesWithMode(root.defaultMode), true,
-                                                    draftStore.autoStart)
-        }
-    }
     property bool _draftRestored: false
     function saveDraft() {
         if (!root._draftRestored) return
@@ -871,7 +858,8 @@ Item {
                     // The watch-face "Today" card + auto-start. The card's Start only opens the
                     // sport list; the firmware has no link from a card to a workout. What it has
                     // is active rules: a workout set as a mode's rule runs on every recording in
-                    // that mode. So: card -> Start -> this mode -> the steps run by themselves.
+                    // that mode, gated on its date. So: card -> Start -> Running -> the steps run
+                    // by themselves; any other day Running is a free run.
                     Row {
                         width: parent.width
                         spacing: Theme.spacingMedium
@@ -888,15 +876,19 @@ Item {
                             width: parent.width * 0.6
                             wrapMode: Text.WordWrap
                             text: draftStore.autoStart
-                                  ? qsTr("On a training day the watch says so on its time screen. "
-                                         + "Press Start there and pick the sport's workout mode "
-                                         + "(\"Running workout\"): the day's workout runs step by step. "
-                                         + "Any other mode is a free run. The watch picks the day's "
-                                         + "workout by its own clock, and holds the next five; plug in "
-                                         + "now and then so new weeks get loaded. "
-                                         + "The watch also turns its HR limits on, wide and out of the way.")
-                                  : qsTr("Off: the watch shows nothing on training days; pick the "
-                                         + "workout from the sport's WORKOUT menu (hold [Next]).")
+                                  ? qsTr("On a training day, Start the sport (Running) and the day's "
+                                         + "workout runs step by step; on other days that sport is a "
+                                         + "free run. Two trade-offs: on a training day the sport is "
+                                         + "NOT a free run (any start runs the day's workout), and the "
+                                         + "step beeps + melody only play if the watch has the firmware "
+                                         + "patch — on stock firmware the workout runs but silently. "
+                                         + "The watch picks the day's workout by its own clock and holds "
+                                         + "the next five; plug in now and then so new weeks get loaded. "
+                                         + "It also turns its HR limits on, wide and out of the way.")
+                                  : qsTr("Off (recommended): the planned workouts sit in the sport's "
+                                         + "WORKOUT menu — pick the day's by hand (hold [Next]). Full "
+                                         + "beeps + melody on any watch, no patch needed, and every day "
+                                         + "stays a free run.")
                             color: Theme.mutedText
                             font.pixelSize: Theme.fontSizeCaption
                         }
@@ -1067,33 +1059,6 @@ Item {
                             color: Theme.primary
                             font.pixelSize: Theme.fontSizeCaption
                             font.bold: true
-                        }
-                        // A sport with no "<sport> workout" mode yet: the card's Start needs one to
-                        // lead to (training_calendar.WORKOUT_MODE_RE). One click makes it, a copy
-                        // of the sport's default screens; the next sync fills it.
-                        Repeater {
-                            model: TrainingProgramService.lastInstallResult.needsMode || []
-                            delegate: Row {
-                                required property var modelData
-                                spacing: Theme.spacingMedium
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: qsTr("No workout mode for %1 yet: the day's workout needs a "
-                                               + "mode of its own to start from the training day.")
-                                        .arg(modelData.mode)
-                                    color: Theme.warning
-                                    font.pixelSize: Theme.fontSizeCaption
-                                }
-                                RoundedButton {
-                                    text: qsTr("Create \"%1\"").arg(modelData.suggested)
-                                    enabled: CustomModesService.writingMode.length === 0
-                                    onClicked: {
-                                        CustomModesService.createMode(modelData.suggested,
-                                                                      modelData.sport, DeviceService.model)
-                                        root.pendingResync = true
-                                    }
-                                }
-                            }
                         }
                         Text {
                             width: parent.width

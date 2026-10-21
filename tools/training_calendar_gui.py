@@ -2,7 +2,7 @@
 """A small local web GUI for the Calendar feature (André's locked design, 2026-08-21): pick a
 date, pick a sport mode/activity, build a workout (same step builder as workout_gui.py), add it
 to a Plan, then Sync — which erases whatever's dated before today and installs whatever's next,
-straight onto the watch's WORKOUT menu, named "dd/mm_<workout name>". The compile+install+
+straight onto the watch's WORKOUT menu, named "Www dd/mm <workout name>". The compile+install+
 rotation logic is entirely `training_calendar.py`, run as a subprocess exactly like a person at
 a terminal would; this file only adds a browser-facing front end on top, stdlib-only (no
 framework, no build step — this project's existing style, see workout_gui.py/apps_gui.py).
@@ -121,7 +121,7 @@ HTML_PAGE = r"""<!doctype html>
 </h1>
 
 <p>Build a workout for a specific date, add it to the plan, then Sync. On sync the watch's
-WORKOUT menu gets whatever's still upcoming, named <code>dd/mm_name</code> so you can tell
+WORKOUT menu gets whatever's still upcoming, named <code>Www dd/mm name</code> (e.g. "Tue 20/10") so you can tell
 entries apart — anything dated before today gets erased first. No on-watch date logic is
 involved; you pick the right one by hand.</p>
 

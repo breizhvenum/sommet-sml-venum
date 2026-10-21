@@ -16,26 +16,32 @@ function fakeAppsRegion(names: string[]): Uint8Array {
   return region;
 }
 
+// The on-watch label the tool writes; mirrors the Python test's lbl() so neither hardcodes the
+// naming format (weekday+date, since 2026-10-20). Default workout name "W<dd>" matches run().
+const lbl = (d: string, name?: string) => entryLabel(d, name ?? `W${d.slice(-2)}`);
+
 describe('TrainingCalendarCore', () => {
-  test('entryLabel formats dd/mm_name and truncates to fit NAME_LEN', () => {
-    expect(entryLabel('2026-08-25', 'Long run')).toBe('25/08_Long run');
-    expect(entryLabel('2026-01-05', 'x'.repeat(40)).startsWith('05/01_')).toBe(true);
+  test('entryLabel formats "Www dd/mm name" and truncates to fit NAME_LEN', () => {
+    expect(entryLabel('2026-08-25', 'Long run')).toMatch(/^[A-Z][a-z]{2} 25\/08 Long run$/);
+    expect(entryLabel('2026-01-05', 'x'.repeat(40))).toMatch(/^[A-Z][a-z]{2} 05\/01 x+$/);
   });
 
-  test('isManaged recognizes only the dd/mm_ prefix this tool writes', () => {
-    expect(isManaged('25/08_Long run')).toBe(true);
+  test('isManaged recognizes the weekday+date prefix (and the legacy dd/mm_ for migration)', () => {
+    expect(isManaged('Tue 25/08 Long run')).toBe(true);
+    expect(isManaged('25/08_Long run')).toBe(true); // legacy, still matched so a re-sync renames
     expect(isManaged('Couch-to-5K Week1')).toBe(false);
   });
 
   test('isExpired compares (month, day) against today, ignoring managed-status of other names', () => {
     const today = new Date(2026, 7, 27); // 2026-08-27 (Date months are 0-based)
-    expect(isExpired('25/08_Long run', today)).toBe(true);
+    expect(isExpired('Tue 25/08 Long run', today)).toBe(true);
+    expect(isExpired('25/08_Long run', today)).toBe(true); // legacy format still parsed
     expect(isExpired('28/08_Interval', today)).toBe(false);
     expect(isExpired('Couch-to-5K', today)).toBe(false);
   });
 
   test('planDiff drops expired managed entries, keeps the rest, and finds what still needs installing', () => {
-    const region = fakeAppsRegion(['25/08_Long run', '28/08_Interval']);
+    const region = fakeAppsRegion([lbl('2026-08-25', 'Long run'), lbl('2026-08-28', 'Interval')]);
     const existing = decodeApps(region);
     const today = new Date(2026, 7, 27); // 2026-08-27
     const plan = [
@@ -49,13 +55,13 @@ describe('TrainingCalendarCore', () => {
   });
 
   test('planDiff erases a still-future managed entry that was removed from the plan', () => {
-    const region = fakeAppsRegion(['Couch-to-5K', '28/08_Interval', '30/08_Tempo']);
+    const region = fakeAppsRegion(['Couch-to-5K', lbl('2026-08-28', 'Interval'), lbl('2026-08-30', 'Tempo')]);
     const existing = decodeApps(region);
     const today = new Date(2026, 7, 27);
     const plan = [{ date: '2026-08-30', mode: 'Running', workoutName: 'Tempo' }];  // 28/08 removed
     const { keptRawBlocks, toAdd } = planDiff(existing, plan, today);
     const keptNames = existing.filter((e) => keptRawBlocks.includes(e.rawBlock)).map((e) => e.name);
-    expect(keptNames).toEqual(['Couch-to-5K', '30/08_Tempo']);  // unmanaged app always kept
+    expect(keptNames).toEqual(['Couch-to-5K', lbl('2026-08-30', 'Tempo')]);  // unmanaged app always kept
     expect(toAdd).toEqual([]);
   });
 
@@ -68,33 +74,33 @@ describe('TrainingCalendarCore', () => {
     const plan = ['2026-09-26', '2026-09-28', '2026-09-30', '2026-10-03', '2026-10-05', '2026-10-07'].map(run);
     const { keptRawBlocks, toAdd, waiting } = planDiff(existing, plan, today926);
     expect(toAdd.map((e) => e.date)).toEqual(['2026-09-26', '2026-09-28', '2026-09-30', '2026-10-03']);
-    expect(waiting).toEqual(['05/10_W05', '07/10_W07']);
+    expect(waiting).toEqual([lbl('2026-10-05'), lbl('2026-10-07')]);
     expect(keptRawBlocks.length).toBe(1);
   });
 
   test('planDiff erases installed workouts outside the window', () => {
-    const existing = decodeApps(fakeAppsRegion(['24/09_W24', '26/09_W26', '28/09_W28', '30/09_W30',
-      '03/10_W03', '05/10_W05', '07/10_W07']));
-    const plan = ['2026-09-24', '2026-09-26', '2026-09-28', '2026-09-30', '2026-10-03', '2026-10-05', '2026-10-07'].map(run);
+    const dates = ['2026-09-24', '2026-09-26', '2026-09-28', '2026-09-30', '2026-10-03', '2026-10-05', '2026-10-07'];
+    const existing = decodeApps(fakeAppsRegion(dates.map((d) => lbl(d))));
+    const plan = dates.map(run);
     const { keptRawBlocks, toAdd, waiting } = planDiff(existing, plan, today926);
     expect(decodeApps(rebuildAppsRegion(keptRawBlocks)).map((e) => e.name))
-      .toEqual(['26/09_W26', '28/09_W28', '30/09_W30', '03/10_W03', '05/10_W05']);
+      .toEqual(['2026-09-26', '2026-09-28', '2026-09-30', '2026-10-03', '2026-10-05'].map((d) => lbl(d)));
     expect(toAdd).toEqual([]);
-    expect(waiting).toEqual(['07/10_W07']);
+    expect(waiting).toEqual([lbl('2026-10-07')]);
   });
 
   test('planDiff leaves no room when 5 manual workouts fill the menu', () => {
     const existing = decodeApps(fakeAppsRegion(['M0', 'M1', 'M2', 'M3', 'M4']));
     const { toAdd, waiting } = planDiff(existing, [run('2026-09-28')], today926);
     expect(toAdd).toEqual([]);
-    expect(waiting).toEqual(['28/09_W28']);
+    expect(waiting).toEqual([lbl('2026-09-28')]);
   });
 
   test('rebuildAppsRegion round-trips a filtered raw-block list byte-clean', () => {
-    const region = fakeAppsRegion(['25/08_Long run', '28/08_Interval']);
+    const region = fakeAppsRegion([lbl('2026-08-25', 'Long run'), lbl('2026-08-28', 'Interval')]);
     const existing = decodeApps(region);
-    const kept = existing.filter((e) => e.name !== '25/08_Long run').map((e) => e.rawBlock);
+    const kept = existing.filter((e) => e.name !== lbl('2026-08-25', 'Long run')).map((e) => e.rawBlock);
     const rebuilt = rebuildAppsRegion(kept);
-    expect(decodeApps(rebuilt).map((e) => e.name)).toEqual(['28/08_Interval']);
+    expect(decodeApps(rebuilt).map((e) => e.name)).toEqual([lbl('2026-08-28', 'Interval')]);
   });
 });

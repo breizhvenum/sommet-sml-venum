@@ -751,7 +751,7 @@ const fr = {
   experimentalSmartSensor: 'Smart Sensor',
   experimentalSmartSensorDesc: 'Ceinture cardio Suunto Smart Sensor via Bluetooth.',
   experimentalWorkoutCalendar: 'Programme d’entraînement',
-  experimentalWorkoutCalendarDesc: 'Séances datées dans le menu WORKOUT, nommées « jj/mm_nom ».',
+  experimentalWorkoutCalendarDesc: 'Séances datées dans le menu WORKOUT, nommées par jour + date (p. ex. « Tue 20/10 »).',
   smartSensorScreenTitle: 'Smart Sensor',
   appZoneScreenTitle: 'App Zone',
   intervalsScreenTitle: 'Intervalles',
@@ -818,7 +818,7 @@ const fr = {
   intervalsWriteBtn: 'Écrire sur la montre',
   intervalsWritten: 'Écrit sur la montre.',
   intervalsWriting: 'Écriture…',
-  // Workout Calendar (2026-08-21) - dated native guided workouts named "dd/mm_nom" dans le
+  // Workout Calendar (2026-08-21) - dated native guided workouts named "Www dd/mm nom" dans le
   // menu WORKOUT, contournant la zone TrainingProgram native (inaccessible). Compilation
   // manuelle, comme Intervals - voir intervalsCompilerNote.
   workoutCalendarWarning:
@@ -1584,7 +1584,7 @@ const en: typeof fr = {
   experimentalSmartSensor: 'Smart Sensor',
   experimentalSmartSensorDesc: 'Suunto Smart Sensor heart-rate belt over Bluetooth.',
   experimentalWorkoutCalendar: 'Training Program',
-  experimentalWorkoutCalendarDesc: 'Dated workouts in the WORKOUT menu, named "dd/mm_name".',
+  experimentalWorkoutCalendarDesc: 'Dated workouts in the WORKOUT menu, named by weekday + date (e.g. "Tue 20/10").',
   smartSensorScreenTitle: 'Smart Sensor',
   appZoneScreenTitle: 'App Zone',
   intervalsScreenTitle: 'Intervals',
@@ -1650,7 +1650,7 @@ const en: typeof fr = {
   intervalsWriteBtn: 'Write to watch',
   intervalsWritten: 'Written to the watch.',
   intervalsWriting: 'Writing...',
-  // Workout Calendar (2026-08-21) - dated native guided workouts named "dd/mm_name" in the
+  // Workout Calendar (2026-08-21) - dated native guided workouts named "Www dd/mm name" in the
   // WORKOUT menu, sidestepping the unreachable native TrainingProgram region. Manual compile,
   // same as Intervals above - see intervalsCompilerNote.
   workoutCalendarWarning:
