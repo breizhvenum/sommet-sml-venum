@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
+import Qt.labs.settings
 import AmbitApp
 
 // Step 11, the last one. General/Connections/Maps/Weather/Backup/About per the spec.
@@ -24,6 +25,11 @@ PageFlickable {
     // already fires its own service refreshes from Component.onCompleted.
     Component.onCompleted: {
         checkCatalogStatus();
+        // A link from another page asked for one section (Settings split, 2026-10-21).
+        if (NavBus.pendingSettingsSection.length > 0) {
+            showSection(NavBus.pendingSettingsSection);
+            NavBus.pendingSettingsSection = "";
+        }
     }
 
     // --- Suunto Apps Catalog (2026-08-12) - this project never ships/commits the official
@@ -139,6 +145,183 @@ PageFlickable {
         onAccepted: root.importCatalogFile(selectedFile)
     }
 
+    // --- The Settings split (André, 2026-10-21, "progressive disclosure"). The few settings
+    // people change often stay open at the top: Connections, Appearance, Show in the sidebar,
+    // Backup & restore. Everything else is one closed row each (SettingsSection), showing its
+    // current value and opening in place with a click. Nothing was removed or renamed; each
+    // row's body is the old card's contents. Which rows are open is remembered between visits.
+    Settings {
+        id: pageState
+        category: "settingsPage"
+        // Comma-separated ids of the rows that are open.
+        property string openSections: ""
+    }
+    readonly property var closedSections: ["activities", "health", "weight", "maps", "weather",
+        "ember", "coach", "database", "catalog", "experimental", "testing", "devices", "about"]
+
+    function sectionOpen(id) {
+        return pageState.openSections.split(",").indexOf(id) >= 0
+    }
+    function setSectionOpen(id, open) {
+        const ids = pageState.openSections.split(",").filter(s => s.length > 0 && s !== id)
+        if (open)
+            ids.push(id)
+        pageState.openSections = ids.join(",")
+    }
+
+    // Links from other pages land on the right section (decision 3): they set
+    // NavBus.pendingSettingsSection, then navigate("settings"). This page reads and clears it
+    // when it loads, opens that row if it is a closed one, and scrolls to it.
+    function sectionItem(id) {
+        return ({
+            connections: connectionsCard, appearance: appearanceCard, sidebar: sidebarCard,
+            backup: backupCard, activities: activitiesSection, health: healthSection,
+            weight: weightSection, maps: mapsSection, weather: weatherSection,
+            ember: emberSection, coach: coachSection, database: databaseSection,
+            catalog: catalogSection, experimental: experimentalSection,
+            testing: testingSection, devices: devicesSection, about: aboutSection
+        })[id] || null
+    }
+    function showSection(id) {
+        const item = sectionItem(id)
+        if (!item || !item.visible)
+            return
+        if (closedSections.indexOf(id) >= 0)
+            setSectionOpen(id, true)
+        scrollTarget = item
+        scrollTimer.restart()
+    }
+    property Item scrollTarget: null
+    // Short delay so the opened row has been laid out before measuring where it is.
+    Timer {
+        id: scrollTimer
+        interval: 60
+        onTriggered: {
+            if (!root.scrollTarget)
+                return
+            // Leaves the section the page's usual top margin below the top edge, so the
+            // first card (Connections) needs no scroll at all.
+            const y = root.scrollTarget.mapToItem(column, 0, 0).y
+            const maxY = Math.max(0, root.contentHeight - root.height)
+            root.contentY = Math.max(0, Math.min(maxY, y))
+            root.scrollTarget = null
+        }
+    }
+
+    // One account in the Connections card: name, status, and a real button (a11y audit
+    // 2026-10-21: the old "— tap to set up" lines could not be reached by keyboard or read
+    // by a screen reader).
+    component ConnectionRow: Item {
+        id: conn
+        property string name
+        property string status
+        property bool connected: false
+        property string actionText
+        signal activated()
+        width: parent ? parent.width : 0
+        height: Math.max(connButton.implicitHeight, connName.implicitHeight)
+        Rectangle {
+            id: connDot
+            width: 8; height: 8; radius: 4
+            anchors.verticalCenter: parent.verticalCenter
+            color: conn.connected ? Theme.success : Theme.mutedText
+        }
+        Text {
+            id: connName
+            anchors.left: connDot.right
+            anchors.leftMargin: 6
+            anchors.verticalCenter: parent.verticalCenter
+            text: conn.name
+            color: Theme.text
+            font.pixelSize: Theme.fontSizeBody
+        }
+        Text {
+            anchors.left: connName.right
+            anchors.leftMargin: 4
+            anchors.right: connButton.left
+            anchors.rightMargin: Theme.spacingSmall
+            anchors.verticalCenter: parent.verticalCenter
+            text: "· " + conn.status
+            elide: Text.ElideRight
+            color: Theme.mutedText
+            font.pixelSize: Theme.fontSizeBody
+        }
+        RoundedButton {
+            id: connButton
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: conn.actionText
+            Accessible.name: conn.name + ": " + conn.actionText
+            onClicked: conn.activated()
+        }
+    }
+
+    // One switch in the "Show in the sidebar" card: the switch, then the page's name, the
+    // experimental tag, and what the page is for. Clicking the words flips the switch too.
+    component SidebarSwitch: Item {
+        id: sb
+        property string title
+        property string description
+        property bool experimental: false
+        property bool checked: false
+        signal toggled(bool on)
+        width: parent ? parent.width : 0
+        height: Math.max(sbSwitch.implicitHeight, sbText.implicitHeight)
+        RoundedSwitch {
+            id: sbSwitch
+            anchors.top: parent.top
+            checked: sb.checked
+            onToggled: sb.toggled(checked)
+            Accessible.name: sb.title
+            Accessible.description: sb.description
+        }
+        Column {
+            id: sbText
+            anchors.left: sbSwitch.right
+            anchors.right: parent.right
+            topPadding: Math.max(0, (sbSwitch.implicitHeight - sbTitle.implicitHeight) / 2)
+            spacing: 2
+            TapHandler { onTapped: { sbSwitch.toggle(); sbSwitch.toggled() } }
+            Row {
+                spacing: Theme.spacingSmall
+                Text {
+                    id: sbTitle
+                    text: sb.title
+                    font.bold: true
+                    font.pixelSize: Theme.fontSizeBody
+                    color: Theme.text
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Rectangle {
+                    visible: sb.experimental
+                    anchors.verticalCenter: parent.verticalCenter
+                    radius: Theme.radiusSmall
+                    color: "transparent"
+                    border.width: 1
+                    border.color: Theme.warning
+                    implicitWidth: sbChip.implicitWidth + Theme.spacingSmall
+                    implicitHeight: sbChip.implicitHeight + 4
+                    Text {
+                        id: sbChip
+                        anchors.centerIn: parent
+                        text: qsTr("experimental")
+                        color: Theme.warning
+                        font.pixelSize: Theme.fontSizeCaption
+                    }
+                }
+            }
+            Text {
+                width: parent.width
+                visible: text.length > 0
+                text: sb.description
+                color: Theme.mutedText
+                font.pixelSize: Theme.fontSizeBody
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
+
+
     Column {
         id: column
         // Full width with the same side margin as the other pages (André, 2026-10-04: "match");
@@ -155,6 +338,65 @@ PageFlickable {
         // same thing.
         spacing: Theme.spacingLarge
 
+        // --- Connections ---
+        // Found 2026-08-07 via real testing: this used to be static, no way to click into
+        // any of it. Checked what the real Android app does before building each one -
+        // Intervals.icu AND Runalyze both use simple personal-API-key auth (no OAuth) - the
+        // first version of this wrongly assumed Runalyze needed OAuth too, corrected once
+        // actually checked (src/services/ApiRunalyze.ts). Strava genuinely does need real
+        // OAuth2 (src/services/ApiStrava.ts) - built for real the same day, via a local
+        // loopback HTTP callback server instead of the Android app's custom URL scheme; see
+        // ConnectionsService's own header comment for why.
+        // 2026-10-21 (Settings split): first card on the page, each account with its own button.
+        Card {
+            id: connectionsCard
+            width: parent.width
+            Column {
+                width: parent.width
+                spacing: Theme.spacingSmall
+                Row {
+                    spacing: Theme.spacingSmall
+                    Icon { glyph: Icons.sync; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: qsTr("Connections"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
+                }
+                ConnectionRow {
+                    name: qsTr("Intervals.icu")
+                    connected: ConnectionsService.intervalsIcuConnected
+                    status: connected
+                        ? qsTr("connected (athlete %1)").arg(ConnectionsService.intervalsIcuAthleteId)
+                        : qsTr("not connected")
+                    actionText: connected ? qsTr("Manage") : qsTr("Set up")
+                    onActivated: intervalsIcuDialog.open()
+                }
+                ConnectionRow {
+                    name: qsTr("Garmin Connect")
+                    connected: ConnectionsService.garminConnected
+                    status: connected
+                        ? qsTr("connected (%1)").arg(ConnectionsService.garminEmail)
+                        : qsTr("not signed in")
+                    actionText: connected ? qsTr("Manage") : qsTr("Sign in")
+                    onActivated: garminDialog.open()
+                }
+                ConnectionRow {
+                    name: qsTr("Runalyze")
+                    connected: ConnectionsService.runalyzeConnected
+                    status: connected ? qsTr("connected") : qsTr("not connected")
+                    actionText: connected ? qsTr("Manage") : qsTr("Set up")
+                    onActivated: runalyzeDialog.open()
+                }
+                ConnectionRow {
+                    name: qsTr("Strava")
+                    connected: ConnectionsService.stravaConnected
+                    status: connected ? qsTr("connected") : qsTr("not connected")
+                    actionText: connected ? qsTr("Manage") : qsTr("Connect")
+                    onActivated: stravaDialog.open()
+                }
+                // Cloud storage (Dropbox/Google Drive/OneDrive) used to live here as OAuth
+                // "connections"; backup now just saves to a folder you pick (point it at a cloud
+                // sync folder), so those rows and their key dialogs were removed - André 2026-08-16.
+            }
+        }
+
         // --- Appearance - real, 2026-08-10 ("on desktop mode, put the menu on settings for
         // dark mode/system"). Theme.qml's own header comment anticipated exactly this back
         // when `override`/isDark were first built - this is that control, finally wired up.
@@ -162,6 +404,7 @@ PageFlickable {
         // fighting QQC2's own exclusivity - see the real bug that caused further down in
         // the Maps card) as every other exclusive-choice control on this page. ---
         Card {
+            id: appearanceCard
             width: parent.width
             Column {
                 width: parent.width
@@ -204,825 +447,88 @@ PageFlickable {
             }
         }
 
-        // Race Planner - BRM/ultra planning (2026-09-19). Experimental, ships OPT-IN like Ember:
-        // the switch shows/hides the Race Plan page in the sidebar; off by default.
+        // --- Show in the sidebar (Settings split, decision 1): the eight switches that each
+        // show or hide a sidebar page, together. They used to sit in the Race Plan and Ember
+        // cards and under Experimental features; all eight are still experimental.
         Card {
+            id: sidebarCard
             width: parent.width
             Column {
                 width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.routes; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Race Plan"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        radius: Theme.radiusSmall
-                        color: "transparent"
-                        border.width: 1
-                        border.color: Theme.warning
-                        implicitWidth: expLabelRace.implicitWidth + Theme.spacingSmall
-                        implicitHeight: expLabelRace.implicitHeight + 4
-                        Text {
-                            id: expLabelRace
-                            anchors.centerIn: parent
-                            text: qsTr("experimental")
-                            color: Theme.warning
-                            font.pixelSize: Theme.fontSizeCaption
-                        }
-                    }
-                }
-                Text {
-                    text: qsTr("BRM/ultra race planner: import a GPX + roadbook, then get realistic arrival times, cutoff margins, weather, sleep and resupply along the route. Still rough — turn it on to try it.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-                RoundedSwitch {
-                    text: qsTr("Show Race Plan in the sidebar")
+                spacing: Theme.spacingMedium
+                Text { text: qsTr("Show in the sidebar"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text }
+                // Race Planner - BRM/ultra planning (2026-09-19). Experimental, ships OPT-IN like
+                // Ember: off by default.
+                SidebarSwitch {
+                    title: qsTr("Race Plan")
+                    experimental: true
+                    description: qsTr("BRM/ultra race planner: import a GPX + roadbook, then get realistic arrival times, cutoff margins, weather, sleep and resupply along the route. Still rough — turn it on to try it.")
                     checked: Theme.racePlanEnabled
-                    onToggled: Theme.racePlanEnabled = checked
+                    onToggled: (on) => Theme.racePlanEnabled = on
                 }
-            }
-        }
-
-        // Activity screen: the extra power numbers most rides don't need (André, 2026-09-27).
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Text { text: qsTr("Activities"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text }
-                RoundedSwitch {
-                    text: qsTr("Advanced power numbers")
-                    checked: Theme.advancedPowerNumbers
-                    onToggled: Theme.advancedPowerNumbers = checked
-                }
-                Text {
-                    text: qsTr("Adds normalized power, training load (TSS), intensity factor and work to rides with a power meter. Uses the FTP from your intervals.icu settings.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
-
-        // Ember - fast & calorie tracking companion (André, 2026-08-25). The switch shows/hides
-        // the Ember page in the sidebar; the link opens the phone app to Add to Home Screen.
-        // 2026-08-28 (André): the card is now openly in Settings instead of hidden behind the
-        // 10-tap easter egg - Ember stays OFF in the sidebar by default (the toggle below), but
-        // the toggle and the phone-install link are discoverable for anyone who wants to opt in.
-        // Labelled experimental, since it hasn't been tested much yet.
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.ember; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Ember"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        radius: Theme.radiusSmall
-                        color: "transparent"
-                        border.width: 1
-                        border.color: Theme.warning
-                        implicitWidth: expLabel.implicitWidth + Theme.spacingSmall
-                        implicitHeight: expLabel.implicitHeight + 4
-                        Text {
-                            id: expLabel
-                            anchors.centerIn: parent
-                            text: qsTr("experimental")
-                            color: Theme.warning
-                            font.pixelSize: Theme.fontSizeCaption
-                        }
-                    }
-                }
-                Text {
-                    text: qsTr("Fast & calorie tracking app. Logs made on your phone sync here and show as charts. Still rough — turn it on to try it.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-                RoundedSwitch {
-                    text: qsTr("Show Ember in the sidebar")
+                // Ember - fast & calorie tracking companion (André, 2026-08-25). Stays OFF in the
+                // sidebar by default; its other settings are in the Ember row below.
+                SidebarSwitch {
+                    title: qsTr("Ember")
+                    experimental: true
+                    description: qsTr("Fast & calorie tracking app. Logs made on your phone sync here and show as charts. Still rough — turn it on to try it.")
                     checked: Theme.emberEnabled
-                    onToggled: Theme.emberEnabled = checked
+                    onToggled: (on) => Theme.emberEnabled = on
                 }
-                RoundedSwitch {
-                    text: qsTr("Also sync to intervals.icu")
-                    checked: Theme.emberSyncIntervals
-                    onToggled: Theme.emberSyncIntervals = checked
+                // Intervals + Smart Sensor menu features (2026-08-17): one toggle each, each
+                // reveals its own menu item in the side menu, matching the Android app. Intervals
+                // rides the Suunto App-Zone/CustomModes mechanism (needs SuuntoLink to compile),
+                // so it stays experimental; Smart Sensor is the standalone BLE HR belt.
+                SidebarSwitch {
+                    title: qsTr("Intervals")
+                    description: qsTr("Build interval workouts.")
+                    experimental: true
+                    checked: DeviceService.intervalsEnabled
+                    onToggled: (on) => DeviceService.intervalsEnabled = on
                 }
-                Text {
-                    visible: Theme.emberSyncIntervals
-                    text: qsTr("Daily calories, water, macros, fasting hours and coffees are pushed to your intervals.icu wellness (into the fields you already have).")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    width: parent.width
-                    wrapMode: Text.WordWrap
+                SidebarSwitch {
+                    title: qsTr("App Zone")
+                    description: qsTr("Build & install Suunto Apps.")
+                    experimental: true
+                    checked: DeviceService.appZoneEnabled
+                    onToggled: (on) => DeviceService.appZoneEnabled = on
                 }
-                Text {
-                    text: qsTr("Install on your phone")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeLabel
-                    font.bold: true
-                    topPadding: Theme.spacingSmall
+                SidebarSwitch {
+                    title: qsTr("Smart Sensor")
+                    description: qsTr("Suunto HR belt over Bluetooth.")
+                    experimental: true
+                    checked: DeviceService.smartSensorEnabled
+                    onToggled: (on) => DeviceService.smartSensorEnabled = on
                 }
-                Text {
-                    text: qsTr("Open this link in your phone's browser, then Share → Add to Home Screen.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    width: parent.width
-                    wrapMode: Text.WordWrap
+                SidebarSwitch {
+                    title: qsTr("Coach")
+                    description: qsTr("Readiness beacon + chat, v2 concept.")
+                    experimental: true
+                    checked: DeviceService.coachEnabled
+                    onToggled: (on) => DeviceService.coachEnabled = on
                 }
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    RoundedTextField {
-                        id: emberUrlField
-                        width: parent.width - copyBtn.width - openBtn.width - Theme.spacingSmall * 2
-                        text: Theme.emberInstallUrl
-                        placeholderText: qsTr("https:// your Ember URL")
-                        onEditingFinished: Theme.emberInstallUrl = text
-                    }
-                    RoundedButton {
-                        id: copyBtn
-                        text: qsTr("Copy")
-                        onClicked: { emberUrlField.selectAll(); emberUrlField.copy(); emberUrlField.deselect() }
-                    }
-                    RoundedButton {
-                        id: openBtn
-                        text: qsTr("Open")
-                        enabled: emberUrlField.text.length > 0
-                        onClicked: Qt.openUrlExternally(emberUrlField.text)
-                    }
+                // GPS Track Pod and Suunto T6 are standalone legacy Suunto devices integrated
+                // built-blind (never hardware-confirmed). Off by default. NavRail gates on these.
+                SidebarSwitch {
+                    title: qsTr("GPS Track Pod")
+                    description: qsTr("Standalone Suunto GPS logger.")
+                    experimental: true
+                    checked: DeviceService.gpsTrackPodExperimentEnabled
+                    onToggled: (on) => DeviceService.gpsTrackPodExperimentEnabled = on
                 }
-                // Food search (André, 2026-09-28): a personal USDA key lifts the shared demo key's
-                // limit. Open Food Facts needs no key.
-                Text {
-                    text: qsTr("Food search")
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeLabel
-                    font.bold: true
-                    topPadding: Theme.spacingSmall
-                }
-                Text {
-                    text: qsTr("Generic foods come from USDA FoodData Central. Without your own key a shared demo key is used, limited to about 30 searches an hour. The key is free and stays on this computer.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    RoundedTextField {
-                        id: usdaKeyField
-                        width: parent.width - usdaGetBtn.width - Theme.spacingSmall
-                        text: EmberFoodService.usdaApiKey
-                        echoMode: TextInput.Password
-                        placeholderText: qsTr("USDA API key (optional)")
-                        onEditingFinished: EmberFoodService.usdaApiKey = text
-                    }
-                    RoundedButton {
-                        id: usdaGetBtn
-                        text: qsTr("Get a free key")
-                        onClicked: Qt.openUrlExternally("https://fdc.nal.usda.gov/api-key-signup")
-                    }
-                }
-            }
-        }
-
-        // --- Database (André 2026-09-20): where the user's data is kept + how it syncs across
-        // devices. The user can point the database at any folder (their call); the server/NAS is
-        // the only real cross-device sync (phone included) and always keeps a local copy.
-        Card {
-            width: parent.width
-            Column {
-                id: dbCol
-                width: parent.width
-                spacing: Theme.spacingSmall
-
-                FolderDialog {
-                    id: dbMoveDialog
-                    title: qsTr("Choose where to keep your data")
-                    onAccepted: {
-                        var err = LocalFileService.moveDatabaseTo(selectedFolder)
-                        if (err) { dbStatus.text = err; dbStatus.color = Theme.error }
-                        else { dbStatus.text = qsTr("Moved. Restart Sommet to use the new location.")
-                               dbStatus.color = Theme.success }
-                    }
-                }
-
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.sync; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Database"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-
-                // Where the data is kept
-                Text {
-                    text: qsTr("Where your data is kept")
-                    color: Theme.text; font.pixelSize: Theme.fontSizeLabel; font.bold: true
-                    topPadding: Theme.spacingSmall
-                }
-                Text {
-                    text: LocalFileService.databaseLocation
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
-                    width: parent.width; wrapMode: Text.WrapAnywhere
-                }
-                Text {
-                    text: qsTr("Keep it here, or point it at any folder — including a synced one (Dropbox, Mega, Drive). A synced folder shares between your computers one at a time; it can't merge two at once, and phones can't use it. That's your call.")
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
-                    width: parent.width; wrapMode: Text.WordWrap
-                }
-                RoundedButton {
-                    text: qsTr("Move to a folder…")
-                    onClicked: dbMoveDialog.open()
-                }
-
-                // Sync across devices (server / NAS)
-                Text {
-                    text: qsTr("Sync across devices")
-                    color: Theme.text; font.pixelSize: Theme.fontSizeLabel; font.bold: true
-                    topPadding: Theme.spacingMedium
-                }
-                Text {
-                    text: qsTr("Your own server or NAS is the only way to sync your phone and computers together. A copy always stays on each device, so it keeps working offline.")
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeBody
-                    width: parent.width; wrapMode: Text.WordWrap
-                }
-                RoundedTextField {
-                    id: syncUrlField
-                    width: parent.width
-                    text: ActivityService.sommetSyncUrl
-                    placeholderText: qsTr("https:// your server (…/sommet/sync.php)")
-                }
-                RoundedTextField {
-                    id: syncTokenField
-                    width: parent.width
-                    echoMode: TextInput.Password
-                    placeholderText: qsTr("Access token")
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedButton {
-                        text: qsTr("Test")
-                        enabled: syncUrlField.text.length > 0 && syncTokenField.text.length > 0
-                        onClicked: {
-                            sommetSyncStatus.text = qsTr("Testing…"); sommetSyncStatus.color = Theme.mutedText
-                            ActivityService.sommetSyncTest(syncUrlField.text, syncTokenField.text)
-                        }
-                    }
-                    RoundedButton {
-                        text: qsTr("Save")
-                        enabled: syncUrlField.text.length > 0 && syncTokenField.text.length > 0
-                        onClicked: {
-                            ActivityService.setSommetSync(syncUrlField.text, syncTokenField.text)
-                            sommetSyncStatus.text = qsTr("Saved."); sommetSyncStatus.color = Theme.mutedText
-                        }
-                    }
-                    RoundedButton {
-                        text: qsTr("Sync now")
-                        enabled: ActivityService.sommetSyncConfigured
-                        onClicked: {
-                            sommetSyncStatus.text = qsTr("Syncing…"); sommetSyncStatus.color = Theme.mutedText
-                            ActivityService.sommetSyncNow()
-                        }
-                    }
-                }
-                RoundedButton {
-                    visible: ActivityService.sommetSyncConfigured
-                    text: qsTr("Stop syncing")
-                    onClicked: {
-                        ActivityService.setSommetSync("", "")
-                        syncUrlField.text = ""; syncTokenField.text = ""
-                        sommetSyncStatus.text = qsTr("Stopped syncing."); sommetSyncStatus.color = Theme.mutedText
-                    }
-                }
-
-                Text {
-                    id: sommetSyncStatus
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeCaption
-                    color: Theme.mutedText
-                    visible: text.length > 0
-                }
-                Text {
-                    id: dbStatus
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    font.pixelSize: Theme.fontSizeCaption
-                    color: Theme.mutedText
-                    visible: text.length > 0
-                }
-
-                Connections {
-                    target: ActivityService
-                    function onSommetSyncTestResult(ok, message) {
-                        sommetSyncStatus.text = message
-                        sommetSyncStatus.color = ok ? Theme.success : Theme.error
-                    }
-                    function onSommetSyncFinished(pulled, pushed) {
-                        sommetSyncStatus.text = qsTr("Synced ✓ — %1 received, %2 sent.").arg(pulled).arg(pushed)
-                        sommetSyncStatus.color = Theme.success
-                    }
-                    function onSommetSyncError(message) {
-                        sommetSyncStatus.text = qsTr("Sync problem: %1").arg(message)
-                        sommetSyncStatus.color = Theme.error
-                    }
-                }
-            }
-        }
-
-        Card {
-            width: parent.width
-            visible: HomeViewModel.isGarmin
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.settings; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Supported devices"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Row {
-                    spacing: 6
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: Theme.mutedText
-                    }
-                    Text {
-                        text: qsTr("Suunto Ambit 3 (USB, via the local backend)")
-                        color: Theme.mutedText
-                        font.pixelSize: Theme.fontSizeLabel
-                    }
-                }
-                Row {
-                    spacing: 6
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: Theme.success
-                    }
-                    Text {
-                        text: qsTr("Garmin eTrex — connected (%1)").arg(GarminService.model)
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeLabel
-                    }
-                }
-            }
-        }
-
-        // --- Connections ---
-        // Found 2026-08-07 via real testing: this used to be static, no way to click into
-        // any of it. Checked what the real Android app does before building each one -
-        // Intervals.icu AND Runalyze both use simple personal-API-key auth (no OAuth) - the
-        // first version of this wrongly assumed Runalyze needed OAuth too, corrected once
-        // actually checked (src/services/ApiRunalyze.ts). Strava genuinely does need real
-        // OAuth2 (src/services/ApiStrava.ts) - built for real the same day, via a local
-        // loopback HTTP callback server instead of the Android app's custom URL scheme; see
-        // ConnectionsService's own header comment for why.
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.sync; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Connections"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-
-                // Real, 2026-08-09: these three rows used spacing:8 while every other
-                // status-dot row on this page (General/Supported devices above) used 6 -
-                // unified to 6.
-                Row {
-                    spacing: 6
-                    TapHandler { onTapped: intervalsIcuDialog.open() }
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: ConnectionsService.intervalsIcuConnected ? Theme.success : Theme.mutedText
-                    }
-                    Text {
-                        text: ConnectionsService.intervalsIcuConnected
-                            ? qsTr("Intervals.icu — connected (athlete %1)")
-                                .arg(ConnectionsService.intervalsIcuAthleteId)
-                            : qsTr("Intervals.icu — tap to set up")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    spacing: 6
-                    TapHandler { onTapped: runalyzeDialog.open() }
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: ConnectionsService.runalyzeConnected ? Theme.success : Theme.mutedText
-                    }
-                    Text {
-                        text: ConnectionsService.runalyzeConnected
-                            ? qsTr("Runalyze — connected")
-                            : qsTr("Runalyze — tap to set up")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    spacing: 6
-                    TapHandler { onTapped: stravaDialog.open() }
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: ConnectionsService.stravaConnected ? Theme.success : Theme.mutedText
-                    }
-                    Text {
-                        text: ConnectionsService.stravaConnected
-                            ? qsTr("Strava — connected")
-                            : qsTr("Strava — tap to set up")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    spacing: 6
-                    TapHandler { onTapped: garminDialog.open() }
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: ConnectionsService.garminConnected ? Theme.success : Theme.mutedText
-                    }
-                    Text {
-                        text: ConnectionsService.garminConnected
-                            ? qsTr("Garmin Connect — connected (%1)").arg(ConnectionsService.garminEmail)
-                            : qsTr("Garmin Connect — tap to sign in")
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                // Cloud storage (Dropbox/Google Drive/OneDrive) used to live here as OAuth
-                // "connections"; backup now just saves to a folder you pick (point it at a cloud
-                // sync folder), so those rows and their key dialogs were removed - André 2026-08-16.
-            }
-        }
-
-        // --- Weight ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.weight; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Weight"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Pick where weigh-ins come from. Your own manual entries are " +
-                               "always included whichever you choose — add them on the Weight page.")
-                }
-                // Provider filter (André, 2026-08-26: "there is no toggle to choose from
-                // intervals.icu or garmin"). Previously this card only DESCRIBED the automatic
-                // merge with no way to change it. "Merge both" keeps that original behaviour.
-                Row {
-                    spacing: Theme.spacingMedium
-                    RoundedRadioButton {
-                        text: qsTr("Merge both")
-                        checked: WeightService.source === "all"
-                        onToggled: if (checked) WeightService.source = "all"
-                    }
-                    RoundedRadioButton {
-                        text: qsTr("intervals.icu")
-                        checked: WeightService.source === "intervals"
-                        onToggled: if (checked) WeightService.source = "intervals"
-                    }
-                    RoundedRadioButton {
-                        text: qsTr("Garmin")
-                        checked: WeightService.source === "garmin"
-                        onToggled: if (checked) WeightService.source = "garmin"
-                    }
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    visible: WeightService.source === "all"
-                    text: qsTr("Merging: if both have a reading for the same day, the one with " +
-                               "more detail (body fat, muscle…) wins, so there are no duplicates.")
-                }
-            }
-        }
-
-        // --- Health ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.health; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Health"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Merges resting HR, steps and HRV from intervals.icu and Garmin " +
-                               "Connect (plus body battery from Garmin), de-duplicated by day. " +
-                               "Add manual readings on the Health page.")
-                }
-                Row {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    Text { text: qsTr("Sleep"); color: Theme.text; font.pixelSize: Theme.fontSizeBody
-                           anchors.verticalCenter: parent.verticalCenter
-                           width: parent.width - sleepSrcCombo.width - Theme.spacingSmall }
-                    RoundedComboBox {
-                        id: sleepSrcCombo
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
-                        readonly property var _keys: ["intervals", "garmin", "off"]
-                        model: [qsTr("intervals.icu"), qsTr("Garmin Connect"),
-                                qsTr("Don't show sleep")]
-                        currentIndex: Math.max(0, _keys.indexOf(HealthService.sleepProvider))
-                        onActivated: (i) => HealthService.sleepProvider = _keys[i]
-                    }
-                }
-                Row {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    Text { text: qsTr("Sleep score"); color: Theme.text; font.pixelSize: Theme.fontSizeBody
-                           anchors.verticalCenter: parent.verticalCenter
-                           width: parent.width - sleepScoreCombo.width - Theme.spacingSmall }
-                    RoundedComboBox {
-                        id: sleepScoreCombo
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
-                        readonly property var _keys: ["sommet", "intervals"]
-                        model: [qsTr("Sommet's own"), qsTr("From intervals.icu")]
-                        currentIndex: Math.max(0, _keys.indexOf(HealthService.sleepScoreSource))
-                        onActivated: (i) => HealthService.sleepScoreSource = _keys[i]
-                    }
-                }
-                Row {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    Text { text: qsTr("HRV (overnight)"); color: Theme.text
-                           font.pixelSize: Theme.fontSizeBody
-                           anchors.verticalCenter: parent.verticalCenter
-                           width: parent.width - hrvSrcCombo.width - Theme.spacingSmall }
-                    RoundedComboBox {
-                        id: hrvSrcCombo
-                        width: 200
-                        anchors.verticalCenter: parent.verticalCenter
-                        readonly property var _keys: ["intervals", "garmin"]
-                        model: [qsTr("intervals.icu"), qsTr("Garmin Connect")]
-                        currentIndex: Math.max(0, _keys.indexOf(HealthService.hrvSource))
-                        onActivated: (i) => HealthService.hrvSource = _keys[i]
-                    }
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: HealthService.ambitHrvEnabled
-                        onToggled: HealthService.ambitHrvEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.parent.width - 60
-                        wrapMode: Text.WordWrap
-                        text: qsTr("Ambit3 morning HRV — the watch's own 5+5 / lie-still test. " +
-                                   "Turn on to set it up and show it on the Health page. Off by " +
-                                   "default so intervals.icu-only users aren't bothered.")
-                        color: Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: HealthService.coospoHrvEnabled
-                        onToggled: HealthService.coospoHrvEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: parent.parent.width - 60
-                        wrapMode: Text.WordWrap
-                        text: qsTr("Heart-rate-strap morning HRV (Polar Verity Sense, COOSPO, …) — " +
-                                   "measure directly over Bluetooth, no watch. Turn on to show the " +
-                                   "Measure button below and on the Health page.")
-                        color: Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-
-                // --- Ambit3 morning-HRV setup (shown only when its toggle is on). ---
-                Column {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    visible: HealthService.ambitHrvEnabled
-                Rectangle { width: parent.width; height: 1; color: Theme.mutedText; opacity: 0.2 }
-                Text { text: qsTr("Morning HRV from your Ambit3")
-                       color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    text: qsTr("1.  Install the HRV app on your watch and wear the Suunto Smart " +
-                               "Sensor belt (the R-R one).\n" +
-                               "2.  Start the HRV app and run it for ~5 min, lying still.\n" +
-                               "      (Orthostatic version: 5 min lying → press Lap → 5 min standing.)\n" +
-                               "3.  Connect the watch by USB and tap Import now.")
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeLabel
-                    text: qsTr("Your reading appears on the orange \"Morning HRV (Ambit3)\" line " +
-                               "on the Health page. Do it at the same time each morning (right " +
-                               "after waking, before getting up) to track your own baseline. Only " +
-                               "lie-still tests are imported - your normal workouts are ignored.")
-                }
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    RoundedButton {
-                        text: HealthService.hrvInstalling ? qsTr("Installing…")
-                                                          : qsTr("Install HRV app")
-                        enabled: !HealthService.hrvInstalling
-                        onClicked: HealthService.installHrvApp()
-                    }
-                    RoundedButton {
-                        text: ActivityService.loading ? qsTr("Importing…") : qsTr("Import now")
-                        enabled: !ActivityService.loading
-                        onClicked: { hrvImport.requested = true; ActivityService.refresh() }
-                    }
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    visible: HealthService.hrvInstallMessage.length > 0
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeLabel
-                    text: HealthService.hrvInstallMessage
-                }
-                }  // end Ambit3 setup Column
-
-                // --- Morning HRV from a BLE heart-rate strap (shown only when its toggle is on). ---
-                Column {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    visible: HealthService.coospoHrvEnabled
-                Rectangle { width: parent.width; height: 1; color: Theme.mutedText; opacity: 0.2 }
-                Text { text: qsTr("Morning HRV from a heart-rate strap (Polar Verity Sense, COOSPO, …)")
-                       color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                    text: qsTr("Wear the strap, sit or lie still, and tap Measure. It reads ~2 min " +
-                               "of heart-beats directly over Bluetooth and records your RMSSD on " +
-                               "the Morning HRV line. No watch, no 5+5 needed.")
-                }
-                Row {
-                    width: parent.width; spacing: Theme.spacingSmall
-                    RoundedButton {
-                        text: HealthService.strapMeasuring ? qsTr("Measuring…")
-                                                           : qsTr("Measure HRV")
-                        enabled: !HealthService.strapMeasuring
-                        onClicked: { strapMeasure.requested = true; HealthService.readStrapHrv(120) }
-                    }
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    visible: HealthService.strapMessage.length > 0
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeLabel
-                    text: HealthService.strapMessage
-                }
-                }  // end COOSPO strap Column
-
-                // When a strap measurement finishes (busy → idle) and it succeeded, jump to Health.
-                QtObject { id: strapMeasure; property bool requested: false }
-                Connections {
-                    target: HealthService
-                    function onChanged() {
-                        if (strapMeasure.requested && !HealthService.strapMeasuring) {
-                            strapMeasure.requested = false
-                            if (HealthService.latestHrvAmbit > 0)
-                                NavBus.navigate("health")
-                        }
-                    }
-                }
-                // When the import finishes, open the Health page to show the new reading.
-                QtObject { id: hrvImport; property bool requested: false }
-                Connections {
-                    target: ActivityService
-                    function onLoadingChanged() {
-                        if (hrvImport.requested && !ActivityService.loading) {
-                            hrvImport.requested = false
-                            HealthService.refresh()
-                            NavBus.navigate("health")
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- Maps ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.routes; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Maps"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    // Straight from the provider record, so a provider added to
-                    // MapService needs no second edit here to name itself correctly.
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Provider: %1").arg(MapService.providerName)
-                    color: Theme.text
-                    font.pixelSize: Theme.fontSizeBody
-                }
-                Flow {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    // autoExclusive (QQC2's default for same-parent RadioButtons) fights
-                    // with these declarative `checked` bindings - it explicitly assigns
-                    // `checked` on whichever button loses, which silently destroys that
-                    // button's binding so it stops following MapService.provider. Exclusivity
-                    // is already fully handled by the shared property (only one of these two
-                    // comparisons can ever be true), so autoExclusive is switched off, and
-                    // onClicked (a real user action) is used instead of onCheckedChanged
-                    // (which also fires from binding evaluation, not just clicks) - real bug,
-                    // 2026-08-07, likely also the cause of the earlier "clicks for CyclOSM
-                    // don't do anything" report.
-                    RoundedRadioButton {
-                        autoExclusive: false
-                        checked: MapService.provider === "osm"
-                        text: qsTr("OpenStreetMap (standard)")
-                        onClicked: MapService.provider = "osm"
-                    }
-                    RoundedRadioButton {
-                        autoExclusive: false
-                        checked: MapService.provider === "cyclosm"
-                        text: qsTr("CyclOSM (cycling-focused)")
-                        onClicked: MapService.provider = "cyclosm"
-                    }
-                    // André, 2026-08-11: "ok add IGN to desktop" - for parity with Android,
-                    // which has had it and defaults to it. Same layer, so both versions draw
-                    // the identical map.
-                    RoundedRadioButton {
-                        autoExclusive: false
-                        checked: MapService.provider === "ign"
-                        text: qsTr("IGN (France)")
-                        onClicked: MapService.provider = "ign"
-                    }
-                }
-
-                // Offline tile cache - real, 2026-08-11 (André: "put this offline map cache
-                // in the desktop version", matching Android's own SettingsScreen.tsx cache
-                // size + "Clear map cache" row). This is the SAME cache every map tile
-                // (browsed or explicitly downloaded via MapWindow's own "Download for
-                // offline" button) lands in - one number, one clear action, not a separate
-                // "offline tiles" store to manage.
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    Text {
-                        width: parent.width - clearCacheButton.width - Theme.spacingSmall
-                        anchors.verticalCenter: parent.verticalCenter
-                        wrapMode: Text.WordWrap
-                        color: Theme.text
-                        font.pixelSize: Theme.fontSizeBody
-                        text: qsTr("Offline tile cache: %1 MB")
-                              .arg((TileCacheService.cacheSizeBytes / (1024 * 1024)).toFixed(1))
-                    }
-                    RoundedButton {
-                        id: clearCacheButton
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: qsTr("Clear")
-                        enabled: TileCacheService.cacheSizeBytes > 0
-                        onClicked: TileCacheService.clearCache()
-                    }
-                }
-                // Offline maps moved here from the nav rail (André, 2026-08-31).
-                RoundedButton {
-                    width: parent.width
-                    text: qsTr("Download offline maps…")
-                    onClicked: NavBus.navigate("offlineMaps")
+                SidebarSwitch {
+                    title: qsTr("T6/X6")
+                    description: qsTr("Legacy Suunto HR wristops.")
+                    experimental: true
+                    checked: DeviceService.suuntoT6ExperimentEnabled
+                    onToggled: (on) => DeviceService.suuntoT6ExperimentEnabled = on
                 }
             }
         }
 
         // --- Backup & restore (moved here from the nav rail, André 2026-08-31) ---
         Card {
+            id: backupCard
             width: parent.width
             visible: HomeViewModel.anyDevice
             Column {
@@ -1048,620 +554,1139 @@ PageFlickable {
             }
         }
 
-        // --- Weather: the real, functional section ---
+        // --- Everything else: one closed row each, opened in place (Settings split). ---
         Card {
             width: parent.width
+            padding: 4
             Column {
+                id: sectionsColumn
                 width: parent.width
-                spacing: Theme.spacingSmall
+                // Activity screen: the extra power numbers most rides don't need (André, 2026-09-27).
+                SettingsSection {
+                    id: activitiesSection
+                    title: qsTr("Activities")
+                    summary: qsTr("Advanced power numbers: %1").arg((Theme.advancedPowerNumbers ? qsTr("on") : qsTr("off")))
+                    expanded: root.sectionOpen("activities")
+                    onToggleRequested: root.setSectionOpen("activities", !expanded)
 
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.weatherSunny; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Weather"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    text: qsTr("Provider: Open-Meteo")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeLabel
-                }
-
-                Text { text: qsTr("Location source"); color: Theme.text; font.pixelSize: Theme.fontSizeBody }
-                Row {
-                    spacing: Theme.spacingSmall
-                    // IP-based is the real default now (Main.qml calls
-                    // WeatherService.detectLocationFromIp() on startup, not refresh()) - this
-                    // radio just reflects/re-triggers that, matching HomeViewModel's own
-                    // startup call rather than owning the decision itself.
-                    RoundedRadioButton {
-                        checked: true
-                        text: qsTr("This computer (IP-based)")
-                        onCheckedChanged: if (checked) WeatherService.detectLocationFromIp()
-                    }
-                    RoundedRadioButton { text: qsTr("Manual") }
-                }
-
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingSmall
-                    RoundedTextField {
-                        id: latField
-                        width: (parent.width - Theme.spacingSmall) / 2
-                        placeholderText: qsTr("Latitude")
-                        text: WeatherService.latitude.toString()
-                    }
-                    RoundedTextField {
-                        id: lonField
-                        width: (parent.width - Theme.spacingSmall) / 2
-                        placeholderText: qsTr("Longitude")
-                        text: WeatherService.longitude.toString()
-                    }
-                }
-                RoundedButton {
-                    text: qsTr("Apply")
-                    onClicked: {
-                        const lat = parseFloat(latField.text);
-                        const lon = parseFloat(lonField.text);
-                        if (!isNaN(lat)) WeatherService.latitude = lat;
-                        if (!isNaN(lon)) WeatherService.longitude = lon;
-                        WeatherService.refresh();
-                    }
-                }
-            }
-        }
-
-        // --- Suunto Apps Catalog ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.download; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Suunto Apps Catalog"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("The official catalog of ~13,100 pre-compiled Suunto Apps - " +
-                                "interval timers, HR-zone displays, and thousands of " +
-                                "Movescount-era community apps. This app never ships or " +
-                                "downloads it (most of it is other people's own work, not " +
-                                "ours to redistribute) - import your own copy from your own " +
-                                "SuuntoLink installation instead. Suunto stopped updating " +
-                                "this file when Movescount was retired, so any copy you have " +
-                                "is the same copy - there's nothing to keep up to date. " +
-                                "If you don't import it, you'll still have every app you " +
-                                "create yourself in the Workout Builder - you just won't " +
-                                "have this existing catalog to browse and install from too.")
-                }
-
-                Row {
-                    spacing: Theme.spacingSmall
-                    visible: !root.catalogChecking
-                    Icon {
-                        visible: root.catalogImported
-                        glyph: Icons.checkCircle
-                        size: 16
-                        color: Theme.success
-                        anchors.verticalCenter: parent.verticalCenter
+                    RoundedSwitch {
+                        text: qsTr("Advanced power numbers")
+                        checked: Theme.advancedPowerNumbers
+                        onToggled: Theme.advancedPowerNumbers = checked
                     }
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
+                        text: qsTr("Adds normalized power, training load (TSS), intensity factor and work to rides with a power meter. Uses the FTP from your intervals.icu settings.")
                         color: Theme.mutedText
-                        font.pixelSize: Theme.fontSizeLabel
-                        text: root.catalogImported
-                              ? qsTr("Imported - %1 apps available").arg(root.catalogEntries)
-                              : qsTr("Not imported - only apps you create are available")
-                    }
-                }
-
-                Text {
-                    visible: root.catalogError.length > 0
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.error
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: root.catalogError
-                }
-
-                RoundedButton {
-                    text: root.catalogImported ? qsTr("Import a different copy")
-                                                : qsTr("Import Catalog")
-                    enabled: !root.catalogImporting && !root.catalogChecking
-                    onClicked: catalogFileDialog.open()
-                }
-            }
-        }
-
-        // --- Experimental Features. Real decision, 2026-08-11 (André, after a live BLE
-        // session that same night hit real reliability trouble - see HANDOFF.md Milestone
-        // 7 items 16-19): Bluetooth stays real, but opt-in and clearly labeled as still
-        // being hardened, rather than part of the default cable-first Home experience.
-        // "By default, only cable" - this toggle is what switches Home's own Bluetooth
-        // section (HomePage.qml) on, off by default, persisted like Testing mode above. ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.watch; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Experimental features"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Bluetooth connectivity (Linux only). Still being hardened - " +
-                                "cable stays the reliable default. Turning this on adds a " +
-                                "\"Connect via Bluetooth\" option to the Home screen.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.bleExperimentEnabled
-                        onToggled: DeviceService.bleExperimentEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.bleExperimentEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.bleExperimentEnabled ? Theme.primary : Theme.mutedText
                         font.pixelSize: Theme.fontSizeBody
+                        width: parent.width
+                        wrapMode: Text.WordWrap
                     }
                 }
 
-                // --- Intervals + Smart Sensor menu features (2026-08-17): one toggle each,
-                // each reveals its own menu item in the side menu, matching the Android app.
-                // Intervals rides the Suunto App-Zone/CustomModes mechanism (needs SuuntoLink to
-                // compile), so it stays experimental; Smart Sensor is the standalone BLE HR belt.
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("Intervals menu (build interval workouts)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.intervalsEnabled
-                        onToggled: DeviceService.intervalsEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.intervalsEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.intervalsEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("App Zone menu (build & install Suunto Apps)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.appZoneEnabled
-                        onToggled: DeviceService.appZoneEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.appZoneEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.appZoneEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("Smart Sensor menu (Suunto HR belt over Bluetooth)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.smartSensorEnabled
-                        onToggled: DeviceService.smartSensorEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.smartSensorEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.smartSensorEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
+                // --- Health ---
+                SettingsSection {
+                    id: healthSection
+                    title: qsTr("Health")
+                    summary: qsTr("Sleep: %1 · HRV: %2")
+                        .arg(HealthService.sleepProvider === "garmin" ? qsTr("Garmin Connect")
+                             : HealthService.sleepProvider === "off" ? qsTr("off") : qsTr("intervals.icu"))
+                        .arg(HealthService.hrvSource === "garmin" ? qsTr("Garmin Connect") : qsTr("intervals.icu"))
+                    glyph: Icons.health
+                    expanded: root.sectionOpen("health")
+                    onToggleRequested: root.setSectionOpen("health", !expanded)
 
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("Coach menu (readiness beacon + chat, v2 concept)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.coachEnabled
-                        onToggled: DeviceService.coachEnabled = checked
-                    }
                     Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.coachEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.coachEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Merges resting HR, steps and HRV from intervals.icu and Garmin " +
+                                   "Connect (plus body battery from Garmin), de-duplicated by day. " +
+                                   "Add manual readings on the Health page.")
                     }
-                }
-
-                // GPS Track Pod and Suunto T6 are standalone legacy Suunto devices
-                // integrated built-blind (never hardware-confirmed). Each reveals its own
-                // side-menu item when turned on, off by default. NavRail gates on these.
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("GPS Track Pod menu (standalone Suunto GPS logger)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.gpsTrackPodExperimentEnabled
-                        onToggled: DeviceService.gpsTrackPodExperimentEnabled = checked
+                    Row {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        Text { text: qsTr("Sleep"); color: Theme.text; font.pixelSize: Theme.fontSizeBody
+                               anchors.verticalCenter: parent.verticalCenter
+                               width: parent.width - sleepSrcCombo.width - Theme.spacingSmall }
+                        RoundedComboBox {
+                            id: sleepSrcCombo
+                            width: 200
+                            anchors.verticalCenter: parent.verticalCenter
+                            readonly property var _keys: ["intervals", "garmin", "off"]
+                            model: [qsTr("intervals.icu"), qsTr("Garmin Connect"),
+                                    qsTr("Don't show sleep")]
+                            currentIndex: Math.max(0, _keys.indexOf(HealthService.sleepProvider))
+                            onActivated: (i) => HealthService.sleepProvider = _keys[i]
+                        }
                     }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.gpsTrackPodExperimentEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.gpsTrackPodExperimentEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
+                    Row {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        Text { text: qsTr("Sleep score"); color: Theme.text; font.pixelSize: Theme.fontSizeBody
+                               anchors.verticalCenter: parent.verticalCenter
+                               width: parent.width - sleepScoreCombo.width - Theme.spacingSmall }
+                        RoundedComboBox {
+                            id: sleepScoreCombo
+                            width: 200
+                            anchors.verticalCenter: parent.verticalCenter
+                            readonly property var _keys: ["sommet", "intervals"]
+                            model: [qsTr("Sommet's own"), qsTr("From intervals.icu")]
+                            currentIndex: Math.max(0, _keys.indexOf(HealthService.sleepScoreSource))
+                            onActivated: (i) => HealthService.sleepScoreSource = _keys[i]
+                        }
                     }
-                }
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("T6/X6 menu (legacy Suunto HR wristops)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.suuntoT6ExperimentEnabled
-                        onToggled: DeviceService.suuntoT6ExperimentEnabled = checked
+                    Row {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        Text { text: qsTr("HRV (overnight)"); color: Theme.text
+                               font.pixelSize: Theme.fontSizeBody
+                               anchors.verticalCenter: parent.verticalCenter
+                               width: parent.width - hrvSrcCombo.width - Theme.spacingSmall }
+                        RoundedComboBox {
+                            id: hrvSrcCombo
+                            width: 200
+                            anchors.verticalCenter: parent.verticalCenter
+                            readonly property var _keys: ["intervals", "garmin"]
+                            model: [qsTr("intervals.icu"), qsTr("Garmin Connect")]
+                            currentIndex: Math.max(0, _keys.indexOf(HealthService.hrvSource))
+                            onActivated: (i) => HealthService.hrvSource = _keys[i]
+                        }
                     }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.suuntoT6ExperimentEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.suuntoT6ExperimentEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-
-                // --- Mark synced workouts. Opt-in, OFF by default (André, 2026-08-16).
-                // Writes the watch's own per-move synced flag after this app reads a
-                // workout, so the official Suunto app / SuuntoLink treat it as already
-                // synced. Deliberately spells out the tradeoff so nobody turns it on
-                // without understanding the data-loss risk. ---
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    text: qsTr("Mark synced workouts as synced for Suunto app and SuuntoLink")
-                    font.bold: true
-                    font.pixelSize: Theme.fontSizeBody
-                    color: Theme.text
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Once a workout has been read here, tell the watch it is already " +
-                                "synced. This avoids duplicated workouts in the Suunto app and " +
-                                "SuuntoLink - but it also means the workout can no longer be " +
-                                "retrieved again from the watch if the Suunto app fails to keep " +
-                                "it. Leave off unless you understand this tradeoff.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.markSyncedEnabled
-                        onToggled: DeviceService.markSyncedEnabled = checked
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: DeviceService.markSyncedEnabled ? qsTr("On") : qsTr("Off")
-                        color: DeviceService.markSyncedEnabled ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-            }
-        }
-
-        // --- Testing mode. Real request, 2026-08-11 (André): "add on feature on settings:
-        // testing mode, where it simulates that an ambit 3 is connected, so people can test
-        // it without the watch. for usability could be cool." Then, same day: "put it on the
-        // bottom of the site before the about... opens a window and we can choose device,
-        // based on all the characteristics we already know...always linked..and we add the
-        // garmin etrex".
-        //
-        // "Always linked" is what makes this worth having rather than a mock: the Suunto
-        // devices come from the generated capability table and the eTrex from a real folder
-        // tree, so every page runs its normal code - the same decoder, encoder, round-trip
-        // guard and GPX reader hardware goes through. Edits land on a sample device and are
-        // thrown away when the app closes; nothing reaches a real one.
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.watch; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Testing mode"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: qsTr("Pretend a device is connected, so you can look around the app " +
-                                "without one. Changes are made to a sample device and " +
-                                "forgotten when you close the app - nothing is written to a " +
-                                "real one.")
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeBody
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: DeviceService.demoMode
-                        onToggled: DeviceService.setDemoMode(checked, "")
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        // The device's name is the status: "On" alone would leave the one
-                        // thing you actually want confirmed - which device - unsaid.
-                        text: DeviceService.demoMode
-                              ? qsTr("On - showing %1").arg(DeviceService.demoDeviceName
-                                                            || qsTr("a sample device"))
-                              : qsTr("Off")
-                        color: DeviceService.demoMode ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    visible: DeviceService.demoMode
-                    RoundedButton {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: qsTr("Change device")
-                        onClicked: demoPicker.open()
-                    }
-                }
-            }
-
-            DemoDevicePicker {
-                id: demoPicker
-                current: DeviceService.demoVariant
-                onDeviceChosen: (variant) => DeviceService.setDemoMode(true, variant)
-            }
-        }
-
-        // --- Coach (v2 concept, 2026-08-21). Two independent toggles, per André's own
-        // "can we have both with a toggle?" - each backend is real code, not a stub; the
-        // zero-setup default (canned chat + bundled sample catalogue) works with nothing
-        // configured here at all. See coachservice.h's own header comment for what "live"
-        // actually requires (a small HTTP bridge in front of wahoo-systm-mcp's stdio MCP).
-        Card {
-            width: parent.width
-            visible: DeviceService.coachEnabled
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                Row {
-                    spacing: Theme.spacingSmall
-                    Icon { glyph: Icons.coach; size: 20; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: qsTr("Coach"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text; anchors.verticalCenter: parent.verticalCenter }
-                }
-
-                Item { width: 1; height: Theme.spacingSmall }
-                // Reworded 2026-08-26 (André: "claude, what do you mean with that text?") - the
-                // old single line crammed the mode, the key requirement, the subscription
-                // warning and the cost into one parenthetical. Same facts, split into a plain
-                // title + a caption, in user language rather than "chat backend".
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("Chat with a real AI coach")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Off, the coach replies from a few pre-written answers. On, it " +
-                               "talks to Claude about your real training. This needs an API key " +
-                               "you create at console.anthropic.com — that's a developer key, " +
-                               "separate from a claude.ai subscription (your normal Claude login " +
-                               "won't work here), and it's billed separately, a few cents per chat.")
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: CoachService.chatBackend === "claude"
-                        onToggled: CoachService.chatBackend = checked ? "claude" : "canned"
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: CoachService.chatBackend === "claude" ? qsTr("Claude API") : qsTr("Canned replies")
-                        color: CoachService.chatBackend === "claude" ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    visible: CoachService.chatBackend === "claude"
-                    spacing: Theme.spacingSmall
-                    RoundedTextField {
-                        id: anthropicKeyField
-                        width: 260
-                        echoMode: TextInput.Password
-                        placeholderText: CoachService.anthropicKeySet ? qsTr("Key saved (enter to replace)") : qsTr("Anthropic API key")
-                    }
-                    RoundedButton {
-                        text: qsTr("Save")
-                        enabled: anthropicKeyField.text.length > 0
-                        onClicked: { CoachService.setAnthropicApiKey(anthropicKeyField.text); anthropicKeyField.text = "" }
-                    }
-                    RoundedButton {
-                        text: qsTr("Clear")
-                        visible: CoachService.anthropicKeySet
-                        onClicked: CoachService.clearAnthropicApiKey()
-                    }
-                }
-
-                Item { width: 1; height: Theme.spacingSmall }
-                Text {
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: qsTr("Workout catalogue: live wahoo-systm-mcp (vs. the bundled offline sample)")
-                    font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
-                }
-                Row {
-                    spacing: Theme.spacingSmall
-                    RoundedSwitch {
-                        anchors.verticalCenter: parent.verticalCenter
-                        checked: CoachService.catalogueSource === "live"
-                        onToggled: CoachService.catalogueSource = checked ? "live" : "sample"
-                    }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: CoachService.catalogueSource === "live" ? qsTr("Live") : qsTr("Bundled sample (55 sessions)")
-                        color: CoachService.catalogueSource === "live" ? Theme.primary : Theme.mutedText
-                        font.pixelSize: Theme.fontSizeBody
-                    }
-                }
-                Row {
-                    visible: CoachService.catalogueSource === "live"
-                    spacing: Theme.spacingSmall
-                    RoundedTextField {
-                        id: mcpUrlField
-                        width: 320
-                        text: CoachService.systmMcpUrl
-                        placeholderText: qsTr("http://127.0.0.1:PORT/workouts")
-                        onEditingFinished: CoachService.systmMcpUrl = text
-                    }
-                }
-                Text {
-                    visible: CoachService.lastError.length > 0
-                    width: parent.width; wrapMode: Text.WordWrap
-                    text: CoachService.lastError
-                    color: Theme.error
-                    font.pixelSize: Theme.fontSizeCaption
-                }
-            }
-        }
-
-        // --- About ---
-        Card {
-            width: parent.width
-            Column {
-                width: parent.width
-                spacing: Theme.spacingSmall
-                // No icon here - unlike the other section headers, this app's own subset
-                // icon font (assets/fonts/NOTICE.md) has no real "info" glyph to reuse
-                // honestly, and guessing one isn't worth it for a header that's otherwise
-                // just a label. Still gets the same size fix as every other header.
-                Text { text: qsTr("About"); font.bold: true; font.pixelSize: Theme.fontSizeBodyLarge; color: Theme.text }
-                // The Sommet "Peak" mark (SommetMark.qml) paired with the version + tagline -
-                // same mark as the window/app icon. Tagline moved here 2026-08-14 when the
-                // General card was removed (André); it identifies the app for the average
-                // user, while the old backend status/address it shared was developer-only.
-                Row {
-                    spacing: Theme.spacingMedium
-                    // Use the exact raster app icon the Dock/window uses (setWindowIcon,
-                    // packaging/icon.png) so the About mark can't diverge from it - the
-                    // pure-QML SommetMark Canvas rendered its dashed sync ring differently
-                    // at this small size, which read as "wrong icon" next to the Dock.
-                    Image {
-                        source: "qrc:/qt/qml/AmbitApp/packaging/icon.png"
-                        width: 46; height: 46
-                        sourceSize.width: 92; sourceSize.height: 92
-                        smooth: true
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Column {
-                        id: aboutBlock
-                        anchors.verticalCenter: parent.verticalCenter
-                        // The Ember easter egg (10 taps here) was retired 2026-08-28: the Ember
-                        // card is now openly in Settings as an experimental toggle, so the
-                        // version label is just a plain label again.
-                        Text {
-                            id: versionLabel
-                            text: qsTr("Sommet v") + Qt.application.version
-                            color: Theme.text
-                            font.pixelSize: Theme.fontSizeBody
-                            font.bold: true
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: HealthService.ambitHrvEnabled
+                            onToggled: HealthService.ambitHrvEnabled = checked
                         }
                         Text {
-                            text: qsTr("Sommet — for Suunto Ambit")
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.parent.width - 60
+                            wrapMode: Text.WordWrap
+                            text: qsTr("Ambit3 morning HRV — the watch's own 5+5 / lie-still test. " +
+                                       "Turn on to set it up and show it on the Health page. Off by " +
+                                       "default so intervals.icu-only users aren't bothered.")
                             color: Theme.mutedText
                             font.pixelSize: Theme.fontSizeBody
                         }
                     }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: HealthService.coospoHrvEnabled
+                            onToggled: HealthService.coospoHrvEnabled = checked
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: parent.parent.width - 60
+                            wrapMode: Text.WordWrap
+                            text: qsTr("Heart-rate-strap morning HRV (Polar Verity Sense, COOSPO, …) — " +
+                                       "measure directly over Bluetooth, no watch. Turn on to show the " +
+                                       "Measure button below and on the Health page.")
+                            color: Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+
+                    // --- Ambit3 morning-HRV setup (shown only when its toggle is on). ---
+                    Column {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        visible: HealthService.ambitHrvEnabled
+                    Rectangle { width: parent.width; height: 1; color: Theme.mutedText; opacity: 0.2 }
+                    Text { text: qsTr("Morning HRV from your Ambit3")
+                           color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                        text: qsTr("1.  Install the HRV app on your watch and wear the Suunto Smart " +
+                                   "Sensor belt (the R-R one).\n" +
+                                   "2.  Start the HRV app and run it for ~5 min, lying still.\n" +
+                                   "      (Orthostatic version: 5 min lying → press Lap → 5 min standing.)\n" +
+                                   "3.  Connect the watch by USB and tap Import now.")
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeLabel
+                        text: qsTr("Your reading appears on the orange \"Morning HRV (Ambit3)\" line " +
+                                   "on the Health page. Do it at the same time each morning (right " +
+                                   "after waking, before getting up) to track your own baseline. Only " +
+                                   "lie-still tests are imported - your normal workouts are ignored.")
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        RoundedButton {
+                            text: HealthService.hrvInstalling ? qsTr("Installing…")
+                                                              : qsTr("Install HRV app")
+                            enabled: !HealthService.hrvInstalling
+                            onClicked: HealthService.installHrvApp()
+                        }
+                        RoundedButton {
+                            text: ActivityService.loading ? qsTr("Importing…") : qsTr("Import now")
+                            enabled: !ActivityService.loading
+                            onClicked: { hrvImport.requested = true; ActivityService.refresh() }
+                        }
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        visible: HealthService.hrvInstallMessage.length > 0
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeLabel
+                        text: HealthService.hrvInstallMessage
+                    }
+                    }  // end Ambit3 setup Column
+
+                    // --- Morning HRV from a BLE heart-rate strap (shown only when its toggle is on). ---
+                    Column {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        visible: HealthService.coospoHrvEnabled
+                    Rectangle { width: parent.width; height: 1; color: Theme.mutedText; opacity: 0.2 }
+                    Text { text: qsTr("Morning HRV from a heart-rate strap (Polar Verity Sense, COOSPO, …)")
+                           color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                        text: qsTr("Wear the strap, sit or lie still, and tap Measure. It reads ~2 min " +
+                                   "of heart-beats directly over Bluetooth and records your RMSSD on " +
+                                   "the Morning HRV line. No watch, no 5+5 needed.")
+                    }
+                    Row {
+                        width: parent.width; spacing: Theme.spacingSmall
+                        RoundedButton {
+                            text: HealthService.strapMeasuring ? qsTr("Measuring…")
+                                                               : qsTr("Measure HRV")
+                            enabled: !HealthService.strapMeasuring
+                            onClicked: { strapMeasure.requested = true; HealthService.readStrapHrv(120) }
+                        }
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        visible: HealthService.strapMessage.length > 0
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeLabel
+                        text: HealthService.strapMessage
+                    }
+                    }  // end COOSPO strap Column
+
+                    // When a strap measurement finishes (busy → idle) and it succeeded, jump to Health.
+                    QtObject { id: strapMeasure; property bool requested: false }
+                    Connections {
+                        target: HealthService
+                        function onChanged() {
+                            if (strapMeasure.requested && !HealthService.strapMeasuring) {
+                                strapMeasure.requested = false
+                                if (HealthService.latestHrvAmbit > 0)
+                                    NavBus.navigate("health")
+                            }
+                        }
+                    }
+                    // When the import finishes, open the Health page to show the new reading.
+                    QtObject { id: hrvImport; property bool requested: false }
+                    Connections {
+                        target: ActivityService
+                        function onLoadingChanged() {
+                            if (hrvImport.requested && !ActivityService.loading) {
+                                hrvImport.requested = false
+                                HealthService.refresh()
+                                NavBus.navigate("health")
+                            }
+                        }
+                    }
                 }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Independent, unofficial software - not affiliated with, " +
-                                "endorsed by, or supported by Suunto or Garmin. Suunto, " +
-                                "Ambit, Traverse, Kailash, Garmin and eTrex are trademarks of " +
-                                "their respective owners, used here only to describe " +
-                                "compatibility.")
+
+                // --- Weight ---
+                SettingsSection {
+                    id: weightSection
+                    title: qsTr("Weight")
+                    summary: qsTr("Source: %1").arg(WeightService.source === "intervals" ? qsTr("intervals.icu")
+                        : WeightService.source === "garmin" ? qsTr("Garmin") : qsTr("merge both"))
+                    glyph: Icons.weight
+                    expanded: root.sectionOpen("weight")
+                    onToggleRequested: root.setSectionOpen("weight", !expanded)
+
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Pick where weigh-ins come from. Your own manual entries are " +
+                                   "always included whichever you choose — add them on the Weight page.")
+                    }
+                    // Provider filter (André, 2026-08-26: "there is no toggle to choose from
+                    // intervals.icu or garmin"). Previously this card only DESCRIBED the automatic
+                    // merge with no way to change it. "Merge both" keeps that original behaviour.
+                    Row {
+                        spacing: Theme.spacingMedium
+                        RoundedRadioButton {
+                            text: qsTr("Merge both")
+                            checked: WeightService.source === "all"
+                            onToggled: if (checked) WeightService.source = "all"
+                        }
+                        RoundedRadioButton {
+                            text: qsTr("intervals.icu")
+                            checked: WeightService.source === "intervals"
+                            onToggled: if (checked) WeightService.source = "intervals"
+                        }
+                        RoundedRadioButton {
+                            text: qsTr("Garmin")
+                            checked: WeightService.source === "garmin"
+                            onToggled: if (checked) WeightService.source = "garmin"
+                        }
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        visible: WeightService.source === "all"
+                        text: qsTr("Merging: if both have a reading for the same day, the one with " +
+                                   "more detail (body fat, muscle…) wins, so there are no duplicates.")
+                    }
                 }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    // Matches LICENSE at the repo root and the Credits section of the README.
-                    text: qsTr("Licensed under the GNU GPLv3, the same license as openambit, " +
-                                "whose libambit this project's protocol work is checked " +
-                                "against throughout. The desktop app links Qt 6 under the " +
-                                "LGPLv3; the Android app uses React Native (MIT).")
+
+                // --- Maps ---
+                SettingsSection {
+                    id: mapsSection
+                    title: qsTr("Maps")
+                    summary: qsTr("%1 · offline tile cache %2 MB").arg(MapService.providerName)
+                        .arg((TileCacheService.cacheSizeBytes / (1024 * 1024)).toFixed(1))
+                    glyph: Icons.routes
+                    expanded: root.sectionOpen("maps")
+                    onToggleRequested: root.setSectionOpen("maps", !expanded)
+
+                    Text {
+                        // Straight from the provider record, so a provider added to
+                        // MapService needs no second edit here to name itself correctly.
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Provider: %1").arg(MapService.providerName)
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeBody
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        // autoExclusive (QQC2's default for same-parent RadioButtons) fights
+                        // with these declarative `checked` bindings - it explicitly assigns
+                        // `checked` on whichever button loses, which silently destroys that
+                        // button's binding so it stops following MapService.provider. Exclusivity
+                        // is already fully handled by the shared property (only one of these two
+                        // comparisons can ever be true), so autoExclusive is switched off, and
+                        // onClicked (a real user action) is used instead of onCheckedChanged
+                        // (which also fires from binding evaluation, not just clicks) - real bug,
+                        // 2026-08-07, likely also the cause of the earlier "clicks for CyclOSM
+                        // don't do anything" report.
+                        RoundedRadioButton {
+                            autoExclusive: false
+                            checked: MapService.provider === "osm"
+                            text: qsTr("OpenStreetMap (standard)")
+                            onClicked: MapService.provider = "osm"
+                        }
+                        RoundedRadioButton {
+                            autoExclusive: false
+                            checked: MapService.provider === "cyclosm"
+                            text: qsTr("CyclOSM (cycling-focused)")
+                            onClicked: MapService.provider = "cyclosm"
+                        }
+                        // André, 2026-08-11: "ok add IGN to desktop" - for parity with Android,
+                        // which has had it and defaults to it. Same layer, so both versions draw
+                        // the identical map.
+                        RoundedRadioButton {
+                            autoExclusive: false
+                            checked: MapService.provider === "ign"
+                            text: qsTr("IGN (France)")
+                            onClicked: MapService.provider = "ign"
+                        }
+                    }
+
+                    // Offline tile cache - real, 2026-08-11 (André: "put this offline map cache
+                    // in the desktop version", matching Android's own SettingsScreen.tsx cache
+                    // size + "Clear map cache" row). This is the SAME cache every map tile
+                    // (browsed or explicitly downloaded via MapWindow's own "Download for
+                    // offline" button) lands in - one number, one clear action, not a separate
+                    // "offline tiles" store to manage.
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        Text {
+                            width: parent.width - clearCacheButton.width - Theme.spacingSmall
+                            anchors.verticalCenter: parent.verticalCenter
+                            wrapMode: Text.WordWrap
+                            color: Theme.text
+                            font.pixelSize: Theme.fontSizeBody
+                            text: qsTr("Offline tile cache: %1 MB")
+                                  .arg((TileCacheService.cacheSizeBytes / (1024 * 1024)).toFixed(1))
+                        }
+                        RoundedButton {
+                            id: clearCacheButton
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Clear")
+                            enabled: TileCacheService.cacheSizeBytes > 0
+                            onClicked: TileCacheService.clearCache()
+                        }
+                    }
+                    // Offline maps moved here from the nav rail (André, 2026-08-31).
+                    RoundedButton {
+                        width: parent.width
+                        text: qsTr("Download offline maps…")
+                        onClicked: NavBus.navigate("offlineMaps")
+                    }
                 }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Map data © OpenStreetMap contributors, under the Open " +
-                                "Database License (ODbL); tiles from CyclOSM / OpenStreetMap " +
-                                "France and IGN Géoplateforme. Weather by Open-Meteo " +
-                                "(CC BY 4.0). Icons: Google Material Symbols (Apache License " +
-                                "2.0). GPS Track Pod support from iwanders/gps_track_pod (MIT).")
+
+                // --- Weather: the real, functional section ---
+                SettingsSection {
+                    id: weatherSection
+                    title: qsTr("Weather")
+                    summary: WeatherService.placeName.length > 0
+                        ? qsTr("Open-Meteo · %1").arg(WeatherService.placeName)
+                        : qsTr("Provider: Open-Meteo")
+                    glyph: Icons.weatherSunny
+                    expanded: root.sectionOpen("weather")
+                    onToggleRequested: root.setSectionOpen("weather", !expanded)
+
+                    Text {
+                        text: qsTr("Provider: Open-Meteo")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeLabel
+                    }
+
+                    Text { text: qsTr("Location source"); color: Theme.text; font.pixelSize: Theme.fontSizeBody }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        // IP-based is the real default now (Main.qml calls
+                        // WeatherService.detectLocationFromIp() on startup, not refresh()) - this
+                        // radio just reflects/re-triggers that, matching HomeViewModel's own
+                        // startup call rather than owning the decision itself.
+                        RoundedRadioButton {
+                            checked: true
+                            text: qsTr("This computer (IP-based)")
+                            onCheckedChanged: if (checked) WeatherService.detectLocationFromIp()
+                        }
+                        RoundedRadioButton { text: qsTr("Manual") }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        RoundedTextField {
+                            id: latField
+                            width: (parent.width - Theme.spacingSmall) / 2
+                            placeholderText: qsTr("Latitude")
+                            text: WeatherService.latitude.toString()
+                        }
+                        RoundedTextField {
+                            id: lonField
+                            width: (parent.width - Theme.spacingSmall) / 2
+                            placeholderText: qsTr("Longitude")
+                            text: WeatherService.longitude.toString()
+                        }
+                    }
+                    RoundedButton {
+                        text: qsTr("Apply")
+                        onClicked: {
+                            const lat = parseFloat(latField.text);
+                            const lon = parseFloat(lonField.text);
+                            if (!isNaN(lat)) WeatherService.latitude = lat;
+                            if (!isNaN(lon)) WeatherService.longitude = lon;
+                            WeatherService.refresh();
+                        }
+                    }
                 }
-                Text {
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                    color: Theme.mutedText
-                    font.pixelSize: Theme.fontSizeCaption
-                    text: qsTr("Built on real prior work: openambit, opensportsync, " +
-                                "marguslt (firmware-download recipe, gists, openmoves), " +
-                                "sebchastang (published Suunto App Zone interval-training " +
-                                "scripts), the Suunto forum community, and wanarun.net. " +
-                                "Full credits and licenses in the project README.")
+
+                // Ember - fast & calorie tracking companion (André, 2026-08-25). The switch shows/hides
+                // the Ember page in the sidebar; the link opens the phone app to Add to Home Screen.
+                // 2026-08-28 (André): the card is now openly in Settings instead of hidden behind the
+                // 10-tap easter egg - Ember stays OFF in the sidebar by default (the toggle below), but
+                // the toggle and the phone-install link are discoverable for anyone who wants to opt in.
+                // Labelled experimental, since it hasn't been tested much yet.
+                // Its sidebar switch is in "Show in the sidebar" (2026-10-21).
+                SettingsSection {
+                    id: emberSection
+                    title: qsTr("Ember")
+                    summary: qsTr("Phone install link · intervals.icu sync · food search key")
+                    glyph: Icons.ember
+                    expanded: root.sectionOpen("ember")
+                    onToggleRequested: root.setSectionOpen("ember", !expanded)
+
+                    RoundedSwitch {
+                        text: qsTr("Also sync to intervals.icu")
+                        checked: Theme.emberSyncIntervals
+                        onToggled: Theme.emberSyncIntervals = checked
+                    }
+                    Text {
+                        visible: Theme.emberSyncIntervals
+                        text: qsTr("Daily calories, water, macros, fasting hours and coffees are pushed to your intervals.icu wellness (into the fields you already have).")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        text: qsTr("Install on your phone")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeLabel
+                        font.bold: true
+                        topPadding: Theme.spacingSmall
+                    }
+                    Text {
+                        text: qsTr("Open this link in your phone's browser, then Share → Add to Home Screen.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        RoundedTextField {
+                            id: emberUrlField
+                            width: parent.width - copyBtn.width - openBtn.width - Theme.spacingSmall * 2
+                            text: Theme.emberInstallUrl
+                            placeholderText: qsTr("https:// your Ember URL")
+                            onEditingFinished: Theme.emberInstallUrl = text
+                        }
+                        RoundedButton {
+                            id: copyBtn
+                            text: qsTr("Copy")
+                            onClicked: { emberUrlField.selectAll(); emberUrlField.copy(); emberUrlField.deselect() }
+                        }
+                        RoundedButton {
+                            id: openBtn
+                            text: qsTr("Open")
+                            enabled: emberUrlField.text.length > 0
+                            onClicked: Qt.openUrlExternally(emberUrlField.text)
+                        }
+                    }
+                    // Food search (André, 2026-09-28): a personal USDA key lifts the shared demo key's
+                    // limit. Open Food Facts needs no key.
+                    Text {
+                        text: qsTr("Food search")
+                        color: Theme.text
+                        font.pixelSize: Theme.fontSizeLabel
+                        font.bold: true
+                        topPadding: Theme.spacingSmall
+                    }
+                    Text {
+                        text: qsTr("Generic foods come from USDA FoodData Central. Without your own key a shared demo key is used, limited to about 30 searches an hour. The key is free and stays on this computer.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                    }
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingSmall
+                        RoundedTextField {
+                            id: usdaKeyField
+                            width: parent.width - usdaGetBtn.width - Theme.spacingSmall
+                            text: EmberFoodService.usdaApiKey
+                            echoMode: TextInput.Password
+                            placeholderText: qsTr("USDA API key (optional)")
+                            onEditingFinished: EmberFoodService.usdaApiKey = text
+                        }
+                        RoundedButton {
+                            id: usdaGetBtn
+                            text: qsTr("Get a free key")
+                            onClicked: Qt.openUrlExternally("https://fdc.nal.usda.gov/api-key-signup")
+                        }
+                    }
+                }
+
+                // --- Coach (v2 concept, 2026-08-21). Two independent toggles, per André's own
+                // "can we have both with a toggle?" - each backend is real code, not a stub; the
+                // zero-setup default (canned chat + bundled sample catalogue) works with nothing
+                // configured here at all. See coachservice.h's own header comment for what "live"
+                // actually requires (a small HTTP bridge in front of wahoo-systm-mcp's stdio MCP).
+                SettingsSection {
+                    id: coachSection
+                    visible: DeviceService.coachEnabled
+                    title: qsTr("Coach")
+                    summary: qsTr("Replies: %1 · catalogue: %2")
+                        .arg(CoachService.chatBackend === "claude" ? qsTr("Claude API") : qsTr("pre-written"))
+                        .arg(CoachService.catalogueSource === "live" ? qsTr("live") : qsTr("bundled sample"))
+                    glyph: Icons.coach
+                    expanded: root.sectionOpen("coach")
+                    onToggleRequested: root.setSectionOpen("coach", !expanded)
+
+                    // Reworded 2026-08-26 (André: "claude, what do you mean with that text?") - the
+                    // old single line crammed the mode, the key requirement, the subscription
+                    // warning and the cost into one parenthetical. Same facts, split into a plain
+                    // title + a caption, in user language rather than "chat backend".
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        text: qsTr("Chat with a real AI coach")
+                        font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Off, the coach replies from a few pre-written answers. On, it " +
+                                   "talks to Claude about your real training. This needs an API key " +
+                                   "you create at console.anthropic.com — that's a developer key, " +
+                                   "separate from a claude.ai subscription (your normal Claude login " +
+                                   "won't work here), and it's billed separately, a few cents per chat.")
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: CoachService.chatBackend === "claude"
+                            onToggled: CoachService.chatBackend = checked ? "claude" : "canned"
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: CoachService.chatBackend === "claude" ? qsTr("Claude API") : qsTr("Canned replies")
+                            color: CoachService.chatBackend === "claude" ? Theme.primary : Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+                    Row {
+                        visible: CoachService.chatBackend === "claude"
+                        spacing: Theme.spacingSmall
+                        RoundedTextField {
+                            id: anthropicKeyField
+                            width: 260
+                            echoMode: TextInput.Password
+                            placeholderText: CoachService.anthropicKeySet ? qsTr("Key saved (enter to replace)") : qsTr("Anthropic API key")
+                        }
+                        RoundedButton {
+                            text: qsTr("Save")
+                            enabled: anthropicKeyField.text.length > 0
+                            onClicked: { CoachService.setAnthropicApiKey(anthropicKeyField.text); anthropicKeyField.text = "" }
+                        }
+                        RoundedButton {
+                            text: qsTr("Clear")
+                            visible: CoachService.anthropicKeySet
+                            onClicked: CoachService.clearAnthropicApiKey()
+                        }
+                    }
+
+                    Item { width: 1; height: Theme.spacingSmall }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        text: qsTr("Workout catalogue: live wahoo-systm-mcp (vs. the bundled offline sample)")
+                        font.bold: true; font.pixelSize: Theme.fontSizeBody; color: Theme.text
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: CoachService.catalogueSource === "live"
+                            onToggled: CoachService.catalogueSource = checked ? "live" : "sample"
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: CoachService.catalogueSource === "live" ? qsTr("Live") : qsTr("Bundled sample (55 sessions)")
+                            color: CoachService.catalogueSource === "live" ? Theme.primary : Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+                    Row {
+                        visible: CoachService.catalogueSource === "live"
+                        spacing: Theme.spacingSmall
+                        RoundedTextField {
+                            id: mcpUrlField
+                            width: 320
+                            text: CoachService.systmMcpUrl
+                            placeholderText: qsTr("http://127.0.0.1:PORT/workouts")
+                            onEditingFinished: CoachService.systmMcpUrl = text
+                        }
+                    }
+                    Text {
+                        visible: CoachService.lastError.length > 0
+                        width: parent.width; wrapMode: Text.WordWrap
+                        text: CoachService.lastError
+                        color: Theme.error
+                        font.pixelSize: Theme.fontSizeCaption
+                    }
+                }
+
+                // --- Database (André 2026-09-20): where the user's data is kept + how it syncs across
+                // devices. The user can point the database at any folder (their call); the server/NAS is
+                // the only real cross-device sync (phone included) and always keeps a local copy.
+                SettingsSection {
+                    id: databaseSection
+                    title: qsTr("Database")
+                    summary: qsTr("Sync across devices: %1").arg(syncOn ? qsTr("on") : qsTr("off"))
+                    // sommetSyncConfigured()/sommetSyncUrl() are methods, not properties - bound
+                    // directly they handed QML the function itself ("Unable to assign a function",
+                    // always-on Sync now / Stop syncing). Kept here and refreshed on its signal.
+                    property bool syncOn: ActivityService.sommetSyncConfigured()
+                    Connections {
+                        target: ActivityService
+                        function onSommetSyncConfiguredChanged() {
+                            databaseSection.syncOn = ActivityService.sommetSyncConfigured()
+                        }
+                    }
+                    glyph: Icons.sync
+                    expanded: root.sectionOpen("database")
+                    onToggleRequested: root.setSectionOpen("database", !expanded)
+
+                    FolderDialog {
+                        id: dbMoveDialog
+                        title: qsTr("Choose where to keep your data")
+                        onAccepted: {
+                            var err = LocalFileService.moveDatabaseTo(selectedFolder)
+                            if (err) { dbStatus.text = err; dbStatus.color = Theme.error }
+                            else { dbStatus.text = qsTr("Moved. Restart Sommet to use the new location.")
+                                   dbStatus.color = Theme.success }
+                        }
+                    }
+
+                    // Where the data is kept
+                    Text {
+                        text: qsTr("Where your data is kept")
+                        color: Theme.text; font.pixelSize: Theme.fontSizeLabel; font.bold: true
+                        topPadding: Theme.spacingSmall
+                    }
+                    Text {
+                        text: LocalFileService.databaseLocation
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
+                        width: parent.width; wrapMode: Text.WrapAnywhere
+                    }
+                    Text {
+                        text: qsTr("Keep it here, or point it at any folder — including a synced one (Dropbox, Mega, Drive). A synced folder shares between your computers one at a time; it can't merge two at once, and phones can't use it. That's your call.")
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
+                        width: parent.width; wrapMode: Text.WordWrap
+                    }
+                    RoundedButton {
+                        text: qsTr("Move to a folder…")
+                        onClicked: dbMoveDialog.open()
+                    }
+
+                    // Sync across devices (server / NAS)
+                    Text {
+                        text: qsTr("Sync across devices")
+                        color: Theme.text; font.pixelSize: Theme.fontSizeLabel; font.bold: true
+                        topPadding: Theme.spacingMedium
+                    }
+                    Text {
+                        text: qsTr("Your own server or NAS is the only way to sync your phone and computers together. A copy always stays on each device, so it keeps working offline.")
+                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeBody
+                        width: parent.width; wrapMode: Text.WordWrap
+                    }
+                    RoundedTextField {
+                        id: syncUrlField
+                        width: parent.width
+                        text: ActivityService.sommetSyncUrl()
+                        placeholderText: qsTr("https:// your server (…/sommet/sync.php)")
+                    }
+                    RoundedTextField {
+                        id: syncTokenField
+                        width: parent.width
+                        echoMode: TextInput.Password
+                        placeholderText: qsTr("Access token")
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedButton {
+                            text: qsTr("Test")
+                            enabled: syncUrlField.text.length > 0 && syncTokenField.text.length > 0
+                            onClicked: {
+                                sommetSyncStatus.text = qsTr("Testing…"); sommetSyncStatus.color = Theme.mutedText
+                                ActivityService.sommetSyncTest(syncUrlField.text, syncTokenField.text)
+                            }
+                        }
+                        RoundedButton {
+                            text: qsTr("Save")
+                            enabled: syncUrlField.text.length > 0 && syncTokenField.text.length > 0
+                            onClicked: {
+                                ActivityService.setSommetSync(syncUrlField.text, syncTokenField.text)
+                                sommetSyncStatus.text = qsTr("Saved."); sommetSyncStatus.color = Theme.mutedText
+                            }
+                        }
+                        RoundedButton {
+                            text: qsTr("Sync now")
+                            enabled: databaseSection.syncOn
+                            onClicked: {
+                                sommetSyncStatus.text = qsTr("Syncing…"); sommetSyncStatus.color = Theme.mutedText
+                                ActivityService.sommetSyncNow()
+                            }
+                        }
+                    }
+                    RoundedButton {
+                        visible: databaseSection.syncOn
+                        text: qsTr("Stop syncing")
+                        onClicked: {
+                            ActivityService.setSommetSync("", "")
+                            syncUrlField.text = ""; syncTokenField.text = ""
+                            sommetSyncStatus.text = qsTr("Stopped syncing."); sommetSyncStatus.color = Theme.mutedText
+                        }
+                    }
+
+                    Text {
+                        id: sommetSyncStatus
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fontSizeCaption
+                        color: Theme.mutedText
+                        visible: text.length > 0
+                    }
+                    Text {
+                        id: dbStatus
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: Theme.fontSizeCaption
+                        color: Theme.mutedText
+                        visible: text.length > 0
+                    }
+
+                    Connections {
+                        target: ActivityService
+                        function onSommetSyncTestResult(ok, message) {
+                            sommetSyncStatus.text = message
+                            sommetSyncStatus.color = ok ? Theme.success : Theme.error
+                        }
+                        function onSommetSyncFinished(pulled, pushed) {
+                            sommetSyncStatus.text = qsTr("Synced ✓ — %1 received, %2 sent.").arg(pulled).arg(pushed)
+                            sommetSyncStatus.color = Theme.success
+                        }
+                        function onSommetSyncError(message) {
+                            sommetSyncStatus.text = qsTr("Sync problem: %1").arg(message)
+                            sommetSyncStatus.color = Theme.error
+                        }
+                    }
+                }
+
+                // --- Suunto Apps Catalog ---
+                SettingsSection {
+                    id: catalogSection
+                    title: qsTr("Suunto Apps Catalog")
+                    summary: root.catalogChecking ? ""
+                        : root.catalogImported
+                          ? qsTr("Imported - %1 apps available").arg(root.catalogEntries)
+                          : qsTr("Not imported - only apps you create are available")
+                    glyph: Icons.download
+                    expanded: root.sectionOpen("catalog")
+                    onToggleRequested: root.setSectionOpen("catalog", !expanded)
+
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("The official catalog of ~13,100 pre-compiled Suunto Apps - " +
+                                    "interval timers, HR-zone displays, and thousands of " +
+                                    "Movescount-era community apps. This app never ships or " +
+                                    "downloads it (most of it is other people's own work, not " +
+                                    "ours to redistribute) - import your own copy from your own " +
+                                    "SuuntoLink installation instead. Suunto stopped updating " +
+                                    "this file when Movescount was retired, so any copy you have " +
+                                    "is the same copy - there's nothing to keep up to date. " +
+                                    "If you don't import it, you'll still have every app you " +
+                                    "create yourself in the Workout Builder - you just won't " +
+                                    "have this existing catalog to browse and install from too.")
+                    }
+
+                    Row {
+                        spacing: Theme.spacingSmall
+                        visible: !root.catalogChecking
+                        Icon {
+                            visible: root.catalogImported
+                            glyph: Icons.checkCircle
+                            size: 16
+                            color: Theme.success
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: Theme.mutedText
+                            font.pixelSize: Theme.fontSizeLabel
+                            text: root.catalogImported
+                                  ? qsTr("Imported - %1 apps available").arg(root.catalogEntries)
+                                  : qsTr("Not imported - only apps you create are available")
+                        }
+                    }
+
+                    Text {
+                        visible: root.catalogError.length > 0
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.error
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: root.catalogError
+                    }
+
+                    RoundedButton {
+                        text: root.catalogImported ? qsTr("Import a different copy")
+                                                    : qsTr("Import Catalog")
+                        enabled: !root.catalogImporting && !root.catalogChecking
+                        onClicked: catalogFileDialog.open()
+                    }
+                }
+
+                // --- Experimental Features. Real decision, 2026-08-11 (André, after a live BLE
+                // session that same night hit real reliability trouble - see HANDOFF.md Milestone
+                // 7 items 16-19): Bluetooth stays real, but opt-in and clearly labeled as still
+                // being hardened, rather than part of the default cable-first Home experience.
+                // "By default, only cable" - this toggle is what switches Home's own Bluetooth
+                // section (HomePage.qml) on, off by default, persisted like Testing mode above. ---
+                // The six sidebar-menu switches moved to "Show in the sidebar" (2026-10-21).
+                SettingsSection {
+                    id: experimentalSection
+                    title: qsTr("Experimental features")
+                    summary: qsTr("Bluetooth: %1 · mark synced workouts: %2")
+                        .arg((DeviceService.bleExperimentEnabled ? qsTr("on") : qsTr("off")))
+                        .arg((DeviceService.markSyncedEnabled ? qsTr("on") : qsTr("off")))
+                    glyph: Icons.watch
+                    expanded: root.sectionOpen("experimental")
+                    onToggleRequested: root.setSectionOpen("experimental", !expanded)
+
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Bluetooth connectivity (Linux only). Still being hardened - " +
+                                    "cable stays the reliable default. Turning this on adds a " +
+                                    "\"Connect via Bluetooth\" option to the Home screen.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: DeviceService.bleExperimentEnabled
+                            onToggled: DeviceService.bleExperimentEnabled = checked
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: DeviceService.bleExperimentEnabled ? qsTr("On") : qsTr("Off")
+                            color: DeviceService.bleExperimentEnabled ? Theme.primary : Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+
+                    // --- Mark synced workouts. Opt-in, OFF by default (André, 2026-08-16).
+                    // Writes the watch's own per-move synced flag after this app reads a
+                    // workout, so the official Suunto app / SuuntoLink treat it as already
+                    // synced. Deliberately spells out the tradeoff so nobody turns it on
+                    // without understanding the data-loss risk. ---
+                    Item { width: 1; height: Theme.spacingSmall }
+                    Text {
+                        text: qsTr("Mark synced workouts as synced for Suunto app and SuuntoLink")
+                        font.bold: true
+                        font.pixelSize: Theme.fontSizeBody
+                        color: Theme.text
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Once a workout has been read here, tell the watch it is already " +
+                                    "synced. This avoids duplicated workouts in the Suunto app and " +
+                                    "SuuntoLink - but it also means the workout can no longer be " +
+                                    "retrieved again from the watch if the Suunto app fails to keep " +
+                                    "it. Leave off unless you understand this tradeoff.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: DeviceService.markSyncedEnabled
+                            onToggled: DeviceService.markSyncedEnabled = checked
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: DeviceService.markSyncedEnabled ? qsTr("On") : qsTr("Off")
+                            color: DeviceService.markSyncedEnabled ? Theme.primary : Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+                }
+
+                // --- Testing mode. Real request, 2026-08-11 (André): "add on feature on settings:
+                // testing mode, where it simulates that an ambit 3 is connected, so people can test
+                // it without the watch. for usability could be cool." Then, same day: "put it on the
+                // bottom of the site before the about... opens a window and we can choose device,
+                // based on all the characteristics we already know...always linked..and we add the
+                // garmin etrex".
+                //
+                // "Always linked" is what makes this worth having rather than a mock: the Suunto
+                // devices come from the generated capability table and the eTrex from a real folder
+                // tree, so every page runs its normal code - the same decoder, encoder, round-trip
+                // guard and GPX reader hardware goes through. Edits land on a sample device and are
+                // thrown away when the app closes; nothing reaches a real one.
+                SettingsSection {
+                    id: testingSection
+                    title: qsTr("Testing mode")
+                    summary: DeviceService.demoMode
+                        ? qsTr("On - showing %1").arg(DeviceService.demoDeviceName || qsTr("a sample device"))
+                        : qsTr("Off")
+                    glyph: Icons.watch
+                    expanded: root.sectionOpen("testing")
+                    onToggleRequested: root.setSectionOpen("testing", !expanded)
+
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Pretend a device is connected, so you can look around the app " +
+                                    "without one. Changes are made to a sample device and " +
+                                    "forgotten when you close the app - nothing is written to a " +
+                                    "real one.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeBody
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        RoundedSwitch {
+                            anchors.verticalCenter: parent.verticalCenter
+                            checked: DeviceService.demoMode
+                            onToggled: DeviceService.setDemoMode(checked, "")
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            // The device's name is the status: "On" alone would leave the one
+                            // thing you actually want confirmed - which device - unsaid.
+                            text: DeviceService.demoMode
+                                  ? qsTr("On - showing %1").arg(DeviceService.demoDeviceName
+                                                                || qsTr("a sample device"))
+                                  : qsTr("Off")
+                            color: DeviceService.demoMode ? Theme.primary : Theme.mutedText
+                            font.pixelSize: Theme.fontSizeBody
+                        }
+                    }
+                    Row {
+                        spacing: Theme.spacingSmall
+                        visible: DeviceService.demoMode
+                        RoundedButton {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: qsTr("Change device")
+                            onClicked: demoPicker.open()
+                        }
+                    }
+
+                    DemoDevicePicker {
+                        id: demoPicker
+                        // Sized from the window, not from this row (it takes its height from
+                        // its parent) - same as the account dialogs below.
+                        parent: Overlay.overlay
+                        current: DeviceService.demoVariant
+                        onDeviceChosen: (variant) => DeviceService.setDemoMode(true, variant)
+                    }
+                }
+
+                SettingsSection {
+                    id: devicesSection
+                    visible: HomeViewModel.isGarmin
+                    title: qsTr("Supported devices")
+                    summary: qsTr("What Sommet can read, and how it connects")
+                    glyph: Icons.settings
+                    expanded: root.sectionOpen("devices")
+                    onToggleRequested: root.setSectionOpen("devices", !expanded)
+
+                    Row {
+                        spacing: 6
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: Theme.mutedText
+                        }
+                        Text {
+                            text: qsTr("Suunto Ambit 3 (USB, via the local backend)")
+                            color: Theme.mutedText
+                            font.pixelSize: Theme.fontSizeLabel
+                        }
+                    }
+                    Row {
+                        spacing: 6
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: Theme.success
+                        }
+                        Text {
+                            text: qsTr("Garmin eTrex — connected (%1)").arg(GarminService.model)
+                            color: Theme.text
+                            font.pixelSize: Theme.fontSizeLabel
+                        }
+                    }
+                }
+
+                // --- About ---
+                SettingsSection {
+                    id: aboutSection
+                    title: qsTr("About")
+                    summary: qsTr("Sommet v") + Qt.application.version
+                    showDivider: false
+                    expanded: root.sectionOpen("about")
+                    onToggleRequested: root.setSectionOpen("about", !expanded)
+
+                    // The Sommet "Peak" mark (SommetMark.qml) paired with the version + tagline -
+                    // same mark as the window/app icon. Tagline moved here 2026-08-14 when the
+                    // General card was removed (André); it identifies the app for the average
+                    // user, while the old backend status/address it shared was developer-only.
+                    Row {
+                        spacing: Theme.spacingMedium
+                        // Use the exact raster app icon the Dock/window uses (setWindowIcon,
+                        // packaging/icon.png) so the About mark can't diverge from it - the
+                        // pure-QML SommetMark Canvas rendered its dashed sync ring differently
+                        // at this small size, which read as "wrong icon" next to the Dock.
+                        Image {
+                            source: "qrc:/qt/qml/AmbitApp/packaging/icon.png"
+                            width: 46; height: 46
+                            sourceSize.width: 92; sourceSize.height: 92
+                            smooth: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Column {
+                            id: aboutBlock
+                            anchors.verticalCenter: parent.verticalCenter
+                            // The Ember easter egg (10 taps here) was retired 2026-08-28: the Ember
+                            // card is now openly in Settings as an experimental toggle, so the
+                            // version label is just a plain label again.
+                            Text {
+                                id: versionLabel
+                                text: qsTr("Sommet v") + Qt.application.version
+                                color: Theme.text
+                                font.pixelSize: Theme.fontSizeBody
+                                font.bold: true
+                            }
+                            Text {
+                                text: qsTr("Sommet — for Suunto Ambit")
+                                color: Theme.mutedText
+                                font.pixelSize: Theme.fontSizeBody
+                            }
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Independent, unofficial software - not affiliated with, " +
+                                    "endorsed by, or supported by Suunto or Garmin. Suunto, " +
+                                    "Ambit, Traverse, Kailash, Garmin and eTrex are trademarks of " +
+                                    "their respective owners, used here only to describe " +
+                                    "compatibility.")
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        // Matches LICENSE at the repo root and the Credits section of the README.
+                        text: qsTr("Licensed under the GNU GPLv3, the same license as openambit, " +
+                                    "whose libambit this project's protocol work is checked " +
+                                    "against throughout. The desktop app links Qt 6 under the " +
+                                    "LGPLv3; the Android app uses React Native (MIT).")
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Map data © OpenStreetMap contributors, under the Open " +
+                                    "Database License (ODbL); tiles from CyclOSM / OpenStreetMap " +
+                                    "France and IGN Géoplateforme. Weather by Open-Meteo " +
+                                    "(CC BY 4.0). Icons: Google Material Symbols (Apache License " +
+                                    "2.0). GPS Track Pod support from iwanders/gps_track_pod (MIT).")
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Built on real prior work: openambit, opensportsync, " +
+                                    "marguslt (firmware-download recipe, gists, openmoves), " +
+                                    "sebchastang (published Suunto App Zone interval-training " +
+                                    "scripts), the Suunto forum community, and wanarun.net. " +
+                                    "Full credits and licenses in the project README.")
+                    }
                 }
             }
         }

@@ -304,7 +304,7 @@ Item {
                         font.family: Icons.fontFamily
                         ToolTip.visible: hovered
                         ToolTip.text: qsTr("Chat backend & catalogue source: Settings → Coach")
-                        onClicked: NavBus.navigate("settings")
+                        onClicked: { NavBus.pendingSettingsSection = "coach"; NavBus.navigate("settings") }
                     }
                 }
                 Rectangle { Layout.fillWidth: true; height: 1; color: Theme.mutedText; opacity: 0.2 }

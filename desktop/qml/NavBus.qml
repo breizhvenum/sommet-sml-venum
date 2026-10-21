@@ -15,4 +15,9 @@ QtObject {
     // detail (André, 2026-08-24: click a Calendar day's activity to go to it). ActivitiesPage
     // reads and clears this when it loads. null = just open the list.
     property var pendingActivity: null
+
+    // Optional payload for navigate("settings"): the section to open and scroll to, e.g.
+    // "connections" or "coach" (Settings split, André 2026-10-21). SettingsPage reads and
+    // clears this when it loads. "" = just open Settings at the top.
+    property string pendingSettingsSection: ""
 }

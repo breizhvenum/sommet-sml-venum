@@ -242,6 +242,7 @@ qt_add_qml_module(ambitapp
         qml/components/RoundedCheckBox.qml
         qml/components/RoundedRadioButton.qml
         qml/components/RoundedSwitch.qml
+        qml/components/SettingsSection.qml
         qml/components/ActivityBadge.qml
         qml/components/WatchFacePreview.qml
         qml/components/DataPickerDialog.qml

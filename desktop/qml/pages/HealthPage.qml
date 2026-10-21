@@ -54,7 +54,7 @@ Item {
                     }
                     RoundedButton {
                         text: qsTr("Open Settings → Connections")
-                        onClicked: NavBus.navigate("settings")
+                        onClicked: { NavBus.pendingSettingsSection = "connections"; NavBus.navigate("settings") }
                     }
                 }
             }
