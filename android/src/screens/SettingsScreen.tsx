@@ -1,12 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isRacePlanEnabled, setRacePlanEnabled } from '../services/race/raceApi';
 import { ADVANCED_POWER_KEY } from '../components/activity/ActivityPanel';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Alert, ScrollView, ActivityIndicator, Linking, Modal, Platform,
+  StyleSheet, Alert, ScrollView, ActivityIndicator, Linking, Modal, Platform, LayoutChangeEvent,
 } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { useThemeMode, ThemeMode } from '../theme/ThemeModeContext';
@@ -54,6 +54,7 @@ import { t } from '../i18n';
 import { APP_VERSION } from '../config/version';
 import { useV3Theme } from '../theme/v3';
 import { Button, Chip, FieldRow, IconBadge, StatusLine, Toggle } from '../components/ui/primitives';
+import { SettingsSection } from '../components/ui/SettingsSection';
 
 // Real, 2026-08-09 ("no button to change provider, nor in the settings like the desktop
 // version") - same 3 real choices MapScreen.tsx/TrackMapScreen.tsx's own in-map layer
@@ -78,6 +79,66 @@ const THEME_OPTIONS: { mode: ThemeMode; icon: IconName; label: () => string }[] 
 ];
 
 
+// ── The Settings split (André, 2026-10-21, "progressive disclosure"; desktop SettingsPage.qml is
+// the baseline). Connections, Appearance, Show in the sidebar and Backup & restore stay open at the
+// top; everything else is one closed row each (SettingsSection) showing its current value. Which
+// rows are open is remembered between visits.
+const OPEN_SECTIONS_KEY = 'ambitapp:settings:openSections';
+const CLOSED_SECTIONS = ['activities', 'health', 'maps', 'ember', 'database', 'experimental',
+  'testing', 'firmware', 'about'];
+
+// One account in the Connections card: name, status, and a real button (desktop parity, and the
+// a11y audit of 2026-10-21: the old "— Log in" lines read as plain text, not as something to tap).
+function ConnectionRow({ name, status, connected, action, onPress }: {
+  name: string; status: string; connected: boolean; action: string; onPress: () => void;
+}) {
+  const t = useV3Theme();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connected ? t.success : t.mutedText }} />
+      <Text style={{ flex: 1, fontSize: 14, color: t.text }} numberOfLines={1}>
+        {name}
+        <Text style={{ fontSize: 14, color: t.mutedText }}>{` · ${status}`}</Text>
+      </Text>
+      <Button label={action} variant="outline" grow={false} onPress={onPress} />
+    </View>
+  );
+}
+
+// One switch in the "Show in the sidebar" card: the switch, then the page's name, the experimental
+// tag and what it is for. Tapping the words flips the switch - or, for a feature with its own
+// screen that is already on, opens that screen (the old Experimental card's behaviour).
+function SidebarSwitch({ title, description, value, onValueChange, onOpen }: {
+  title: string; description: string; value: boolean;
+  onValueChange: (v: boolean) => void; onOpen?: () => void;
+}) {
+  const t = useV3Theme();
+  const opens = !!onOpen && value;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingVertical: 8 }}>
+      <View style={{ paddingTop: 1 }}>
+        <Toggle value={value} onValueChange={onValueChange} accessibilityLabel={title} />
+      </View>
+      <TouchableOpacity
+        style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+        activeOpacity={0.7}
+        onPress={() => (opens ? onOpen!() : onValueChange(!value))}
+      >
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: t.text }}>{title}</Text>
+            <View style={{ borderWidth: 1, borderColor: t.warning, borderRadius: 8, paddingHorizontal: 4, paddingVertical: 1 }}>
+              <Text style={{ fontSize: 11, color: t.warning }}>experimental</Text>
+            </View>
+          </View>
+          <Text style={{ fontSize: 13, color: t.mutedText, lineHeight: 19, marginTop: 2 }}>{description}</Text>
+        </View>
+        {opens && <Icon name="chevronRight" size={18} color={t.mutedText} />}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const theme = useV3Theme();
   const styles = createStyles(theme);
@@ -86,6 +147,49 @@ export default function SettingsScreen() {
   const demo = useDemo();
   const [demoPickerOpen, setDemoPickerOpen] = useState(false);
   const { mode, setMode } = useThemeMode();
+
+  // ── Settings split: which closed rows are open (persisted), and links from other screens. ──
+  const [openSections, setOpenSections] = useState<string[]>([]);
+  useEffect(() => {
+    AsyncStorage.getItem(OPEN_SECTIONS_KEY)
+      .then(v => {
+        const saved: string[] = v ? JSON.parse(v) : [];
+        // Merge, so a row a link already opened isn't closed by the late load.
+        setOpenSections(prev => Array.from(new Set([...saved, ...prev])));
+      })
+      .catch(() => undefined);
+  }, []);
+  const isOpen = (id: string) => openSections.includes(id);
+  const setSectionOpen = useCallback((id: string, open: boolean) => {
+    setOpenSections(prev => {
+      const next = prev.filter(s => s !== id).concat(open ? [id] : []);
+      AsyncStorage.setItem(OPEN_SECTIONS_KEY, JSON.stringify(next)).catch(() => undefined);
+      return next;
+    });
+  }, []);
+  const toggleSection = (id: string) => () => setSectionOpen(id, !isOpen(id));
+
+  // Links land on the right section: Health/Weight/Coach's "Open Settings → Connections" pass
+  // { section: 'connections' }. A closed row is opened; then the screen scrolls to it.
+  const route = useRoute<RouteProp<RootStackParamList, 'Settings'>>();
+  const scrollRef = useRef<ScrollView>(null);
+  const cardY = useRef<Record<string, number>>({});
+  const rowY = useRef<Record<string, number>>({});
+  const recordCard = (id: string) => (e: LayoutChangeEvent) => { cardY.current[id] = e.nativeEvent.layout.y; };
+  const recordRow = (id: string) => (e: LayoutChangeEvent) => { rowY.current[id] = e.nativeEvent.layout.y; };
+  const requestedSection = route.params?.section;
+  useEffect(() => {
+    if (!requestedSection) return;
+    if (CLOSED_SECTIONS.includes(requestedSection)) setSectionOpen(requestedSection, true);
+    // Short delay so an opened row is laid out before measuring where it is.
+    setTimeout(() => {
+      const y = cardY.current[requestedSection]
+        ?? (cardY.current.rows ?? 0) + (rowY.current[requestedSection] ?? 0);
+      // The screen's own top padding (20) stays above the section, as when it first opens.
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 20), animated: true });
+      navigation.setParams({ section: undefined } as never);
+    }, 150);
+  }, [requestedSection, setSectionOpen, navigation]);
 
   const [runalyzeKey, setRunalyzeKey]     = useState('');
   const [savedKey, setSavedKey]           = useState<string | null>(null);
@@ -119,6 +223,8 @@ export default function SettingsScreen() {
   const [sommetSyncToken, setSommetSyncToken]       = useState('');
   const [savingSommet, setSavingSommet]             = useState(false);
   const [syncingSommet, setSyncingSommet]           = useState(false);
+  // Whether a server is saved (for the Database row's summary; the fields can hold unsaved edits).
+  const [sommetSaved, setSommetSaved]               = useState(false);
   const [sommetStatus, setSommetStatus]             = useState('');
   // Which coordinate row (if any) is currently being picked on a map - desktop parity with
   // WatchSettingsPage's "Pick on a map". null = picker closed.
@@ -211,6 +317,7 @@ export default function SettingsScreen() {
     getUsdaApiKey().then(setUsdaKey);
     getSommetSyncCfg().then(c => {
       if (c) { setSommetSyncUrl(c.url); setSommetSyncToken(c.token); }
+      setSommetSaved(!!c?.url);
     });
     getMapProvider().then(setMapProviderState);
     isMarkSyncedEnabled().then(setMarkSyncedEnabledState);
@@ -273,6 +380,7 @@ export default function SettingsScreen() {
       const url = sommetSyncUrl.trim();
       await setSommetSyncCfg(url ? { url, token: sommetSyncToken.trim() } : null);
       setSommetStatus(url ? 'Saved.' : 'Sync turned off.');
+      setSommetSaved(!!url);
     } catch (e: any) {
       setSommetStatus(e?.message ?? 'Failed to save');
     } finally {
@@ -293,6 +401,7 @@ export default function SettingsScreen() {
     try {
       const url = sommetSyncUrl.trim();
       await setSommetSyncCfg(url ? { url, token: sommetSyncToken.trim() } : null);
+      setSommetSaved(!!url);
       const r = await runSommetSync();
       setSommetStatus(r.ok
         ? `Synced — ${r.pulled} received, ${r.pushed} sent.`
@@ -423,227 +532,40 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-
-      {/* ── Apparence ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon={mode === 'light' ? 'sun' : mode === 'dark' ? 'moon' : 'auto'} />
-          <Text style={styles.cardTitle}>{t.appearanceSection}</Text>
-        </View>
-        <Text style={styles.sectionDesc}>{t.appearanceDesc}</Text>
-        <View style={styles.themeRow}>
-          {THEME_OPTIONS.map(opt => {
-            const selected = mode === opt.mode;
-            return (
-              <TouchableOpacity
-                key={opt.mode}
-                onPress={() => setMode(opt.mode)}
-                activeOpacity={0.75}
-                style={[styles.themeOption, selected && styles.themeOptionSelected]}
-              >
-                <Icon name={opt.icon} size={17} color={selected ? theme.card : theme.text} />
-                <Text style={[styles.themeOptionLabel, selected && styles.themeOptionLabelSelected]}>
-                  {opt.label()}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* The map/list view choice moved out of Settings and onto each list screen itself
-          (Activities/Routes/POIs) - André 2026-08-16. Still persisted via ListViewPrefs. */}
-
-      {/* ── Testing mode (2026-08-16, ported from desktop): pretend a device is connected so
-          the app can be explored without one. Toggle + a picker of the watches the app knows
-          (Ambit3 family / Traverse / Kailash). Default OFF. ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="watch" />
-          <Text style={styles.cardTitle}>{t.testingSection}</Text>
-        </View>
-        <Text style={styles.sectionDesc}>{t.testingDesc}</Text>
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-            {demo.enabled ? t.testingOnShowing(demo.device.name) : ' '}
-          </Text>
-          <Toggle value={demo.enabled} onValueChange={demo.setEnabled} />
-        </View>
-        {demo.enabled && (
-          <View style={{ marginTop: 10 }}>
-            <Button label={t.testingChange} onPress={() => setDemoPickerOpen(true)} variant="outline" />
-          </View>
-        )}
-      </View>
-      <DemoDevicePicker
-        visible={demoPickerOpen}
-        currentVariant={demo.variant}
-        onPick={demo.setVariant}
-        onClose={() => setDemoPickerOpen(false)}
-      />
-
-      {/* ── Experimental (2026-08-14, André: "enable it with a toggle on experimental") ──
-          One toggle gates the three unproven, cable-tested, community-feedback features
-          (App-Zone install, Intervals builder, Smart Sensor). Default OFF so nobody who
-          never opens this is exposed to an unproven flash write. ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="warning" />
-          <Text style={styles.cardTitle}>{t.experimentalSection}</Text>
-        </View>
-        <Text style={styles.sectionDesc}>{t.experimentalToggleDesc}</Text>
-
-        {/* One toggle per experimental feature (André, 2026-08-17): toggle on = enabled, and the
-            row is then tappable to open that feature's screen. */}
-        {EXP_FEATURE_ROWS.map(f => {
-          const on = features[f.flag];
-          return (
-            <TouchableOpacity
-              key={f.flag}
-              style={[styles.row, { alignItems: 'center', marginTop: 10 }]}
-              activeOpacity={on ? 0.7 : 1}
-              onPress={() => { if (on) navigation.navigate(f.screen); }}
-            >
-              <Icon name={f.icon} size={18} color={on ? theme.text : theme.mutedText} />
-              <View style={{ flex: 1, marginHorizontal: 10 }}>
-                <Text style={[styles.connRowText, { color: on ? theme.text : theme.mutedText }]}>{f.label}</Text>
-                <Text style={styles.sectionDesc}>{f.desc}</Text>
-              </View>
-              {on && <View style={{ marginRight: 6 }}><Icon name="chevronRight" size={18} color={theme.mutedText} /></View>}
-              {/* Enabling a feature opens it right away (André, 2026-08-17: App Zone should jump
-                  straight to the Suunto catalog). The row stays tappable to reopen it later. */}
-              <Toggle value={on} onValueChange={v => { setFeature(f.flag, v); if (v) navigation.navigate(f.screen); }} />
-            </TouchableOpacity>
-          );
-        })}
-        {anyEnabled && (
-          <Text style={[styles.sectionDesc, { color: theme.warning, marginTop: 10 }]}>{t.experimentalWarningBanner}</Text>
-        )}
-
-        {/* Mark-synced write-back - independent opt-in, not gated by the master toggle
-            (2026-08-16). Writes the watch's own per-move synced flag so the Suunto app /
-            SuuntoLink don't duplicate; tradeoff spelled out so nobody enables it blindly. */}
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>{t.markSyncedLabel}</Text>
-          <Toggle
-            value={markSyncedEnabled}
-            onValueChange={handleToggleMarkSynced}
-          />
-        </View>
-        <Text style={styles.sectionDesc}>{t.markSyncedDesc}</Text>
-
-      </View>
-
-      {/* ── Activities - the extra power numbers most rides don't need (desktop parity). ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="activity" />
-          <Text style={styles.cardTitle}>Activities</Text>
-        </View>
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>Advanced power numbers</Text>
-          <Toggle value={advancedPower} onValueChange={handleToggleAdvancedPower} />
-        </View>
-        <Text style={styles.sectionDesc}>
-          Adds normalized power, training load (TSS), intensity factor and work to rides with a power
-          meter. Uses the FTP from your intervals.icu settings.
-        </Text>
-      </View>
-
-      {/* ── Health - morning HRV from a BLE heart-rate strap (André, 2026-09-04). Opt-in,
-          default OFF, mirroring the desktop health/coospoHrvEnabled toggle: an intervals.icu-
-          only user sees nothing; a strap user turns this on and the "Measure morning HRV" card
-          appears on the Health screen. Any strap advertising the HR service works (Verity Sense,
-          COOSPO, …) - the reader is device-agnostic. ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="health" />
-          <Text style={styles.cardTitle}>Health</Text>
-        </View>
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-            Morning HRV from a heart-rate strap
-          </Text>
-          <Toggle value={strapHrvEnabled} onValueChange={handleToggleStrapHrv} />
-        </View>
-        <Text style={styles.sectionDesc}>
-          Measure your morning HRV directly from a Bluetooth heart-rate strap (Polar Verity Sense,
-          COOSPO, …) - no watch needed. When on, a Measure card appears on the Health screen.
-        </Text>
-        {/* Which sleep score Health shows (André, 2026-10-04: "can we make it selectable?"). */}
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-            Use intervals.icu's sleep score
-          </Text>
-          <Toggle
-            value={icuSleepScore}
-            onValueChange={v => { setIcuSleepScore(v); setSleepScoreSource(v ? 'intervals' : 'sommet').catch(() => {}); }}
-          />
-        </View>
-        <Text style={styles.sectionDesc}>
-          Off: Sommet scores each night itself, from how long you slept. On: the score that came
-          with the night on intervals.icu (from the watch or app that recorded it) is shown where
-          there is one.
-        </Text>
-      </View>
-
-      {/* ── Watch Settings - real, 2026-08-08. Cable settings-write is confirmed working
-          for both device types (see AmbitSettingsWriter.ts's own header comment: André
-          confirmed on each watch's own screen that flipping display_dark visibly switched
-          it Light -> Dark) - readAmbitSettings() detects which one is connected and picks
-          the matching curated table (AmbitSettingsService.ts's own header comment), so
-          this section works unmodified for either. "Both device types" means Ambit/
-          Traverse/Kailash, though - a real Garmin connected live (2026-08-10) surfaced
-          that this card doesn't apply to Garmin at all (no AmbitSettings protocol there),
-          so it's hidden while one's attached rather than shown with a "Read Settings"
-          button that would just fail. ── */}
-      {/* Firmware flashing is USB-only (no USB on iOS), so hide it there. */}
-      {!isGarminAttached && Platform.OS !== 'ios' && (
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="watch" />
-          <Text style={styles.cardTitle}>Firmware</Text>
-        </View>
-        <Text style={styles.sectionDesc}>
-          Flash watch firmware over USB. Advanced and irreversible — intended for a supervised
-          session. Opens the firmware tool.
-        </Text>
-        <Button label="Open firmware tool" icon="upload" variant="outline"
-          onPress={() => navigation.navigate('Firmware')} style={{ marginTop: 10 }} />
-      </View>
-      )}
-
-
-
+    <ScrollView ref={scrollRef} style={styles.root} contentContainerStyle={styles.content}>
       {/* ── Connections - real, 2026-08-09 ("settings was completely reworked in our
           desktop app... proceed"). Ports SettingsPage.qml's real Connections card: one
           compact card, a status-dot row per service, tap opens that service's own form in
           a modal - not four always-expanded full-height sections. ── */}
-      <View style={styles.section}>
+      {/* 2026-10-21 (Settings split): first card on the screen, each account with its own button. */}
+      <View style={styles.section} onLayout={recordCard('connections')}>
         <View style={styles.cardHead}>
           <IconBadge icon="link" />
           <Text style={styles.cardTitle}>{t.connectionsSection}</Text>
         </View>
-
-        <TouchableOpacity style={styles.connRow} activeOpacity={0.7} onPress={() => setOpenConnection('strava')}>
-          <View style={[styles.connDot, { backgroundColor: stravaAuth ? theme.success : theme.mutedText }]} />
-          <Text style={styles.connRowText}>
-            {stravaAuth ? t.stravaConnectedStatus : `${t.stravaSection} — ${t.connect}`}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.connRow} activeOpacity={0.7} onPress={() => setOpenConnection('runalyze')}>
-          <View style={[styles.connDot, { backgroundColor: savedKey ? theme.success : theme.mutedText }]} />
-          <Text style={styles.connRowText}>
-            {savedKey ? `${t.runalyzeSection} — ${t.keyStored}` : `${t.runalyzeSection} — ${t.connect}`}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.connRow} activeOpacity={0.7} onPress={() => setOpenConnection('intervals')}>
-          <View style={[styles.connDot, { backgroundColor: intervalsSaved ? theme.success : theme.mutedText }]} />
-          <Text style={styles.connRowText}>
-            {intervalsSaved ? `${t.intervalsSection} — ${t.credsStored}` : `${t.intervalsSection} — ${t.connect}`}
-          </Text>
-        </TouchableOpacity>
+        <ConnectionRow
+          name={t.intervalsSection}
+          connected={intervalsSaved}
+          status={intervalsSaved
+            ? (intervalsAthleteId ? `connected (athlete ${intervalsAthleteId})` : 'connected')
+            : 'not connected'}
+          action={intervalsSaved ? 'Manage' : 'Set up'}
+          onPress={() => setOpenConnection('intervals')}
+        />
+        <ConnectionRow
+          name={t.runalyzeSection}
+          connected={!!savedKey}
+          status={savedKey ? 'connected' : 'not connected'}
+          action={savedKey ? 'Manage' : 'Set up'}
+          onPress={() => setOpenConnection('runalyze')}
+        />
+        <ConnectionRow
+          name={t.stravaSection}
+          connected={stravaAuth}
+          status={stravaAuth ? 'connected' : 'not connected'}
+          action={stravaAuth ? 'Manage' : 'Connect'}
+          onPress={() => setOpenConnection('strava')}
+        />
         {/* Dropbox / Google Drive / OneDrive rows removed (André, 2026-08-16): cloud backup is
             now just "save to a folder" on the Backup screen (point it at a cloud sync folder),
             so there's no OAuth "connection" to set up here anymore. */}
@@ -788,59 +710,77 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* ── Maps - real, 2026-08-09 ("no button to change provider, nor in the settings
-          like the desktop version"). Ports SettingsPage.qml's real Maps card (icon + title
-          + "Provider: tiles from X" + exclusive toggle buttons), with IGN added as a
-          genuine Android-only third option (MapProviderService.ts's own header comment). ── */}
-      <View style={styles.section}>
+      {/* ── Apparence ── */}
+      <View style={styles.section} onLayout={recordCard('appearance')}>
         <View style={styles.cardHead}>
-          <IconBadge icon="route" />
-          <Text style={styles.cardTitle}>{t.mapsSection}</Text>
+          <IconBadge icon={mode === 'light' ? 'sun' : mode === 'dark' ? 'moon' : 'auto'} />
+          <Text style={styles.cardTitle}>{t.appearanceSection}</Text>
         </View>
-        <Text style={styles.sectionDesc}>{t.mapsProviderDesc(MAP_PROVIDER_LABELS[mapProvider])}</Text>
-        <View style={[styles.chipRow, { justifyContent: 'flex-start', marginTop: 6 }]}>
-          {MAP_PROVIDER_OPTIONS.map(opt => (
-            <TouchableOpacity
-              key={opt.provider}
-              style={[styles.chip, opt.provider === mapProvider && styles.chipActive]}
-              onPress={() => handleSetMapProvider(opt.provider)}
-            >
-              <Text style={[styles.chipText, opt.provider === mapProvider && styles.chipTextActive]}>
-                {opt.label()}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <Text style={styles.sectionDesc}>{t.appearanceDesc}</Text>
+        <View style={styles.themeRow}>
+          {THEME_OPTIONS.map(opt => {
+            const selected = mode === opt.mode;
+            return (
+              <TouchableOpacity
+                key={opt.mode}
+                onPress={() => setMode(opt.mode)}
+                activeOpacity={0.75}
+                style={[styles.themeOption, selected && styles.themeOptionSelected]}
+              >
+                <Icon name={opt.icon} size={17} color={selected ? theme.card : theme.text} />
+                <Text style={[styles.themeOptionLabel, selected && styles.themeOptionLabelSelected]}>
+                  {opt.label()}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-        {/* Offline maps — desktop parity: SettingsPage.qml's Maps card has this button; on Android
-            it used to be a top-level menu item (moved here, André 2026-09-24). Download any area of
-            the world so the map works with no signal. */}
-        <Button label="Download offline maps…" icon="download" variant="outline"
-          onPress={() => navigation.navigate('OfflineMaps')} style={{ marginTop: 10 }} />
-        {/* placed after the provider chips; the tile-cache readout follows below */}
-        {/* Real, 2026-08-10 ("let's go for the offline maps solution") - TileCache.ts's own
-            cache (route/activity map tiles saved for offline use via MapScreen.tsx's own
-            download button) is unbounded until cleared manually - a simple size readout +
-            clear action here, the same "let the user manage it" pattern this project uses
-            for the GPX/exports cache directories elsewhere, not automatic eviction. */}
-        <View style={styles.cacheRow}>
-          <Text style={styles.sectionDesc}>
-            {t.offlineMapCacheSize(tileCacheBytes === null ? '…' : formatCacheSize(tileCacheBytes))}
-          </Text>
-          <Button
-            label={t.offlineMapClearCache}
-            variant="outline"
-            tone="alert"
-            grow={false}
-            loading={clearingCache}
-            disabled={!tileCacheBytes}
-            onPress={handleClearTileCache}
+      </View>
+
+      {/* ── Show in the sidebar (Settings split, decision 1): every switch that shows or hides a page
+          in the menu, together. They used to sit in the Race Plan, Ember and Experimental cards; all
+          are still experimental. ── */}
+      <View style={styles.section} onLayout={recordCard('sidebar')}>
+        <View style={styles.cardHead}>
+          <Text style={styles.cardTitle}>Show in the sidebar</Text>
+        </View>
+        {/* Race Plan (2026-09-29, desktop parity: same wording, off by default). */}
+        <SidebarSwitch
+          title="Race Plan"
+          description="BRM/ultra race planner: import a GPX + roadbook, then get realistic arrival times, cutoff margins, weather, sleep and resupply along the route. Still rough — turn it on to try it."
+          value={racePlanOn}
+          onValueChange={async v => { await setRacePlanEnabled(v); setRacePlanOn(v); }}
+        />
+        {/* Ember (2026-08-29, desktop parity): openly opt-in, off by default. Its sync and food-search
+            settings are in the Ember row below, shown once it's on. */}
+        <SidebarSwitch
+          title="Ember"
+          description="Fast & calorie tracking companion. Logs made on your phone show here as charts. Still rough — turn it on to try it."
+          value={emberOn}
+          onValueChange={async v => { await setEmberUnlocked(v); setEmberOn(v); }}
+        />
+        {/* One switch per experimental feature (André, 2026-08-17). Turning one on opens it right
+            away (App Zone should jump straight to the Suunto catalog); once on, tapping its name
+            reopens it. */}
+        {EXP_FEATURE_ROWS.map(f => (
+          <SidebarSwitch
+            key={f.flag}
+            title={f.label}
+            description={f.desc}
+            value={features[f.flag]}
+            onValueChange={v => { setFeature(f.flag, v); if (v) navigation.navigate(f.screen); }}
+            onOpen={() => navigation.navigate(f.screen)}
           />
-        </View>
+        ))}
+        <Text style={styles.sectionDesc}>{t.experimentalToggleDesc}</Text>
+        {anyEnabled && (
+          <Text style={[styles.sectionDesc, { color: theme.warning, marginTop: 10 }]}>{t.experimentalWarningBanner}</Text>
+        )}
       </View>
 
       {/* ── Backup & restore — desktop parity: SettingsPage.qml's Backup card (moved out of the
           nav with Offline maps, André 2026-08-31). Was a top-level Home item on Android. ── */}
-      <View style={styles.section}>
+      <View style={styles.section} onLayout={recordCard('backup')}>
         <View style={styles.cardHead}>
           <IconBadge icon="backup" />
           <Text style={styles.cardTitle}>Backup &amp; restore</Text>
@@ -852,157 +792,322 @@ export default function SettingsScreen() {
           onPress={() => navigation.navigate('Backup')} style={{ marginTop: 10 }} />
       </View>
 
-      {/* ── Race Plan (2026-09-29, desktop parity: same card, same wording, off by default) ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="route" />
-          <Text style={styles.cardTitle}>Race Plan</Text>
-        </View>
-        <Text style={styles.sectionDesc}>
-          BRM/ultra race planner: import a GPX + roadbook, then get realistic arrival times, cutoff margins, weather, sleep and resupply along the route. Still rough — turn it on to try it.
-        </Text>
-        <Text style={[styles.sectionDesc, { color: theme.warning, marginTop: 4 }]}>Experimental</Text>
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>Show Race Plan in the menu</Text>
-          <Toggle value={racePlanOn} onValueChange={async v => { await setRacePlanEnabled(v); setRacePlanOn(v); }} />
-        </View>
-      </View>
-
-      {/* ── Ember (2026-08-29, desktop parity): openly opt-in. The 10-tap easter egg was retired
-          (André: Ember stays off by default but the toggle should be discoverable, not hidden);
-          the switch below shows/hides the Ember tile on Home. Labelled experimental - not tested
-          much yet. The sync fields appear once it's on. ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="ember" />
-          <Text style={styles.cardTitle}>Ember</Text>
-        </View>
-        <Text style={styles.sectionDesc}>
-          Fast & calorie tracking companion. Logs made on your phone show here as charts.
-        </Text>
-        <Text style={[styles.sectionDesc, { color: theme.warning, marginTop: 4 }]}>
-          Experimental — still rough. Turn it on to try it.
-        </Text>
-        <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-          <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>Show Ember on Home</Text>
-          <Toggle value={emberOn} onValueChange={async v => { await setEmberUnlocked(v); setEmberOn(v); }} />
-        </View>
-        {emberOn && (
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.cardTitle}>Ember sync</Text>
-            <Text style={styles.sectionDesc}>
-              Shared store URL + token so Ember logs merge with your other devices (the same
-              ember/sync.json the desktop uses). Leave blank to log on this device only.
-            </Text>
-            <FieldRow
-              icon="link"
-              value={emberSyncUrl}
-              onChangeText={setEmberSyncUrl}
-              placeholder="https://192.168.1.102/ember/sync.php"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <FieldRow
-              icon="key"
-              value={emberSyncToken}
-              onChangeText={setEmberSyncToken}
-              placeholder="token"
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <View style={styles.row}>
-              <Button label={t.saveBtn} variant="filled" loading={savingEmberSync} onPress={handleSaveEmberSync} />
-            </View>
-
-            <Text style={[styles.cardTitle, { marginTop: 12 }]}>Food search</Text>
-            <Text style={styles.sectionDesc}>
-              Generic foods come from USDA FoodData Central. Without your own key a shared demo key
-              is used, limited to about 30 searches an hour. The key is free and stays on this phone.
-            </Text>
-            <FieldRow
-              icon="key"
-              value={usdaKey}
-              onChangeText={setUsdaKey}
-              placeholder="USDA API key (optional)"
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <View style={styles.row}>
-              <Button label="Get a free key" variant="outline"
-                onPress={() => Linking.openURL('https://fdc.nal.usda.gov/api-key-signup')} />
-              <Button label={t.saveBtn} variant="filled"
-                onPress={async () => { await setUsdaApiKey(usdaKey); Alert.alert('Ember', usdaKey.trim() ? 'USDA key saved.' : 'USDA key cleared (demo key).'); }} />
-            </View>
+      {/* ── Everything else: one closed row each, opened in place (Settings split). ── */}
+      <View style={[styles.section, styles.rowsCard]} onLayout={recordCard('rows')}>
+        {/* Activities - the extra power numbers most rides don't need (desktop parity). */}
+        <SettingsSection
+          title="Activities"
+          summary={`Advanced power numbers: ${advancedPower ? 'on' : 'off'}`}
+          open={isOpen('activities')}
+          onToggle={toggleSection('activities')}
+          onLayout={recordRow('activities')}
+        >
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
+            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>Advanced power numbers</Text>
+            <Toggle value={advancedPower} onValueChange={handleToggleAdvancedPower} />
           </View>
+          <Text style={styles.sectionDesc}>
+            Adds normalized power, training load (TSS), intensity factor and work to rides with a power
+            meter. Uses the FTP from your intervals.icu settings.
+          </Text>
+        </SettingsSection>
+
+        {/* ── Health - morning HRV from a BLE heart-rate strap (André, 2026-09-04). Opt-in,
+            default OFF, mirroring the desktop health/coospoHrvEnabled toggle: an intervals.icu-
+            only user sees nothing; a strap user turns this on and the "Measure morning HRV" card
+            appears on the Health screen. Any strap advertising the HR service works (Verity Sense,
+            COOSPO, …) - the reader is device-agnostic. ── */}
+        <SettingsSection
+          title="Health"
+          summary={`Sleep score: ${icuSleepScore ? 'intervals.icu' : "Sommet's own"} · strap HRV: ${strapHrvEnabled ? 'on' : 'off'}`}
+          icon="health"
+          open={isOpen('health')}
+          onToggle={toggleSection('health')}
+          onLayout={recordRow('health')}
+        >
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
+            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
+              Morning HRV from a heart-rate strap
+            </Text>
+            <Toggle value={strapHrvEnabled} onValueChange={handleToggleStrapHrv} />
+          </View>
+          <Text style={styles.sectionDesc}>
+            Measure your morning HRV directly from a Bluetooth heart-rate strap (Polar Verity Sense,
+            COOSPO, …) - no watch needed. When on, a Measure card appears on the Health screen.
+          </Text>
+          {/* Which sleep score Health shows (André, 2026-10-04: "can we make it selectable?"). */}
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }]}>
+            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
+              Use intervals.icu's sleep score
+            </Text>
+            <Toggle
+              value={icuSleepScore}
+              onValueChange={v => { setIcuSleepScore(v); setSleepScoreSource(v ? 'intervals' : 'sommet').catch(() => {}); }}
+            />
+          </View>
+          <Text style={styles.sectionDesc}>
+            Off: Sommet scores each night itself, from how long you slept. On: the score that came
+            with the night on intervals.icu (from the watch or app that recorded it) is shown where
+            there is one.
+          </Text>
+        </SettingsSection>
+
+        {/* ── Maps - real, 2026-08-09 ("no button to change provider, nor in the settings
+            like the desktop version"). Ports SettingsPage.qml's real Maps card (icon + title
+            + "Provider: tiles from X" + exclusive toggle buttons), with IGN added as a
+            genuine Android-only third option (MapProviderService.ts's own header comment). ── */}
+        <SettingsSection
+          title={t.mapsSection}
+          summary={`${MAP_PROVIDER_LABELS[mapProvider]} · offline tile cache ${tileCacheBytes === null ? '…' : formatCacheSize(tileCacheBytes)}`}
+          icon="route"
+          open={isOpen('maps')}
+          onToggle={toggleSection('maps')}
+          onLayout={recordRow('maps')}
+        >
+          <Text style={styles.sectionDesc}>{t.mapsProviderDesc(MAP_PROVIDER_LABELS[mapProvider])}</Text>
+          <View style={[styles.chipRow, { justifyContent: 'flex-start', marginTop: 6 }]}>
+            {MAP_PROVIDER_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt.provider}
+                style={[styles.chip, opt.provider === mapProvider && styles.chipActive]}
+                onPress={() => handleSetMapProvider(opt.provider)}
+              >
+                <Text style={[styles.chipText, opt.provider === mapProvider && styles.chipTextActive]}>
+                  {opt.label()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          {/* Offline maps — desktop parity: SettingsPage.qml's Maps card has this button; on Android
+              it used to be a top-level menu item (moved here, André 2026-09-24). Download any area of
+              the world so the map works with no signal. */}
+          <Button label="Download offline maps…" icon="download" variant="outline"
+            onPress={() => navigation.navigate('OfflineMaps')} style={{ marginTop: 10 }} />
+          {/* placed after the provider chips; the tile-cache readout follows below */}
+          {/* Real, 2026-08-10 ("let's go for the offline maps solution") - TileCache.ts's own
+              cache (route/activity map tiles saved for offline use via MapScreen.tsx's own
+              download button) is unbounded until cleared manually - a simple size readout +
+              clear action here, the same "let the user manage it" pattern this project uses
+              for the GPX/exports cache directories elsewhere, not automatic eviction. */}
+          <View style={styles.cacheRow}>
+            <Text style={styles.sectionDesc}>
+              {t.offlineMapCacheSize(tileCacheBytes === null ? '…' : formatCacheSize(tileCacheBytes))}
+            </Text>
+            <Button
+              label={t.offlineMapClearCache}
+              variant="outline"
+              tone="alert"
+              grow={false}
+              loading={clearingCache}
+              disabled={!tileCacheBytes}
+              onPress={handleClearTileCache}
+            />
+          </View>
+        </SettingsSection>
+
+        {/* Ember's own settings (sync, food search), once it's on in "Show in the sidebar". */}
+        {emberOn && (
+        <SettingsSection
+          title="Ember"
+          summary="Ember sync · food search key"
+          icon="ember"
+          open={isOpen('ember')}
+          onToggle={toggleSection('ember')}
+          onLayout={recordRow('ember')}
+        >
+          <Text style={styles.cardTitle}>Ember sync</Text>
+          <Text style={styles.sectionDesc}>
+            Shared store URL + token so Ember logs merge with your other devices (the same
+            ember/sync.json the desktop uses). Leave blank to log on this device only.
+          </Text>
+          <FieldRow
+            icon="link"
+            value={emberSyncUrl}
+            onChangeText={setEmberSyncUrl}
+            placeholder="https://192.168.1.102/ember/sync.php"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <FieldRow
+            icon="key"
+            value={emberSyncToken}
+            onChangeText={setEmberSyncToken}
+            placeholder="token"
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+          <View style={styles.row}>
+            <Button label={t.saveBtn} variant="filled" loading={savingEmberSync} onPress={handleSaveEmberSync} />
+          </View>
+
+          <Text style={[styles.cardTitle, { marginTop: 12 }]}>Food search</Text>
+          <Text style={styles.sectionDesc}>
+            Generic foods come from USDA FoodData Central. Without your own key a shared demo key
+            is used, limited to about 30 searches an hour. The key is free and stays on this phone.
+          </Text>
+          <FieldRow
+            icon="key"
+            value={usdaKey}
+            onChangeText={setUsdaKey}
+            placeholder="USDA API key (optional)"
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+          <View style={styles.row}>
+            <Button label="Get a free key" variant="outline"
+              onPress={() => Linking.openURL('https://fdc.nal.usda.gov/api-key-signup')} />
+            <Button label={t.saveBtn} variant="filled"
+              onPress={async () => { await setUsdaApiKey(usdaKey); Alert.alert('Ember', usdaKey.trim() ? 'USDA key saved.' : 'USDA key cleared (demo key).'); }} />
+          </View>
+        </SettingsSection>
         )}
+
+        {/* ── Database (#SYNC / André 2026-09-20): sync this phone with the computers through the
+            user's own server/NAS — the only way to include the phone. A copy always stays on the
+            phone (offline-first). No folder option here: phones can't keep their DB in a synced
+            folder (OS sandbox) — that's desktop-only. ── */}
+        <SettingsSection
+          title="Database"
+          summary={`Sync across devices: ${sommetSaved ? 'on' : 'off'}`}
+          icon="sync"
+          open={isOpen('database')}
+          onToggle={toggleSection('database')}
+          onLayout={recordRow('database')}
+        >
+          <Text style={styles.sectionDesc}>
+            Sync this phone with your computers through your own server or NAS — the only way to
+            include the phone. A copy always stays on this phone, so it works offline.
+          </Text>
+          <FieldRow
+            icon="link"
+            value={sommetSyncUrl}
+            onChangeText={setSommetSyncUrl}
+            placeholder="https://…ts.net/sommet/sync.php"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <FieldRow
+            icon="key"
+            value={sommetSyncToken}
+            onChangeText={setSommetSyncToken}
+            placeholder="token"
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry
+          />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            <Button label="Test" variant="outline" onPress={handleTestSommet} />
+            <Button label={t.saveBtn} variant="filled" loading={savingSommet} onPress={handleSaveSommet} />
+            <Button label="Sync now" variant="outline" loading={syncingSommet} onPress={handleSyncNow} />
+          </View>
+          {sommetStatus ? <StatusLine text={sommetStatus} /> : null}
+        </SettingsSection>
+
+        {/* The feature switches moved to "Show in the sidebar" (2026-10-21). */}
+        <SettingsSection
+          title={t.experimentalSection}
+          summary={`Mark synced workouts: ${markSyncedEnabled ? 'on' : 'off'}`}
+          icon="watch"
+          open={isOpen('experimental')}
+          onToggle={toggleSection('experimental')}
+          onLayout={recordRow('experimental')}
+        >
+          {/* Mark-synced write-back - independent opt-in, not gated by the master toggle
+              (2026-08-16). Writes the watch's own per-move synced flag so the Suunto app /
+              SuuntoLink don't duplicate; tradeoff spelled out so nobody enables it blindly. */}
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
+            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>{t.markSyncedLabel}</Text>
+            <Toggle
+              value={markSyncedEnabled}
+              onValueChange={handleToggleMarkSynced}
+            />
+          </View>
+          <Text style={styles.sectionDesc}>{t.markSyncedDesc}</Text>
+        </SettingsSection>
+
+        {/* ── Testing mode (2026-08-16, ported from desktop): pretend a device is connected so
+            the app can be explored without one. Toggle + a picker of the watches the app knows
+            (Ambit3 family / Traverse / Kailash). Default OFF. ── */}
+        <SettingsSection
+          title={t.testingSection}
+          summary={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Off'}
+          icon="watch"
+          open={isOpen('testing')}
+          onToggle={toggleSection('testing')}
+          onLayout={recordRow('testing')}
+        >
+          <Text style={styles.sectionDesc}>{t.testingDesc}</Text>
+          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
+            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
+              {demo.enabled ? t.testingOnShowing(demo.device.name) : ' '}
+            </Text>
+            <Toggle value={demo.enabled} onValueChange={demo.setEnabled} />
+          </View>
+          {demo.enabled && (
+            <View style={{ marginTop: 10 }}>
+              <Button label={t.testingChange} onPress={() => setDemoPickerOpen(true)} variant="outline" />
+            </View>
+          )}
+        </SettingsSection>
+
+        {/* Firmware flashing is USB-only (no USB on iOS), and not for a Garmin. */}
+        {!isGarminAttached && Platform.OS !== 'ios' && (
+        <SettingsSection
+          title="Firmware"
+          summary="Flash watch firmware over USB"
+          icon="watch"
+          open={isOpen('firmware')}
+          onToggle={toggleSection('firmware')}
+          onLayout={recordRow('firmware')}
+        >
+          <Text style={styles.sectionDesc}>
+            Flash watch firmware over USB. Advanced and irreversible — intended for a supervised
+            session. Opens the firmware tool.
+          </Text>
+          <Button label="Open firmware tool" icon="upload" variant="outline"
+            onPress={() => navigation.navigate('Firmware')} style={{ marginTop: 10 }} />
+        </SettingsSection>
+        )}
+
+        {/* ── About / disclaimer ── */}
+        <SettingsSection
+          title={t.aboutSection}
+          summary={t.aboutVersion(APP_VERSION)}
+          open={isOpen('about')}
+          onToggle={toggleSection('about')}
+          onLayout={recordRow('about')}
+          last
+        >
+          {/* The Ember easter egg (10 taps here) was retired 2026-08-29 - Ember is now an open
+              opt-in toggle in its own card above, so the version is just plain text again. */}
+          <Text style={styles.sectionDesc}>{t.aboutVersion(APP_VERSION)}</Text>
+          <Text style={[styles.sectionDesc, { marginTop: 10 }]}>{t.aboutDisclaimer}</Text>
+
+          <Text style={styles.creditsHeading}>{t.aboutCreditsSection}</Text>
+          <Text style={styles.sectionDesc}>{t.aboutCreditsIntro}</Text>
+          {CREDITS.map(c => (
+            <TouchableOpacity
+              key={c.name}
+              style={styles.creditItem}
+              disabled={!c.url}
+              activeOpacity={0.6}
+              onPress={() => c.url && Linking.openURL(c.url)}
+            >
+              <Text style={[styles.creditName, !!c.url && styles.link]}>{c.name}</Text>
+              <Text style={styles.creditDesc}>{c.description}</Text>
+            </TouchableOpacity>
+          ))}
+        </SettingsSection>
       </View>
 
-      {/* ── Database (#SYNC / André 2026-09-20): sync this phone with the computers through the
-          user's own server/NAS — the only way to include the phone. A copy always stays on the
-          phone (offline-first). No folder option here: phones can't keep their DB in a synced
-          folder (OS sandbox) — that's desktop-only. ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="link" />
-          <Text style={styles.cardTitle}>Database</Text>
-        </View>
-        <Text style={styles.sectionDesc}>
-          Sync this phone with your computers through your own server or NAS — the only way to
-          include the phone. A copy always stays on this phone, so it works offline.
-        </Text>
-        <FieldRow
-          icon="link"
-          value={sommetSyncUrl}
-          onChangeText={setSommetSyncUrl}
-          placeholder="https://…ts.net/sommet/sync.php"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-        <FieldRow
-          icon="key"
-          value={sommetSyncToken}
-          onChangeText={setSommetSyncToken}
-          placeholder="token"
-          autoCapitalize="none"
-          autoCorrect={false}
-          secureTextEntry
-        />
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-          <Button label="Test" variant="outline" onPress={handleTestSommet} />
-          <Button label={t.saveBtn} variant="filled" loading={savingSommet} onPress={handleSaveSommet} />
-          <Button label="Sync now" variant="outline" loading={syncingSommet} onPress={handleSyncNow} />
-        </View>
-        {sommetStatus ? <StatusLine text={sommetStatus} /> : null}
-      </View>
-
-      {/* ── About / disclaimer ── */}
-      <View style={styles.section}>
-        <View style={styles.cardHead}>
-          <IconBadge icon="info" />
-          <Text style={styles.cardTitle}>{t.aboutSection}</Text>
-        </View>
-        {/* The Ember easter egg (10 taps here) was retired 2026-08-29 - Ember is now an open
-            opt-in toggle in its own card above, so the version is just plain text again. */}
-        <Text style={styles.sectionDesc}>{t.aboutVersion(APP_VERSION)}</Text>
-        <Text style={[styles.sectionDesc, { marginTop: 10 }]}>{t.aboutDisclaimer}</Text>
-
-        <Text style={styles.creditsHeading}>{t.aboutCreditsSection}</Text>
-        <Text style={styles.sectionDesc}>{t.aboutCreditsIntro}</Text>
-        {CREDITS.map(c => (
-          <TouchableOpacity
-            key={c.name}
-            style={styles.creditItem}
-            disabled={!c.url}
-            activeOpacity={0.6}
-            onPress={() => c.url && Linking.openURL(c.url)}
-          >
-            <Text style={[styles.creditName, !!c.url && styles.link]}>{c.name}</Text>
-            <Text style={styles.creditDesc}>{c.description}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <DemoDevicePicker
+        visible={demoPickerOpen}
+        currentVariant={demo.variant}
+        onPick={demo.setVariant}
+        onClose={() => setDemoPickerOpen(false)}
+      />
 
     </ScrollView>
   );
@@ -1032,6 +1137,7 @@ const createStyles = (t: ReturnType<typeof useV3Theme>) => StyleSheet.create({
   creditItem: { marginTop: 10 },
   creditName: { fontSize: 13, fontWeight: '700', color: t.text },
   creditDesc: { fontSize: 12, color: t.mutedText, lineHeight: 17, marginTop: 2 },
+  rowsCard: { padding: 4 },
   themeRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   viewPrefBlock: { marginTop: 14 },
   viewPrefLabel: { fontSize: 13.5, color: t.text, fontWeight: '600', marginBottom: 2 },

@@ -109,14 +109,21 @@ export function Button({
 // switch is always visible, its own 2026-08-10 fix). This mirrors those values exactly, with
 // the same 16px handle that sits 2px from each end.
 export function Toggle({
-  value, onValueChange, disabled,
-}: { value: boolean; onValueChange: (v: boolean) => void; disabled?: boolean }) {
+  value, onValueChange, disabled, accessibilityLabel,
+}: {
+  value: boolean; onValueChange: (v: boolean) => void; disabled?: boolean;
+  // What the switch turns on, for screen readers (the pill has no text of its own).
+  accessibilityLabel?: string;
+}) {
   const t = useV3Theme();
   return (
     <TouchableOpacity
       onPress={() => onValueChange(!value)}
       disabled={disabled}
       activeOpacity={0.8}
+      accessibilityRole="switch"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ checked: value, disabled: !!disabled }}
       style={{
         width: 36, height: 20, borderRadius: 10, justifyContent: 'center',
         backgroundColor: value ? t.primary : t.card,

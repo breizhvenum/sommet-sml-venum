@@ -96,7 +96,7 @@ export default function WeightScreen() {
           </Text>
           {/* #9 (André, 2026-09-02): one-tap route to the shared connection settings. */}
           <TouchableOpacity
-            onPress={() => navigation.navigate('Settings')}
+            onPress={() => navigation.navigate('Settings', { section: 'connections' })}
             style={{ marginTop: v3Spacing.medium, alignSelf: 'flex-start',
                      paddingVertical: v3Spacing.small, paddingHorizontal: v3Spacing.medium,
                      borderRadius: v3Radius.card, borderWidth: 1, borderColor: t.border }}>
