@@ -190,6 +190,25 @@ them from the watch and installs what's next.</p>
 </div>
 
 <script>
+// Every call to this page's own server goes through fetchJson (2026-10-22): a dropped connection
+// or a reply that isn't JSON comes back as {ok: false, error} instead of throwing. Before, a
+// failed request threw inside the click handler and the page stayed on its "creating
+// workout..." line for good.
+async function fetchJson(url, opts) {
+  try {
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    try { return {resp, data: JSON.parse(text)}; }
+    catch (e) {
+      return {resp: {ok: false, status: resp.status},
+              data: {ok: false, error: `Unexpected reply from this page's helper (HTTP ${resp.status}).`}};
+    }
+  } catch (e) {
+    return {resp: {ok: false, status: 0},
+            data: {ok: false, error: "This page's helper stopped answering - close the tab and open it "
+                                     + "again from Sommet. (" + ((e && e.message) || e) + ")"}};
+  }
+}
 const THEME_KEY = "ambit_calendar_theme";
 const THEME_ORDER = ["light", "dark", "system"];
 const THEME_LABELS = {light: "Theme: Light", dark: "Theme: Dark", system: "Theme: System"};
@@ -357,8 +376,7 @@ function currentWorkout() {
 async function loadModes() {
   const sels = ["emode", "iMode"].map(id => document.getElementById(id)).filter(Boolean);
   try {
-    const resp = await fetch("/api/modes");
-    const data = await resp.json();
+    const {resp, data} = await fetchJson("/api/modes");
     if (!resp.ok || !data.ok) throw new Error(data.error || "couldn't read the watch");
     const opts = data.modes.map(m => `<option value="${m.name}">${m.name}</option>`).join("");
     sels.forEach(sel => { sel.innerHTML = opts; });
@@ -393,10 +411,9 @@ async function importFromIntervals() {
   localStorage.setItem(IMPORT_MODE_KEY, mode);
   out.innerHTML = '<p class="hint">fetching from intervals.icu...</p>';
   try {
-    const resp = await fetch("/api/intervals-fetch", {method: "POST", body: JSON.stringify({
+    const {resp, data} = await fetchJson("/api/intervals-fetch", {method: "POST", body: JSON.stringify({
       athlete_id: athlete, api_key: key, start, end, mode,
     })});
-    const data = await resp.json();
     if (!resp.ok || !data.ok) { out.innerHTML = `<p class="result-err">${data.error || "fetch failed"}</p>`; return; }
     const plan = loadPlan();
     const seen = new Set(plan.map(e => e.date + "|" + e.workout.name));
@@ -478,10 +495,9 @@ async function doSync(write) {
     return;
   }
   resultEl.innerHTML = `<p class="hint">${write ? "syncing" : "checking"}...</p>`;
-  const resp = await fetch("/api/sync-calendar", {method: "POST", body: JSON.stringify({
+  const {resp, data} = await fetchJson("/api/sync-calendar", {method: "POST", body: JSON.stringify({
     entries: plan, write,
   })});
-  const data = await resp.json();
   if (!resp.ok || !data.ok) {
     const detail = (data.stderr || data.raw_output || "").trim();
     resultEl.innerHTML = `<p class="result-err">${data.error || "sync failed"}</p>`
@@ -508,6 +524,34 @@ async function doSync(write) {
 
 
 class Handler(BaseHTTPRequestHandler):
+
+    # Any unexpected error comes back as a JSON message (2026-10-22). Before, it closed the
+    # connection without an answer, and the page waited forever ("creating workout...").
+    def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception as e:  # noqa: BLE001 - reported to the page, never swallowed
+            self._send_unexpected(e)
+
+    def do_POST(self):
+        try:
+            self._do_POST()
+        except Exception as e:  # noqa: BLE001
+            self._send_unexpected(e)
+
+    def _send_unexpected(self, e):
+        import traceback  # noqa: PLC0415
+        traceback.print_exc()
+        try:
+            body = json.dumps({"ok": False, "error": f"Something went wrong here: {e}"}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            pass  # the browser already went away
+
     def log_message(self, fmt, *args):
         pass
 
@@ -519,7 +563,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
+    def _do_GET(self):
         if self.path == "/api/modes":
             self._handle_list_modes()
             return
@@ -534,7 +578,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
+    def _do_POST(self):
         if self.path not in ("/api/sync-calendar", "/api/intervals-fetch"):
             self.send_response(404)
             self.end_headers()

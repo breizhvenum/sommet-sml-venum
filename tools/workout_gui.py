@@ -19,6 +19,7 @@ import argparse
 import html as _html_mod
 from urllib.parse import quote as _url_quote
 import json
+import os
 import re
 import subprocess
 import sys
@@ -56,21 +57,54 @@ def parse_last_json_line(out):
             continue
     return parsed
 
+def _downloads_dir():
+    """The user's real Downloads folder, also when it's localized or moved (2026-10-22): a Linux
+    system in French keeps it in ~/Téléchargements, and Windows can move it into OneDrive. Falls
+    back to ~/Downloads."""
+    home = Path.home()
+    if sys.platform.startswith("win"):
+        try:
+            import winreg  # noqa: PLC0415
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                raw, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+            path = Path(os.path.expandvars(raw))
+            if path.is_dir():
+                return path
+        except OSError:
+            pass
+    elif sys.platform.startswith("linux"):
+        try:
+            for line in (home / ".config" / "user-dirs.dirs").read_text(encoding="utf-8").splitlines():
+                if line.startswith("XDG_DOWNLOAD_DIR="):
+                    path = Path(line.split("=", 1)[1].strip().strip('"').replace("$HOME", str(home)))
+                    if path.is_dir():
+                        return path
+        except OSError:
+            pass
+    return home / "Downloads"
+
+
 # Real, 2026-08-08 ("app is installed in some strange directory, please install it in
 # Downloads directory"): was Path.home() / "AmbitWorkouts" (e.g. C:\Users\<user>\AmbitWorkouts
 # on Windows) - moved under Downloads so saved workouts land somewhere the user actually
 # expects to look, keeping the same named subfolder for organization.
-SAVE_DIR = Path.home() / "Downloads" / "AmbitWorkouts"
+SAVE_DIR = _downloads_dir() / "AmbitWorkouts"
 
 
 def save_compiled(name, compiled):
     """Every successful compile also lands here as a JSON, independent of the History list, so a
-    workout can be re-downloaded later."""
-    SAVE_DIR.mkdir(exist_ok=True)
-    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "workout"
-    path = SAVE_DIR / f"{safe_name}_{int(time.time())}.json"
-    path.write_text(json.dumps(compiled, indent=2))
-    return path
+    workout can be re-downloaded later. A copy that can't be written (no Downloads folder, no
+    permission) is skipped and None returned: it must never fail the compile itself (2026-10-22:
+    a missing ~/Downloads did, and the page sat on "creating workout..." for good)."""
+    try:
+        SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "workout"
+        path = SAVE_DIR / f"{safe_name}_{int(time.time())}.json"
+        path.write_text(json.dumps(compiled, indent=2))
+        return path
+    except OSError:
+        return None
 
 
 # Default workout name shown in the builder. Overridable per-launch by the ?name= query (the
@@ -251,6 +285,25 @@ or re-download it later.</p>
 </div>
 
 <script>
+// Every call to this page's own server goes through fetchJson (2026-10-22): a dropped connection
+// or a reply that isn't JSON comes back as {ok: false, error} instead of throwing. Before, a
+// failed request threw inside the click handler and the page stayed on its "creating
+// workout..." line for good.
+async function fetchJson(url, opts) {
+  try {
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    try { return {resp, data: JSON.parse(text)}; }
+    catch (e) {
+      return {resp: {ok: false, status: resp.status},
+              data: {ok: false, error: `Unexpected reply from this page's helper (HTTP ${resp.status}).`}};
+    }
+  } catch (e) {
+    return {resp: {ok: false, status: 0},
+            data: {ok: false, error: "This page's helper stopped answering - close the tab and open it "
+                                     + "again from Sommet. (" + ((e && e.message) || e) + ")"}};
+  }
+}
 // Theme (2026-08-08 request: "have a light mode... a button to switch from light mode, to
 // dark to system") - three-state cycle, persisted so it survives a reload, same idea as
 // AmbitApp's own Theme.qml `override` property.
@@ -453,8 +506,7 @@ function currentWorkout() {
 async function doGenerate() {
   const out = document.getElementById("output");
   out.innerHTML = "generating...";
-  const resp = await fetch("/api/generate", {method: "POST", body: JSON.stringify(currentWorkout())});
-  const data = await resp.json();
+  const {resp, data} = await fetchJson("/api/generate", {method: "POST", body: JSON.stringify(currentWorkout())});
   if (!resp.ok) { out.innerHTML = `<p class="result-err">${data.error}</p>`; return; }
   out.innerHTML = `<h3>Generated source</h3><pre>${data.source.replace(/</g, "&lt;")}</pre>`;
 }
@@ -491,8 +543,7 @@ async function toggleInstallPicker(pickerId, workout) {
   el.style.display = "block";
   el.innerHTML = '<p class="hint">reading sport modes from the watch...</p>';
   try {
-    const resp = await fetch("/api/modes");
-    const data = await resp.json();
+    const {resp, data} = await fetchJson("/api/modes");
     if (!resp.ok || !data.ok) throw new Error(data.error || "couldn't read the watch");
     pickerModes[pickerId] = data.modes;
   } catch (e) {
@@ -527,10 +578,9 @@ async function doInstallToWatch(pickerId, replace) {
   const mode = document.getElementById(`${pickerId}_mode`).value;
   const resultEl = document.getElementById(`${pickerId}_result`);
   resultEl.innerHTML = '<p class="hint">installing...</p>';
-  const resp = await fetch("/api/install-to-watch", {method: "POST", body: JSON.stringify({
+  const {resp, data} = await fetchJson("/api/install-to-watch", {method: "POST", body: JSON.stringify({
     workout: pickerWorkout[pickerId], mode, replace: replace || null,
   })});
-  const data = await resp.json();
   if (resp.ok && data.ok) {
     const swapped = replace ? ` &ldquo;${escapeText(replace)}&rdquo; was removed.` : "";
     resultEl.innerHTML = `<p class="result-ok">Installed &ndash; now in ${mode}'s WORKOUT menu (hold [Next] &rarr; WORKOUT).${swapped}</p>`;
@@ -560,8 +610,7 @@ async function doCompile() {
   const out = document.getElementById("output");
   out.innerHTML = "creating workout...";
   const workout = currentWorkout();
-  const resp = await fetch("/api/compile", {method: "POST", body: JSON.stringify(workout)});
-  const data = await resp.json();
+  const {resp, data} = await fetchJson("/api/compile", {method: "POST", body: JSON.stringify(workout)});
   if (!resp.ok) { out.innerHTML = `<p class="result-err">${data.error}</p>`; return; }
   renderCompiledResult(workout.name, data, data.savedTo ? `Saved to ${data.savedTo}.` : "", workout);
   saveHistory(workout, data);
@@ -686,6 +735,34 @@ renderHistory();
 
 
 class Handler(BaseHTTPRequestHandler):
+
+    # Any unexpected error comes back as a JSON message (2026-10-22). Before, it closed the
+    # connection without an answer, and the page waited forever ("creating workout...").
+    def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception as e:  # noqa: BLE001 - reported to the page, never swallowed
+            self._send_unexpected(e)
+
+    def do_POST(self):
+        try:
+            self._do_POST()
+        except Exception as e:  # noqa: BLE001
+            self._send_unexpected(e)
+
+    def _send_unexpected(self, e):
+        import traceback  # noqa: PLC0415
+        traceback.print_exc()
+        try:
+            body = json.dumps({"ok": False, "error": f"Something went wrong here: {e}"}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            pass  # the browser already went away
+
     def log_message(self, fmt, *args):
         pass  # keep stdout clean; errors still surface via response bodies
 
@@ -697,7 +774,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
+    def _do_GET(self):
         if self.path == "/api/modes":
             self._handle_list_modes()
             return
@@ -736,7 +813,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
+    def _do_POST(self):
         if self.path not in ("/api/generate", "/api/compile", "/api/install-to-watch"):
             self.send_response(404)
             self.end_headers()
@@ -771,7 +848,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         result["name"] = workout.get("name") or result.get("name", "Workout")
         saved_to = save_compiled(workout.get("name", "Workout"), result)
-        self._send_json(200, {**result, "savedTo": str(saved_to)})
+        self._send_json(200, {**result, "savedTo": str(saved_to) if saved_to else None})
 
     def _handle_list_modes(self):
         """GET /api/modes - the connected watch's own sport modes/displays/fields, read-only
@@ -839,9 +916,12 @@ def _log_startup_failure(exc):
     """The packaged app runs with console=False (no terminal window, so print() goes
     nowhere) - without this, a startup failure when double-clicked from Finder is
     completely silent, just "nothing happens". Logged instead of just swallowed."""
-    SAVE_DIR.mkdir(exist_ok=True)
-    with (SAVE_DIR / "app.log").open("a") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - failed to start: {exc!r}\n")
+    try:
+        SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        with (SAVE_DIR / "app.log").open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - failed to start: {exc!r}\n")
+    except OSError:
+        pass
 
 
 def main():

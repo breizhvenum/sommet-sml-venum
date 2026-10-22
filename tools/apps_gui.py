@@ -16,6 +16,7 @@ Reference: Suunto's App Zone Developer Manual (linked in the UI).
 import argparse
 import json
 import platform
+import os
 import re
 import subprocess
 import sys
@@ -54,11 +55,39 @@ def parse_last_json_line(out):
             continue
     return parsed
 
+def _downloads_dir():
+    """The user's real Downloads folder, also when it's localized or moved (2026-10-22): a Linux
+    system in French keeps it in ~/Téléchargements, and Windows can move it into OneDrive. Falls
+    back to ~/Downloads."""
+    home = Path.home()
+    if sys.platform.startswith("win"):
+        try:
+            import winreg  # noqa: PLC0415
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+                raw, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+            path = Path(os.path.expandvars(raw))
+            if path.is_dir():
+                return path
+        except OSError:
+            pass
+    elif sys.platform.startswith("linux"):
+        try:
+            for line in (home / ".config" / "user-dirs.dirs").read_text(encoding="utf-8").splitlines():
+                if line.startswith("XDG_DOWNLOAD_DIR="):
+                    path = Path(line.split("=", 1)[1].strip().strip('"').replace("$HOME", str(home)))
+                    if path.is_dir():
+                        return path
+        except OSError:
+            pass
+    return home / "Downloads"
+
+
 # Real, 2026-08-08 ("app is installed in some strange directory, please install it in
 # Downloads directory"): was Path.home() / "AmbitWorkouts" (e.g. C:\Users\<user>\AmbitWorkouts
 # on Windows) - moved under Downloads so saved workouts land somewhere the user actually
 # expects to look, keeping the same named subfolder for organization.
-SAVE_DIR = Path.home() / "Downloads" / "AmbitWorkouts"
+SAVE_DIR = _downloads_dir() / "AmbitWorkouts"
 README_PATH = SAVE_DIR / "README - read this on Linux.txt"
 
 LINUX_README = """Ambit3 Workout Builder - using a compiled workout on Linux
@@ -97,12 +126,16 @@ or expected path here - the copy-the-file route above is the one that's actually
 def save_compiled(name, compiled):
     """Every successful compile also lands here, independent of SuuntoLink/History - alongside
     the README (Linux) explaining what to actually do with it."""
-    SAVE_DIR.mkdir(exist_ok=True)
-    README_PATH.write_text(LINUX_README.format(save_dir=SAVE_DIR))
-    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "workout"
-    path = SAVE_DIR / f"{safe_name}_{int(time.time())}.json"
-    path.write_text(json.dumps(compiled, indent=2))
-    return path
+    # Skipped, not fatal, when it can't be written (2026-10-22, see workout_gui.save_compiled).
+    try:
+        SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        README_PATH.write_text(LINUX_README.format(save_dir=SAVE_DIR))
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "workout"
+        path = SAVE_DIR / f"{safe_name}_{int(time.time())}.json"
+        path.write_text(json.dumps(compiled, indent=2))
+        return path
+    except OSError:
+        return None
 
 
 HTML_PAGE = r"""<!doctype html>
@@ -298,6 +331,25 @@ re-download it later.</p>
 </div>
 
 <script>
+// Every call to this page's own server goes through fetchJson (2026-10-22): a dropped connection
+// or a reply that isn't JSON comes back as {ok: false, error} instead of throwing. Before, a
+// failed request threw inside the click handler and the page stayed on its "creating
+// workout..." line for good.
+async function fetchJson(url, opts) {
+  try {
+    const resp = await fetch(url, opts);
+    const text = await resp.text();
+    try { return {resp, data: JSON.parse(text)}; }
+    catch (e) {
+      return {resp: {ok: false, status: resp.status},
+              data: {ok: false, error: `Unexpected reply from this page's helper (HTTP ${resp.status}).`}};
+    }
+  } catch (e) {
+    return {resp: {ok: false, status: 0},
+            data: {ok: false, error: "This page's helper stopped answering - close the tab and open it "
+                                     + "again from Sommet. (" + ((e && e.message) || e) + ")"}};
+  }
+}
 // Theme (2026-08-08 request: "have a light mode... a button to switch from light mode, to
 // dark to system") - three-state cycle, persisted so it survives a reload, same idea as
 // AmbitApp's own Theme.qml `override` property.
@@ -357,8 +409,8 @@ let lastCompiled = null;
 // a separate README file.
 let platformSystem = null;
 async function detectPlatform() {
-  const resp = await fetch("/api/platform");
-  platformSystem = (await resp.json()).system;
+  const {data} = await fetchJson("/api/platform");
+  platformSystem = data.system || null;
   if (platformSystem === "Linux") document.getElementById("linuxNote").style.display = "";
 }
 // "Install to Watch" writes straight to a connected watch over USB (workout_install.py, no
@@ -386,8 +438,7 @@ async function toggleInstallPicker(pickerId, compiled) {
   el.style.display = "block";
   el.innerHTML = '<p class="hint">reading sport modes from the watch...</p>';
   try {
-    const resp = await fetch("/api/modes");
-    const data = await resp.json();
+    const {resp, data} = await fetchJson("/api/modes");
     if (!resp.ok || !data.ok) throw new Error(data.error || "couldn't read the watch");
     pickerModes[pickerId] = data.modes;
   } catch (e) {
@@ -432,12 +483,11 @@ async function doInstallToWatch(pickerId) {
   const [display, field] = document.getElementById(`${pickerId}_field`).value.split(",").map(Number);
   const resultEl = document.getElementById(`${pickerId}_result`);
   resultEl.innerHTML = '<p class="hint">installing...</p>';
-  const resp = await fetch("/api/install-to-watch", {method: "POST", body: JSON.stringify({
+  const {resp, data} = await fetchJson("/api/install-to-watch", {method: "POST", body: JSON.stringify({
     compiled: pickerCompiled[pickerId],
     mode: +document.getElementById(`${pickerId}_mode`).value,
     display, field,
   })});
-  const data = await resp.json();
   resultEl.innerHTML = (resp.ok && data.ok)
     ? '<p class="result-ok">Installed - now on the watch.</p>'
     : `<p class="result-err">${data.error || "install failed"}</p>`;
@@ -447,8 +497,7 @@ async function doCompile() {
   const out = document.getElementById("output");
   out.innerHTML = "compiling...";
   const app = currentApp();
-  const resp = await fetch("/api/compile", {method: "POST", body: JSON.stringify(app)});
-  const data = await resp.json();
+  const {resp, data} = await fetchJson("/api/compile", {method: "POST", body: JSON.stringify(app)});
   if (!resp.ok) { out.innerHTML = `<p class="result-err">${data.error}</p>`; return; }
   renderCompiledResult(app.name, data, data.savedTo ? `Saved to ${data.savedTo}.` : "");
   saveHistory(app, data);
@@ -485,8 +534,7 @@ function importCompiledJson(event) {
 // element ID, since the same buttons render both after a fresh compile and in each History row.
 async function doAddToSuuntoLink(compiled, btn) {
   btn.disabled = true;
-  const resp = await fetch("/api/add-to-suuntolink", {method: "POST", body: JSON.stringify(compiled)});
-  const data = await resp.json();
+  const {resp, data} = await fetchJson("/api/add-to-suuntolink", {method: "POST", body: JSON.stringify(compiled)});
   btn.disabled = false;
   btn.insertAdjacentHTML("afterend", resp.ok
     ? ` <span class="result-ok">Done.</span>`
@@ -569,6 +617,34 @@ detectPlatform().then(renderHistory);  // History's buttons depend on platformSy
 
 
 class Handler(BaseHTTPRequestHandler):
+
+    # Any unexpected error comes back as a JSON message (2026-10-22). Before, it closed the
+    # connection without an answer, and the page waited forever ("creating workout...").
+    def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception as e:  # noqa: BLE001 - reported to the page, never swallowed
+            self._send_unexpected(e)
+
+    def do_POST(self):
+        try:
+            self._do_POST()
+        except Exception as e:  # noqa: BLE001
+            self._send_unexpected(e)
+
+    def _send_unexpected(self, e):
+        import traceback  # noqa: PLC0415
+        traceback.print_exc()
+        try:
+            body = json.dumps({"ok": False, "error": f"Something went wrong here: {e}"}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:
+            pass  # the browser already went away
+
     def log_message(self, fmt, *args):
         pass  # keep stdout clean; errors still surface via response bodies
 
@@ -580,7 +656,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self):
+    def _do_GET(self):
         if self.path == "/api/platform":
             self._send_json(200, {"system": platform.system()})  # "Linux"/"Darwin"/"Windows"
             return
@@ -598,7 +674,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
+    def _do_POST(self):
         if self.path not in ("/api/compile", "/api/add-to-suuntolink", "/api/install-to-watch"):
             self.send_response(404)
             self.end_headers()
@@ -632,7 +708,7 @@ class Handler(BaseHTTPRequestHandler):
         # user's name so it's findable later (in History, saved files, SuuntoLink's picker).
         result["name"] = name
         saved_to = save_compiled(name, result)
-        self._send_json(200, {**result, "savedTo": str(saved_to)})
+        self._send_json(200, {**result, "savedTo": str(saved_to) if saved_to else None})
 
     def _handle_add_to_suuntolink(self, compiled):
         candidates = suuntolink_catalog.find_index_json()
@@ -715,9 +791,12 @@ def _log_startup_failure(exc):
     """The packaged app runs with console=False (no terminal window, so print() goes
     nowhere) - without this, a startup failure when double-clicked from Finder is
     completely silent, just "nothing happens". Logged instead of just swallowed."""
-    SAVE_DIR.mkdir(exist_ok=True)
-    with (SAVE_DIR / "app.log").open("a") as f:
-        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - failed to start: {exc!r}\n")
+    try:
+        SAVE_DIR.mkdir(parents=True, exist_ok=True)
+        with (SAVE_DIR / "app.log").open("a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - failed to start: {exc!r}\n")
+    except OSError:
+        pass
 
 
 def main():

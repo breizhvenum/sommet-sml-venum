@@ -313,7 +313,8 @@ def compile_source(request_text, verbose=False):
         print("--- POST body ---", file=sys.stderr)
         print(request_text, file=sys.stderr)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        # 45 s: the compiler is an Azure function that can take a while to wake up.
+        with urllib.request.urlopen(req, timeout=45) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")
@@ -327,6 +328,12 @@ def compile_source(request_text, verbose=False):
         raise RuntimeError(
             "couldn't reach the compiler (ambitappscompiler.azurewebsites.net) - this needs "
             f"an internet connection; everything else here works offline. ({e.reason})") from None
+    except (TimeoutError, OSError) as e:
+        # A timeout while READING the answer is not a URLError (2026-10-22) - it used to escape.
+        raise RuntimeError("the compiler (ambitappscompiler.azurewebsites.net) didn't answer in "
+                           f"time - try again in a minute. ({e})") from None
+    except ValueError as e:
+        raise RuntimeError(f"the compiler sent back something unexpected ({e})") from None
 
 
 def main():

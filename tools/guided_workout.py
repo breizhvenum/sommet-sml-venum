@@ -284,8 +284,9 @@ def compile_workout(workout, lang=None):
     req = urllib.request.Request(
         W.COMPILE_URL, data=json.dumps(workout).encode("utf-8"), method="POST",
         headers={"Content-Type": "text/plain", "x-functions-key": W.COMPILE_KEY})
+    # 45 s: the compiler is an Azure function that can take a while to wake up.
     try:
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=45) as resp:
             j = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise SystemExit(f"guidance compile failed: HTTP {e.code}: "
@@ -293,6 +294,16 @@ def compile_workout(workout, lang=None):
     except urllib.error.URLError as e:
         raise SystemExit("couldn't reach the compiler (ambitappscompiler.azurewebsites.net) - "
                          f"the guidance binary needs an internet connection. ({e.reason})") from None
+    except (TimeoutError, OSError) as e:
+        # A timeout while READING the answer is not a URLError (2026-10-22): it used to escape,
+        # and the Workout Builder page waited forever.
+        raise SystemExit("the compiler (ambitappscompiler.azurewebsites.net) didn't answer in "
+                         f"time - try again in a minute. ({e})") from None
+    except ValueError as e:
+        raise SystemExit(f"the compiler sent back something that isn't a compiled workout ({e})") from None
+    if not isinstance(j, dict) or not j.get("binary"):
+        raise SystemExit("the compiler sent back something that isn't a compiled workout: "
+                         f"{str(j)[:200]}")
     binary, light_sites = with_lights(j["binary"], workout)
     return {"name": workout["name"][:apps_name_len()], "activityId": activity_id,
             "binary": binary, "ruleId": j.get("ruleId"), "lightSites": light_sites}
