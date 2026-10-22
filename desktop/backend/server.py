@@ -296,6 +296,23 @@ DEMO_REFUSED_MSG = ("Testing mode is on, so this wasn't sent to a watch - the sa
                     "to use your own watch.")
 
 
+# A tool that found no watch fails with a Python traceback in stderr; say it plainly instead
+# (2026-10-22 audit: the app showed "settings_write.py --json produced no parseable JSON").
+# The raw fields stay in the reply for diagnosis.
+_NO_WATCH_HINTS = ("no supported Suunto watch on the USB bus", "still not openable after")
+
+
+def _friendly_watch_error(payload):
+    text = " ".join(str(payload.get(k) or "") for k in ("error", "stderr", "raw_output"))
+    if not any(h in text for h in _NO_WATCH_HINTS):
+        return payload
+    out = dict(payload)
+    out["error"] = ("The watch isn't connected - plug it in with the cable, on its time screen, "
+                    "and try again.")
+    out["noWatch"] = True
+    return out
+
+
 def demo_custom_modes_path():
     """The demo region on disk, copied to a scratch file the first time it is needed so
     edits in Testing mode behave like edits on a watch - they persist for the session and
@@ -894,6 +911,8 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep stdout clean; errors still surface via response bodies
 
     def _send_json(self, status, payload):
+        if status >= 400 and isinstance(payload, dict):
+            payload = _friendly_watch_error(payload)
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -4768,7 +4787,16 @@ class Handler(BaseHTTPRequestHandler):
         only asks Suunto's own device-info service what's available, nothing is downloaded
         or written to the watch here."""
         if demo_ambit():
-            self._send_json(200, demo_json("firmware.json"))
+            # The sample answer is the Peak's; name the sample watch actually picked in Testing
+            # mode (2026-10-22: a sample Ambit3 Sport read "Suunto Ambit 3 Peak" here).
+            info = demo_json("firmware.json")
+            sys.path.insert(0, str(TOOLS_DIR))
+            import row_bridge                                    # noqa: PLC0415
+            row = row_bridge.load_rows().get("variants", {}).get(DEMO["variant"], {})
+            if row.get("productName"):
+                info["model"] = DEMO["variant"]
+                info["product"] = row["productName"]
+            self._send_json(200, info)
             return
         code, out, err = run_tool("firmware_check.py", ["--json"])
         if code != 0:
