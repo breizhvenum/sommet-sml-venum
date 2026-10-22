@@ -7,8 +7,8 @@ import { useV3Theme } from '../theme/v3';
 
 // Apps launcher (2026-08-29, André). One 'Apps' nav entry that opens the two Ambit3 App-Zone
 // tools, mirroring the desktop's AppZonePage ("one card, two options"):
-//   - Workout Builder  -> IntervalsScreen (a structured interval workout, installed as a guided
-//     workout in the watch's WORKOUT menu).
+//   - Workout Builder  -> IntervalsScreen (an interval Suunto App for a data screen; the guided
+//     WORKOUT-menu workout is the Training Program's - the card links there too).
 //   - Browse Suunto Apps -> AppZoneScreen (import your SuuntoLink catalog + install pre-made apps
 //     onto a sport mode's data screen).
 // The separate 'Intervals' nav item was retired in favour of this. Workout Calendar stays its own
@@ -23,11 +23,22 @@ export default function AppsScreen({ navigation }: any) {
           <Icon name="chart" size={22} color={t.primary} />
           <Text style={s.title}>Workout Builder</Text>
         </View>
+        {/* Said what it does (2026-10-22 audit): this builder makes an interval Suunto App for a
+            sport mode's data screen, compiled by the user on the community site (no automated
+            compile on Android - see IntervalsService.ts). The native guided workout - WORKOUT
+            menu, target band + step text, like the desktop's Workout Builder - is the Training
+            Program's, so the card points there too. */}
         <Text style={s.desc}>
-          Build a structured interval workout and install it as a guided workout in the watch's
-          WORKOUT menu (target band + step text). Works offline except for the final compile step.
+          Build an interval timer as a Suunto App: you compile it on the community compiler site in
+          your browser, import the result here, and it goes onto a sport mode's data screen.
         </Text>
         <Button label="Open Workout Builder" onPress={() => navigation.navigate('Intervals')} />
+        <Text style={[s.desc, { marginTop: 14 }]}>
+          For a guided workout in the watch's WORKOUT menu (target band + step text, like the
+          desktop's Workout Builder), plan it on a day in the Training Program.
+        </Text>
+        <Button label="Open Training Program" variant="outline"
+          onPress={() => navigation.navigate('WorkoutCalendar', { watch: true })} />
       </Card>
 
       <View style={{ height: 12 }} />
