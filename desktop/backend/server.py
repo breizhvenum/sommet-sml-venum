@@ -276,6 +276,26 @@ def demo_ambit():
     return DEMO["enabled"] and DEMO["variant"] != "GarminEtrex"
 
 
+# Testing mode stands in for a watch, but these requests would write to - or read the whole of -
+# a REAL watch plugged in alongside the sample, despite Testing mode's promise that "nothing is
+# written to a real one" (2026-10-22 audit: watch settings, POIs, routes, installs, restore,
+# firmware flash all reached USB). Refused while it's on. The sport-mode edits that already
+# work on the sample (/api/customodes/displays, /mode, /multisport) are not in this list.
+DEMO_REFUSED_POSTS = {
+    "/api/settings", "/api/pois", "/api/routes", "/api/time/sync",
+    "/api/restore", "/api/backup", "/api/firmware/flash", "/api/sync/apply",
+    "/api/apps/install", "/api/apps/logging", "/api/apps/import", "/api/hrv/install",
+    "/api/workout/install", "/api/trainingprogram/install",
+    "/api/trainingprogram/sync-calendar", "/api/trainingprogram/planned-moves",
+    "/api/customodes/rename", "/api/customodes/field", "/api/customodes/interval-timer",
+    "/api/customodes/display-field",
+    "/api/legacy/sport-modes/write", "/api/legacy/sport-modes/write-presets",
+}
+DEMO_REFUSED_MSG = ("Testing mode is on, so this wasn't sent to a watch - the sample watch can't "
+                    "take it, and a real one is never touched. Turn Testing mode off in Settings "
+                    "to use your own watch.")
+
+
 def demo_custom_modes_path():
     """The demo region on disk, copied to a scratch file the first time it is needed so
     edits in Testing mode behave like edits on a watch - they persist for the session and
@@ -1344,6 +1364,10 @@ class Handler(BaseHTTPRequestHandler):
         # A write that changes what's ON the watch makes the cached reads stale - drop them so the
         # next page read reflects the change (André writes sport modes; a stale cache would show
         # the pre-write mode). Coarse by design: an extra re-read after a write is cheap safety.
+        if demo_ambit() and self.path.split("?", 1)[0] in DEMO_REFUSED_POSTS:
+            self._send_json(409, {"ok": False, "demo": True, "error": DEMO_REFUSED_MSG})
+            return
+
         if self._post_mutates_watch(self.path):
             read_cache_clear()
         # A route write also invalidates the PERSISTENT on-disk route-track cache (the in-memory
