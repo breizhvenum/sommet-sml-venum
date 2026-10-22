@@ -1,5 +1,5 @@
 import { decodeNavigation, WatchNavigation } from '../RouteReader';
-import { existingRoutesToKeep, mergeRoutes } from '../RouteMerge';
+import { existingRoutesToKeep, mergeRoutes, storedName } from '../RouteMerge';
 import type { NativeRoute } from '../../native/AmbitUsbModule';
 
 // Jest runs on Node; the app's tsconfig has no Node types (the app never touches Node).
@@ -57,6 +57,14 @@ describe('RouteMerge (Ambit3 send keeps existing routes)', () => {
   it('replaces a route of the same name', () => {
     const all = mergeRoutes(nav, { ...fresh, name: 'Dramont ' });
     expect(all.map(r => r.name)).toEqual(['Cap Roux', 'Dramont ']);
+  });
+
+  it('compares names as the watch stores them (15 UTF-8 bytes)', () => {
+    expect(storedName('Paris-Brest-Paris 2027')).toBe('Paris-Brest-Par');
+    // "î" and "ô" are 2 bytes each: 15 bytes end before the second "ô", never halfway through it.
+    expect(storedName('Entraînement côte')).toBe('Entraînement c');
+    const longNav: WatchNavigation = { ...nav, routes: [{ ...nav.routes[0], name: 'Paris-Brest-Par' }] };
+    expect(existingRoutesToKeep(longNav, 'Paris-Brest-Paris 2027', 0)).toHaveLength(0);
   });
 
   it('refuses past what the watch holds', () => {
