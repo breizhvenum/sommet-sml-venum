@@ -1,4 +1,5 @@
 #include "routeservice.h"
+#include "backenderror.h"
 
 #include <QFile>
 #include <QJsonArray>
@@ -103,7 +104,7 @@ void RouteService::refresh()
         setLoading(false);
 
         if (reply->error() != QNetworkReply::NoError) {
-            setLastError(reply->errorString());
+            setLastError(backendErrorText(reply));
             return;
         }
         const auto doc = QJsonDocument::fromJson(reply->readAll());
@@ -242,7 +243,7 @@ void RouteService::exportRoute(int index)
         } else {
             const QString err = obj.value(QStringLiteral("stderr")).toString();
             m_exportError = !err.isEmpty() ? err
-                : (reply->error() != QNetworkReply::NoError ? reply->errorString()
+                : (reply->error() != QNetworkReply::NoError ? backendErrorText(reply)
                                                               : QStringLiteral("Export failed"));
         }
         emit exportedGpxChanged();

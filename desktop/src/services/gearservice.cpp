@@ -1,4 +1,5 @@
 #include "gearservice.h"
+#include "backenderror.h"
 #include "apppaths.h"
 
 #include <cmath>
@@ -176,7 +177,7 @@ void GearService::send(const QByteArray &verb, const QString &path, const QJsonO
         reply->deleteLater();
         setLoading(false);
         if (reply->error() != QNetworkReply::NoError) {
-            setLastError(reply->errorString());
+            setLastError(backendErrorText(reply));
             return;
         }
         onOk(QJsonDocument::fromJson(reply->readAll()));

@@ -1,4 +1,5 @@
 #include "smartsensorservice.h"
+#include "backenderror.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -30,7 +31,7 @@ void SmartSensorService::refresh()
         m_ok = (reply->error() == QNetworkReply::NoError) && obj.value(QStringLiteral("ok")).toBool();
         if (!m_ok) {
             m_found = false;
-            m_errorText = obj.value(QStringLiteral("error")).toString(reply->errorString());
+            m_errorText = obj.value(QStringLiteral("error")).toString(backendErrorText(reply));
             emit stateChanged();
             return;
         }
@@ -65,7 +66,7 @@ void SmartSensorService::forget()
         const auto obj = doc.object();
         m_ok = (reply->error() == QNetworkReply::NoError) && obj.value(QStringLiteral("ok")).toBool();
         if (!m_ok) {
-            m_errorText = obj.value(QStringLiteral("error")).toString(reply->errorString());
+            m_errorText = obj.value(QStringLiteral("error")).toString(backendErrorText(reply));
             emit stateChanged();
             return;
         }

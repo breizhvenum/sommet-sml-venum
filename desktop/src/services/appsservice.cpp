@@ -1,4 +1,5 @@
 #include "appsservice.h"
+#include "backenderror.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -74,8 +75,8 @@ void AppsService::refreshLogging()
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/apps/logging: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/apps/logging: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString()));
             m_loggedApps.clear();
             emit loggedAppsChanged();
@@ -126,8 +127,8 @@ void AppsService::setLogging(int mode, int slot, bool on)
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             const QString err = reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/apps/logging: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/apps/logging: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString());
             setLastError(err);
             emit loggingToggled(false, err);
@@ -174,9 +175,9 @@ void AppsService::importCatalog(const QString &path)
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             const QString err = reply->error() != QNetworkReply::NoError
-                ? reply->errorString()
+                ? backendErrorText(reply)
                 : obj.value(QStringLiteral("error")).toString();
-            setLastError(QStringLiteral("POST /api/apps/import: %1").arg(err));
+            setLastError(QStringLiteral("%1").arg(err));
             emit catalogImported(false, 0, err);
             return;
         }
@@ -202,8 +203,8 @@ void AppsService::refreshInstalledApps()
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/apps: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/apps: %1").arg(obj.value(QStringLiteral("error"))
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(obj.value(QStringLiteral("error"))
                     .toString(obj.value(QStringLiteral("stderr")).toString())));
             emit installedAppsChanged();
             return;
@@ -257,8 +258,8 @@ void AppsService::searchCatalog(const QString &query, const QString &variant, in
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/apps/catalog: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/apps/catalog: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString()));
             m_searchResults.clear();
             emit searchResultsChanged();
@@ -316,8 +317,8 @@ void AppsService::install(int mode, int display, int field, int ruleId, bool con
                 result[QStringLiteral("ruleId")] = obj.value(QStringLiteral("ruleId")).toInt();
         } else {
             result[QStringLiteral("error")] = reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/apps/install: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/apps/install: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString());
             setLastError(result[QStringLiteral("error")].toString());
         }

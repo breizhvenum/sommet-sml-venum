@@ -1,4 +1,5 @@
 #include "weightservice.h"
+#include "backenderror.h"
 
 #include <QDate>
 #include <QJsonArray>
@@ -205,7 +206,7 @@ void WeightService::fetchIntervals(int days)
                     {QStringLiteral("source"), QStringLiteral("intervals")}});
             }
         } else if (m_lastError.isEmpty()) {
-            m_lastError = reply->errorString();
+            m_lastError = backendErrorText(reply);
         }
         oneSourceDone();
     });
@@ -234,7 +235,7 @@ void WeightService::fetchGarmin(int days)
                 m_lastError = o.value(QStringLiteral("error")).toString();
             }
         } else if (m_lastError.isEmpty()) {
-            m_lastError = reply->errorString();
+            m_lastError = backendErrorText(reply);
         }
         oneSourceDone();
     });

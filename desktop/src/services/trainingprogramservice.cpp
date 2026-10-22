@@ -1,4 +1,5 @@
 #include "trainingprogramservice.h"
+#include "backenderror.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -52,8 +53,8 @@ void TrainingProgramService::refreshPlans()
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/trainingprogram: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/trainingprogram: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                       .arg(obj.value(QStringLiteral("error")).toString()));
             emit plansChanged();
             return;
@@ -83,8 +84,8 @@ void TrainingProgramService::savePlan(const QVariantMap &plan)
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/trainingprogram: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/trainingprogram: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                       .arg(obj.value(QStringLiteral("error")).toString()));
             return;
         }
@@ -107,9 +108,9 @@ void TrainingProgramService::deletePlan(const QString &planId)
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError
             || !obj.value(QStringLiteral("ok")).toBool()) {
-            setLastError(QStringLiteral("POST /api/trainingprogram/delete: %1")
+            setLastError(QStringLiteral("%1")
                 .arg(reply->error() != QNetworkReply::NoError
-                    ? reply->errorString()
+                    ? backendErrorText(reply)
                     : obj.value(QStringLiteral("error")).toString()));
             return;
         }
@@ -152,8 +153,8 @@ void TrainingProgramService::install(const QVariantMap &plan, int mode, int disp
                 obj.value(QStringLiteral("installed")).toArray().toVariantList();
         if (!ok) {
             result[QStringLiteral("error")] = reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/trainingprogram/install: %1")
-                      .arg(reply->errorString())
+                ? QStringLiteral("%1")
+                      .arg(backendErrorText(reply))
                 : obj.value(QStringLiteral("error")).toString();
             setLastError(result[QStringLiteral("error")].toString());
         }
@@ -188,7 +189,7 @@ void TrainingProgramService::importFromIntervals(const QString &start, const QSt
             && obj.value(QStringLiteral("ok")).toBool();
         if (!ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/intervals/workouts: %1").arg(reply->errorString())
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
                 : obj.value(QStringLiteral("error")).toString());
             return;
         }
@@ -237,8 +238,8 @@ void TrainingProgramService::syncCalendar(const QVariantList &entries, bool writ
         }
         if (!ok) {
             result[QStringLiteral("error")] = reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/trainingprogram/sync-calendar: %1")
-                      .arg(reply->errorString())
+                ? QStringLiteral("%1")
+                      .arg(backendErrorText(reply))
                 : obj.value(QStringLiteral("error")).toString();
             setLastError(result[QStringLiteral("error")].toString());
         }
@@ -286,8 +287,8 @@ void TrainingProgramService::writePlannedMoves(const QVariantList &entries, bool
         } else {
             result[QStringLiteral("nativeCardError")] =
                 reply->error() != QNetworkReply::NoError
-                    ? QStringLiteral("POST /api/trainingprogram/planned-moves: %1")
-                          .arg(reply->errorString())
+                    ? QStringLiteral("%1")
+                          .arg(backendErrorText(reply))
                     : obj.value(QStringLiteral("error")).toString();
         }
         m_lastInstallResult = result;

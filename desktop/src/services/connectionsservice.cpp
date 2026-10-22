@@ -1,4 +1,5 @@
 #include "connectionsservice.h"
+#include "backenderror.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -268,7 +269,7 @@ void ConnectionsService::exchangeStravaCode(const QString &clientId, const QStri
 
         if (reply->error() != QNetworkReply::NoError) {
             setStravaError(
-                QStringLiteral("Strava token exchange failed: %1").arg(reply->errorString()));
+                QStringLiteral("Strava token exchange failed: %1").arg(backendErrorText(reply)));
             return;
         }
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
@@ -554,7 +555,7 @@ void ConnectionsService::exchangeCloudCode(const QString &provider, const QStrin
 
         if (reply->error() != QNetworkReply::NoError) {
             setCloudError(provider,
-                          QStringLiteral("Token exchange failed: %1").arg(reply->errorString()));
+                          QStringLiteral("Token exchange failed: %1").arg(backendErrorText(reply)));
             return;
         }
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();

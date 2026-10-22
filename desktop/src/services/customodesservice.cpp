@@ -1,4 +1,5 @@
 #include "customodesservice.h"
+#include "backenderror.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -53,8 +54,8 @@ void CustomModesService::refresh()
 
         if (!m_ok) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/customodes: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/customodes: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                     .arg(obj.value(QStringLiteral("error")).toString(
                         obj.value(QStringLiteral("stderr")).toString())));
             emit modesChanged();
@@ -324,7 +325,7 @@ void CustomModesService::postManage(const QString &path, const QJsonObject &body
         const QString message = writeOk
             ? QString()
             : (reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST %1: %2").arg(path, reply->errorString())
+                ? QStringLiteral("POST %1: %2").arg(path, backendErrorText(reply))
                 : obj.value(QStringLiteral("error")).toString(
                     QStringLiteral("the write was not confirmed")));
         emit manageResult(writeOk, message);
@@ -405,8 +406,8 @@ void CustomModesService::renameMode(const QString &fromName, const QString &toNa
             && obj.value(QStringLiteral("ok")).toBool();
         if (!writeOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/customodes/rename: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/customodes/rename: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString(QStringLiteral("write not confirmed"))));
         } else {
             setLastError(QString());
@@ -437,8 +438,8 @@ void CustomModesService::writeField(const QString &mode, const QVariantMap &fiel
             && obj.value(QStringLiteral("ok")).toBool();
         if (!writeOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/customodes/field: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/customodes/field: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString(QStringLiteral("write not confirmed"))));
         } else {
             setLastError(QString());
@@ -476,8 +477,8 @@ void CustomModesService::setIntervalTimer(const QString &mode, bool enabled, con
             && obj.value(QStringLiteral("ok")).toBool();
         if (!writeOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/customodes/interval-timer: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/customodes/interval-timer: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString(QStringLiteral("write not confirmed"))));
         } else {
             setLastError(QString());
@@ -510,8 +511,8 @@ void CustomModesService::applyDisplayEdits(const QString &mode, const QVariantLi
             && obj.value(QStringLiteral("ok")).toBool();
         if (!writeOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/customodes/displays: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/customodes/displays: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString(QStringLiteral("write not confirmed"))));
         } else {
             setLastError(QString());
@@ -546,8 +547,8 @@ void CustomModesService::writeDisplayField(const QString &mode, int display, int
             && obj.value(QStringLiteral("ok")).toBool();
         if (!writeOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/customodes/display-field: %1").arg(reply->errorString())
-                : QStringLiteral("POST /api/customodes/display-field: %1").arg(
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1").arg(
                     obj.value(QStringLiteral("error")).toString(QStringLiteral("write not confirmed"))));
         } else {
             setLastError(QString());

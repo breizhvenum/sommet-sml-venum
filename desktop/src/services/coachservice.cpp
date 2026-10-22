@@ -1,4 +1,5 @@
 #include "coachservice.h"
+#include "backenderror.h"
 #include "apppaths.h"
 
 #include <QDateTime>
@@ -138,7 +139,7 @@ void CoachService::fetchIntervalsReadiness()
             // Offline, bad key, or no load processed yet - fall back rather than show nothing.
             setLastError(reply->error() == QNetworkReply::NoError
                              ? QString()
-                             : QStringLiteral("intervals.icu: %1 - using the local estimate").arg(reply->errorString()));
+                             : QStringLiteral("intervals.icu: %1 - using the local estimate").arg(backendErrorText(reply)));
             computeLocalReadiness();
             return;
         }
@@ -438,7 +439,7 @@ void CoachService::refreshCatalogueLive(std::function<void()> onDone)
     connect(reply, &QNetworkReply::finished, this, [this, reply, onDone]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
-            setLastError(QStringLiteral("live catalogue fetch failed: %1").arg(reply->errorString()));
+            setLastError(QStringLiteral("live catalogue fetch failed: %1").arg(backendErrorText(reply)));
             onDone();
             return;
         }
@@ -567,10 +568,10 @@ void CoachService::replyClaude(const QString &userText)
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
-            setLastError(QStringLiteral("Claude API error: %1").arg(reply->errorString()));
+            setLastError(QStringLiteral("Claude API error: %1").arg(backendErrorText(reply)));
             appendBubble(QStringLiteral("coach"),
                 QStringLiteral("(couldn't reach Claude: %1 — falling back, try again in a moment)")
-                    .arg(reply->errorString()));
+                    .arg(backendErrorText(reply)));
             setSending(false);
             return;
         }

@@ -1,4 +1,5 @@
 #include "backupservice.h"
+#include "backenderror.h"
 
 #include <QDateTime>
 #include <QJsonArray>
@@ -35,7 +36,7 @@ void BackupService::refresh()
         reply->deleteLater();
         setLoading(false);
         if (reply->error() != QNetworkReply::NoError) {
-            m_lastActionText = reply->errorString();
+            m_lastActionText = backendErrorText(reply);
             m_lastActionOk = false;
             emit lastActionChanged();
             return;

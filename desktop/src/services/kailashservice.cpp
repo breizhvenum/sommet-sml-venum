@@ -1,4 +1,5 @@
 #include "kailashservice.h"
+#include "backenderror.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -54,8 +55,8 @@ void KailashService::refreshHistory()
 
         if (!m_historyOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/kailash/history: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/kailash/history: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                     .arg(obj.value(QStringLiteral("error")).toString(
                         obj.value(QStringLiteral("stderr")).toString())));
             emit historyChanged();
@@ -122,8 +123,8 @@ void KailashService::refreshTrackLog()
 
         if (!m_trackLogOk) {
             setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/kailash/tracklog: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/kailash/tracklog: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                     .arg(obj.value(QStringLiteral("error")).toString(
                         obj.value(QStringLiteral("stderr")).toString())));
             emit trackLogChanged();

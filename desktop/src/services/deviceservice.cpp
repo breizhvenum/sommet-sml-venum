@@ -1,4 +1,5 @@
 #include "deviceservice.h"
+#include "backenderror.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -180,7 +181,7 @@ void DeviceService::refresh()
         if (!reachable) {
             setLoading(false);
             setLastError(QStringLiteral("Backend not running"),
-                QStringLiteral("GET /api/health: %1").arg(reply->errorString()));
+                QStringLiteral("%1").arg(backendErrorText(reply)));
             m_pollTimer.start(kPollIntervalMs);
             return;
         }
@@ -245,8 +246,8 @@ void DeviceService::fetchDeviceInfo()
             }
         } else {
             const QString technical = reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/device: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/device: %1")
+                ? QStringLiteral("%1").arg(backendErrorText(reply))
+                : QStringLiteral("%1")
                     .arg(obj.value(QStringLiteral("stderr")).toString());
             setLastError(QStringLiteral("Watch not connected"), technical);
             // Disconnected: the next connection is a new one and syncs again.
@@ -431,7 +432,7 @@ void DeviceService::updateGpsOrbit()
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError && obj.isEmpty()) {
             m_gpsOrbitStatusText =
-                QStringLiteral("Couldn't reach the backend: %1").arg(reply->errorString());
+                QStringLiteral("Couldn't reach the backend: %1").arg(backendErrorText(reply));
             emit gpsOrbitChanged();
             return;
         }
@@ -514,7 +515,7 @@ void DeviceService::syncTime(const QString &timezone)
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError && obj.isEmpty()) {
             m_timeSyncStatusText =
-                QStringLiteral("Couldn't reach the backend: %1").arg(reply->errorString());
+                QStringLiteral("Couldn't reach the backend: %1").arg(backendErrorText(reply));
             emit timeSyncChanged();
             return;
         }
@@ -586,7 +587,7 @@ void DeviceService::connectBle(bool forget)
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError || !obj.value(QStringLiteral("ok")).toBool()) {
             m_bleAttempting = false;
-            m_bleError = obj.value(QStringLiteral("error")).toString(reply->errorString());
+            m_bleError = obj.value(QStringLiteral("error")).toString(backendErrorText(reply));
             emit bleStateChanged();
             return;
         }
@@ -606,7 +607,7 @@ void DeviceService::pollBleStatus()
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError) {
             m_bleAttempting = false;
-            m_bleError = reply->errorString();
+            m_bleError = backendErrorText(reply);
             emit bleStateChanged();
             return;
         }
@@ -695,7 +696,7 @@ void DeviceService::forgetBle()
         reply->deleteLater();
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError || !obj.value(QStringLiteral("ok")).toBool()) {
-            m_bleError = obj.value(QStringLiteral("error")).toString(reply->errorString());
+            m_bleError = obj.value(QStringLiteral("error")).toString(backendErrorText(reply));
             emit bleStateChanged();
         }
     });
@@ -712,7 +713,7 @@ void DeviceService::submitBlePasskey(int passkey)
         reply->deleteLater();
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError || !obj.value(QStringLiteral("ok")).toBool()) {
-            m_bleError = obj.value(QStringLiteral("error")).toString(reply->errorString());
+            m_bleError = obj.value(QStringLiteral("error")).toString(backendErrorText(reply));
             emit bleStateChanged();
         }
         // Success just clears the pending prompt on the next pollBleStatus() tick - no

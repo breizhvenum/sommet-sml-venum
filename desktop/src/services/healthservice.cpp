@@ -1,4 +1,5 @@
 #include "healthservice.h"
+#include "backenderror.h"
 #include "sleepscore.h"
 
 #include <QDate>
@@ -294,7 +295,7 @@ void HealthService::fetchIntervals(int days)
                         {QStringLiteral("value"), score.toDouble()}});
             }
         } else if (m_lastError.isEmpty()) {
-            m_lastError = reply->errorString();
+            m_lastError = backendErrorText(reply);
         }
         oneSourceDone();
     });
@@ -339,7 +340,7 @@ void HealthService::fetchGarmin(int days)
                 m_lastError = o.value(QStringLiteral("error")).toString();
             }
         } else if (m_lastError.isEmpty()) {
-            m_lastError = reply->errorString();
+            m_lastError = backendErrorText(reply);
         }
         oneSourceDone();
     });

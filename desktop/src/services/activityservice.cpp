@@ -1,4 +1,5 @@
 #include "activityservice.h"
+#include "backenderror.h"
 #include "sport_names_generated.h"
 #include "apppaths.h"
 
@@ -412,7 +413,7 @@ void ActivityService::requestActivities(int knownCount, bool alreadyRetried)
             // re-parse on a revisit while the watch is unreachable - André, 2026-09-20).
             m_ok = m_activities.isEmpty() ? dbLoadAll() : true;
             if (!m_ok)
-                setLastError(reply->errorString());
+                setLastError(backendErrorText(reply));
             emit activitiesChanged();
             return;
         }
@@ -952,7 +953,7 @@ void ActivityService::fetchIntervalsFitThen(int idx, const QString &device,
         const QString fit = o.value(QStringLiteral("fit_base64")).toString();
         if (!o.value(QStringLiteral("ok")).toBool() || fit.isEmpty()) {
             const QString err = o.value(QStringLiteral("error")).toString();
-            done(QString(), err.isEmpty() ? reply->errorString() : err);
+            done(QString(), err.isEmpty() ? backendErrorText(reply) : err);
             return;
         }
         // Keep it, so the next export (and an intervals-off day) doesn't need the network.
@@ -1043,7 +1044,7 @@ void ActivityService::decodeStreams(int idx, const QString &device, const QStrin
         if (!o.value(QStringLiteral("ok")).toBool()) {
             const QString err = o.value(QStringLiteral("error")).toString();
             emit streamsReady(idx, device, QVariantMap(),
-                              err.isEmpty() ? reply->errorString() : err);
+                              err.isEmpty() ? backendErrorText(reply) : err);
             return;
         }
         const QVariantMap streams = o.toVariantMap();
@@ -1333,7 +1334,7 @@ void ActivityService::deleteActivity(const QVariantMap &activity)
                 if (reply->error() != QNetworkReply::NoError
                         && status != 200 && status != 204 && status != 404)
                     setLastError(tr("Removed here, but deleting it on intervals.icu failed: %1")
-                                 .arg(reply->errorString()));
+                                 .arg(backendErrorText(reply)));
                 reply->deleteLater();
             });
         }
@@ -1510,8 +1511,8 @@ void ActivityService::importFromIntervals(int oldestDays)
         setLoading(false);
         if (reply->error() != QNetworkReply::NoError) {
             // importError has no listener on most pages, so a failed sync used to leave no trace.
-            qWarning().noquote() << "[intervals] activity import failed:" << reply->errorString();
-            emit importError(reply->errorString());
+            qWarning().noquote() << "[intervals] activity import failed:" << backendErrorText(reply);
+            emit importError(backendErrorText(reply));
             return;
         }
         const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
@@ -1746,7 +1747,7 @@ void ActivityService::importFromGarmin(int days)
         reply->deleteLater();
         setLoading(false);
         if (reply->error() != QNetworkReply::NoError) {
-            emit importError(reply->errorString());
+            emit importError(backendErrorText(reply));
             return;
         }
         const auto o = QJsonDocument::fromJson(reply->readAll()).object();
@@ -2582,7 +2583,7 @@ void ActivityService::uploadFileToIntervals(int idx, const QByteArray &data,
             if (idx < 0)
                 emit exportError(status == 409
                     ? tr("intervals.icu already has this activity (duplicate).")
-                    : reply->errorString());
+                    : backendErrorText(reply));
         }
         if (--m_exportPending <= 0) {
             setLoading(false);
@@ -2651,9 +2652,9 @@ void ActivityService::sommetSyncTest(const QString &url, const QString &token)
         else if (status == 401)
             emit sommetSyncTestResult(false, tr("The token was rejected."));
         else
-            emit sommetSyncTestResult(false, reply->errorString().isEmpty()
+            emit sommetSyncTestResult(false, backendErrorText(reply).isEmpty()
                 ? tr("Couldn't reach the server (HTTP %1).").arg(status)
-                : reply->errorString());
+                : backendErrorText(reply));
     });
 }
 
@@ -2686,7 +2687,7 @@ void ActivityService::sommetPull()
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             m_sommetBusy = false;
-            emit sommetSyncError(reply->errorString());
+            emit sommetSyncError(backendErrorText(reply));
             return;
         }
         const QJsonObject root = QJsonDocument::fromJson(reply->readAll()).object();
@@ -2955,7 +2956,7 @@ void ActivityService::sommetPushAll()
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError) {
             m_sommetBusy = false;
-            emit sommetSyncError(reply->errorString());
+            emit sommetSyncError(backendErrorText(reply));
             return;
         }
         sommetPushNextBlob();

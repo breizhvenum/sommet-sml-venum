@@ -1,4 +1,5 @@
 #include "poiservice.h"
+#include "backenderror.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -69,7 +70,7 @@ void PoiService::refresh()
 
         if (reply->error() != QNetworkReply::NoError) {
             m_ok = false;
-            m_lastError = reply->errorString();
+            m_lastError = backendErrorText(reply);
             emit lastErrorChanged();
             emit dataChanged();
             return;
