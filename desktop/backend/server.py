@@ -284,7 +284,7 @@ def demo_ambit():
 DEMO_REFUSED_POSTS = {
     "/api/settings", "/api/pois", "/api/routes", "/api/time/sync",
     "/api/restore", "/api/backup", "/api/firmware/flash", "/api/sync/apply",
-    "/api/apps/install", "/api/apps/logging", "/api/apps/import", "/api/hrv/install",
+    "/api/apps/install", "/api/apps/logging", "/api/hrv/install",
     "/api/workout/install", "/api/trainingprogram/install",
     "/api/trainingprogram/sync-calendar", "/api/trainingprogram/planned-moves",
     "/api/customodes/rename", "/api/customodes/field", "/api/customodes/interval-timer",
