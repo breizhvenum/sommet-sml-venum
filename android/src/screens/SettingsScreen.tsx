@@ -42,6 +42,7 @@ import {
   isCatalogAvailable, hasCatalog, importCatalog, getEntries, invalidateEntries,
 } from '../services/CatalogService';
 import { useWeatherLocation, locateByIp, setManualLocation } from '../services/WeatherService';
+import { isMageneAvailable } from '../services/MageneBle';
 import { isEmberUnlocked, setEmberUnlocked } from '../services/EmberUnlock';
 import { getEmberSyncCfg, setEmberSyncCfg } from '../services/EmberSync';
 import { getUsdaApiKey, setUsdaApiKey } from '../services/EmberFood';
@@ -869,6 +870,26 @@ export default function SettingsScreen() {
             onOpen={() => navigation.navigate(f.screen)}
           />
         ))}
+        {/* Devices (André, 2026-10-22; desktop parity): one switch per Bluetooth bike computer. Off:
+            no card on Home, not in the pairing list, not offered by Routes - still remembered.
+            Plugged-in devices always show. On Android that's the Magene (the desktop also has the
+            Bryton Aero 60 and the Wahoo ELEMNT over Bluetooth). */}
+        {isMageneAvailable() && (
+          <>
+            <View style={{ marginTop: 10 }}>
+              <Text style={[styles.connRowText, { fontWeight: '700' }]}>Devices</Text>
+              <Text style={{ fontSize: 12, color: theme.mutedText, marginTop: 2 }}>
+                A card on Home and a choice in the Bluetooth pairing list. Plugged-in devices always show.
+              </Text>
+            </View>
+            <SidebarSwitch
+              title="Magene C406"
+              description="Bike GPS over Bluetooth."
+              value={features.magene}
+              onValueChange={v => setFeature('magene', v)}
+            />
+          </>
+        )}
         <Text style={styles.sectionDesc}>{t.experimentalToggleDesc}</Text>
         {anyEnabled && (
           <Text style={[styles.sectionDesc, { color: theme.warning, marginTop: 10 }]}>{t.experimentalWarningBanner}</Text>

@@ -325,6 +325,9 @@ export default function HomeScreen() {
   const [mageneMsg, setMageneMsg] = useState('');
   const [mageneSync, setMageneSync] = useState<MageneSyncState | null>(null);
   useEffect(() => { getKnownMagene().then(setMagene); }, []);
+  // The Magene as Home shows it: only while its switch is on (Settings > Show in the sidebar >
+  // Devices, 2026-10-22). `magene` keeps what is remembered either way.
+  const mageneOn = expFeatures.magene ? magene : null;
 
   const applyMageneProfile = useCallback(async (m: KnownMagene, changes: Partial<MageneProfile>) => {
     try {
@@ -975,7 +978,7 @@ export default function HomeScreen() {
   const showWatchCalendar = !!(expFeatures.workoutCalendar && connected && deviceType === 'ambit'
     && !isKailash(ambitInfo) && !isTraverse(ambitInfo) && !isAmbit12(ambitInfo));
   // Which devices the Workout Calendar may create for / send to (its long-press menu).
-  const calendarDevices = { watch: showWatchCalendar, bryton: deviceType === 'bryton', magene: magene?.address ?? null };
+  const calendarDevices = { watch: showWatchCalendar, bryton: deviceType === 'bryton', magene: mageneOn?.address ?? null };
   const navItems: NavShellItem[] = [
     { id: 'home', label: t.homeNavHome, icon: 'mountain', onPress: () => {} },
     { id: 'activities', label: t.viewActivities, icon: 'list', onPress: () => navigation.navigate('LogList'), group: 'training' },
@@ -1047,13 +1050,13 @@ export default function HomeScreen() {
     ...(deviceType === 'bryton'
       ? [{ id: 'brytonProfile', label: 'GPS settings', icon: 'settings' as const, onPress: () => navigation.navigate('Bryton'), group: 'watch' as const }]
       : []),
-    ...(magene
+    ...(mageneOn
       ? [{ id: 'magene', label: deviceType === 'bryton' ? 'Magene settings' : 'GPS settings', icon: 'settings' as const, onPress: () => navigation.navigate('Magene'), group: 'watch' as const }]
       : []),
     // Bike computers plan workouts in the same Workout Calendar as the watch (desktop parity:
     // one Training Program screen for every device, long-press a plan row to send). Shown here
     // only when the experimental watch entry above isn't already there.
-    ...((deviceType === 'bryton' || magene) && !showWatchCalendar
+    ...((deviceType === 'bryton' || mageneOn) && !showWatchCalendar
       ? [{ id: 'bikeWorkouts', label: t.experimentalWorkoutCalendar, icon: 'chart' as const, onPress: () => navigation.navigate('WorkoutCalendar', calendarDevices), group: 'watch' as const }]
       : []),
     // Weight/Health (2026-08-26, desktop parity): both read intervals.icu's wellness feed, so
@@ -1255,7 +1258,7 @@ export default function HomeScreen() {
           </View>
           {/* Bluetooth is a separate transport from the USB Bryton (André, 2026-09-24): you can
               still pair an Ambit watch over BLE while the head unit is plugged in. */}
-          {(!bleConnected || !magene) && (
+          {(!bleConnected || !mageneOn) && (
             <View style={styles.heroButtons}>
               <Button label={mageneBusy === 'scan' ? 'Searching…' : t.homeBleConnectBtn} onPress={() => setPairMenuOpen(true)}
                 disabled={mageneBusy === 'scan'} variant="text" grow={false} />
@@ -1270,13 +1273,13 @@ export default function HomeScreen() {
         items={[
           { label: 'Suunto watch', onPress: () => handleBleConnectRef.current() },
           { label: magene ? 'Magene C406 (search again)' : 'Magene C406', onPress: findMagene,
-            visible: isMageneAvailable(), disabled: !!mageneBusy },
+            visible: isMageneAvailable() && expFeatures.magene, disabled: !!mageneBusy },
         ]}
       />
-      {magene && (
+      {mageneOn && (
         <Card style={[roomy ? styles.deviceCardRoomy : styles.deviceCardCol, styles.deviceCardInner]}>
           <Icon name="magene" size={36} color={theme.text} />
-          <Text style={[styles.deviceName, v3TextStyle]}>{magene.name || 'Magene C406'}</Text>
+          <Text style={[styles.deviceName, v3TextStyle]}>{mageneOn.name || 'Magene C406'}</Text>
           <Text style={[styles.deviceSub, v3MutedStyle]}>
             {mageneStatus
               ? [mageneStatus.battery != null ? `Battery ${mageneStatus.battery}%` : null,
@@ -1294,7 +1297,7 @@ export default function HomeScreen() {
           <View style={styles.heroButtons}>
             <Button label={mageneBusy === 'rides' ? 'Syncing…' : 'Sync rides'} icon="sync" onPress={syncMagene}
               disabled={!!mageneBusy} grow={false} />
-            <Button label={mageneBusy === 'status' ? 'Connecting…' : 'Connect'} onPress={() => refreshMagene(magene)}
+            <Button label={mageneBusy === 'status' ? 'Connecting…' : 'Connect'} onPress={() => refreshMagene(mageneOn)}
               disabled={!!mageneBusy} variant="text" grow={false} />
             <Button label="Forget" onPress={forgetMagene} disabled={!!mageneBusy} variant="text" grow={false} />
           </View>

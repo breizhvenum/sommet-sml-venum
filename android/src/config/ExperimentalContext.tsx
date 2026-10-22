@@ -11,17 +11,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // appZone + coach added 2026-10-22 (desktop parity: the desktop has a sidebar switch for each,
 // both on by default, so turning them into switches here changes nothing until one is turned off).
-export type ExpFeature = 'intervals' | 'appZone' | 'smartSensor' | 'coach' | 'workoutCalendar';
-export const EXP_FEATURES: ExpFeature[] = ['intervals', 'appZone', 'smartSensor', 'coach', 'workoutCalendar'];
+// magene added 2026-10-22: Settings > Show in the sidebar > Devices (desktop parity, BikeDevices.
+// mageneShown). Off: no Magene card on Home, not in the pairing list, not offered by Routes or the
+// Workout Calendar - still remembered.
+export type ExpFeature = 'intervals' | 'appZone' | 'smartSensor' | 'coach' | 'workoutCalendar' | 'magene';
+export const EXP_FEATURES: ExpFeature[] = ['intervals', 'appZone', 'smartSensor', 'coach', 'workoutCalendar', 'magene'];
 const storageKey = (f: ExpFeature) => `ambitapp:experimental:${f}`;
 
 type FeatureFlags = Record<ExpFeature, boolean>;
-const ALL_OFF: FeatureFlags = { intervals: false, appZone: false, smartSensor: false, coach: false, workoutCalendar: false };
+const ALL_OFF: FeatureFlags = { intervals: false, appZone: false, smartSensor: false, coach: false, workoutCalendar: false, magene: false };
 // UX fix #1 (André, 2026-09-02): default these ON so owners find the features they bought the
 // watch for (structured workouts / App Zone via `intervals`, the HR belt via `smartSensor`, the
 // workout calendar). Desktop parity. A user who explicitly turned one OFF (stored '0') is still
 // respected below. (No T6/GPS-Pod flags here: T6/X6 is desktop-only, GPS Track Pod isn't on Android.)
-const DEFAULTS: FeatureFlags = { intervals: true, appZone: true, smartSensor: true, coach: true, workoutCalendar: true };
+const DEFAULTS: FeatureFlags = { intervals: true, appZone: true, smartSensor: true, coach: true, workoutCalendar: true, magene: false };
 
 interface ExperimentalContextValue {
   features: FeatureFlags;
@@ -47,6 +50,8 @@ export function ExperimentalProvider({ children }: { children: React.ReactNode }
           const v = await AsyncStorage.getItem(storageKey(f));
           if (v === '1') loaded[f] = true;
           else if (v === '0') loaded[f] = false;
+          // Never set: the Magene switch starts on if one is already paired (MageneStore's key).
+          else if (f === 'magene') loaded[f] = !!(await AsyncStorage.getItem('mageneDevice'));
         } catch { /* ignore */ }
       }
       // One-time migration from the old single master toggle: if it was on, enable all three.

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useExperimental } from '../config/ExperimentalContext';
 import { View, Text, StyleSheet, Alert, ScrollView, TouchableOpacity, Modal, Pressable, Linking, useWindowDimensions, TextInput } from 'react-native';
 import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import {
@@ -118,7 +119,10 @@ export default function RouteScreen() {
   }, [params.send]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Bike computers around (desktop RoutesPage parity: "Send to Bryton" / "Send to Magene").
   const [brytonPlugged, setBrytonPlugged] = useState(false);
-  const [magene, setMagene] = useState<KnownMagene | null>(null);
+  const [knownMagene, setMagene] = useState<KnownMagene | null>(null);
+  // Only while its switch is on (Settings > Show in the sidebar > Devices, 2026-10-22).
+  const { features: expFeatures } = useExperimental();
+  const magene = expFeatures.magene ? knownMagene : null;
   const [bikeBusy, setBikeBusy] = useState('');
   const [bikeMsg, setBikeMsg] = useState('');
   useFocusEffect(useCallback(() => {
