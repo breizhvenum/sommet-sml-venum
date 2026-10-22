@@ -62,7 +62,8 @@ PageFlickable {
     readonly property bool brytonOnUsb: mtpBikeComputers.some(b => b.kind === "bryton")
     // Its unsynced rides, from the card's hello (null = not read yet this session).
     property var brytonBleFiles: null
-    readonly property var brytonBleDevices: brytonBleMemory.address.length > 0 && !brytonOnUsb
+    // Only while its switch is on (Settings > Show in the sidebar > Devices, 2026-10-22).
+    readonly property var brytonBleDevices: BikeDevices.brytonBleShown && brytonBleMemory.address.length > 0 && !brytonOnUsb
         ? [{ "kind": "brytonble", "name": brytonBleMemory.name || "AERO60", "address": brytonBleMemory.address,
              "activityCount": brytonBleFiles ? brytonBleFiles.length : -1, "files": brytonBleFiles }] : []
     onBrytonBleDevicesChanged: BikeDevices.brytonBle = brytonBleDevices.length > 0 ? brytonBleDevices[0] : null
@@ -205,11 +206,15 @@ PageFlickable {
     // cable wins while it's plugged in.
     Settings { id: wahooBleMemory; category: "wahoo"; property bool seen: false }
     readonly property bool wahooOnUsb: mtpBikeComputers.some(b => b.kind === "wahoo")
-    onWahooOnUsbChanged: if (wahooOnUsb) wahooBleMemory.seen = true
+    onWahooOnUsbChanged: if (wahooOnUsb) {
+        // The first time Sommet sees it, its switch in Settings > Devices turns on (2026-10-22).
+        if (!wahooBleMemory.seen) BikeDevices.wahooShown = true
+        wahooBleMemory.seen = true
+    }
     property var wahooBleFiles: null           // its ride list, once read this session
     property bool wahooBleOk: false            // the last Bluetooth read worked
     property bool wahooBleTried: false         // ... and there was one this session
-    readonly property var wahooBleDevices: wahooBleMemory.seen && !wahooOnUsb
+    readonly property var wahooBleDevices: BikeDevices.wahooShown && wahooBleMemory.seen && !wahooOnUsb
         ? [{ "kind": "wahoo", "transport": "ble", "name": qsTr("Wahoo ELEMNT (Bluetooth)"), "address": "ELEMNT",
              "activityCount": wahooBleFiles ? wahooBleFiles.length : -1, "files": wahooBleFiles }] : []
     function syncWahooBle() {
@@ -236,11 +241,14 @@ PageFlickable {
         xhr.open("GET", "http://127.0.0.1:8766/api/wahooble/rides");
         xhr.send();
     }
+    // The Magene as the page shows it: only while its switch is on (Settings > Show in the
+    // sidebar > Devices, 2026-10-22). mageneDevices keeps what is remembered either way.
+    readonly property var mageneShownDevices: BikeDevices.mageneShown ? mageneDevices : []
     // Shared with the Training Program (its "Send to / Create for Magene" menu entries).
-    onMageneDevicesChanged: BikeDevices.magene = mageneDevices.length > 0 ? mageneDevices[0] : null
+    onMageneShownDevicesChanged: BikeDevices.magene = mageneShownDevices.length > 0 ? mageneShownDevices[0] : null
     // The unified list the whole page reads: plugged (MTP) bike computers plus any Magene found
     // over Bluetooth. One "active device across watches and bike computers" (André, 2026-09-04).
-    readonly property var bikeComputers: mtpBikeComputers.concat(mageneDevices).concat(brytonBleDevices)
+    readonly property var bikeComputers: mtpBikeComputers.concat(mageneShownDevices).concat(brytonBleDevices)
                                                          .concat(wahooBleDevices)
     // The remembered Magene only counts as connected while it actually answers (its last
     // connection worked). Asleep/off, it stays selectable but reads "asleep" and isn't counted
@@ -255,6 +263,13 @@ PageFlickable {
             mageneMemory.address = ""; mageneMemory.name = ""
             root.mageneDevices = []
             BikeDevices.mageneAnswered(false)
+        }
+        if (dev.kind === "wahoo") {
+            if (DeviceService.activeBikeKind === "wahoo" && !root.wahooOnUsb) DeviceService.selectBikeComputer("")
+            wahooBleMemory.seen = false
+            root.wahooBleFiles = null; root.wahooBleOk = false; root.wahooBleTried = false
+            forgetDialog.load()
+            return
         }
         if (dev.kind === "brytonble") {
             if (DeviceService.activeBikeKind === "brytonble") DeviceService.selectBikeComputer("")
@@ -1109,7 +1124,8 @@ PageFlickable {
                     // Magene is found, even with the Bryton selected (André, 2026-09-25: "I don't
                     // have the pair button"). Forget-watch hides for bike computers (its own
                     // visible rule below: "that is ambit stuff").
-                    visible: DeviceService.bleExperimentEnabled && !HomeViewModel.isGarmin
+                    visible: (DeviceService.bleExperimentEnabled || BikeDevices.mageneShown
+                              || BikeDevices.brytonBleShown) && !HomeViewModel.isGarmin
                              && !DeviceService.demoMode
 
                     // The Pair / Forget buttons moved to the device strip below the card (André,
@@ -1126,6 +1142,8 @@ PageFlickable {
                         contentItem: Column {
                             spacing: Theme.spacingSmall
                             Repeater {
+                                // Only what is switched on: the watch with Experimental features >
+                                // Bluetooth, each bike computer with its own switch (2026-10-22).
                                 model: [
                                     { kind: "watch", label: qsTr("Suunto watch"),
                                       hint: DeviceService.bleHandshakeDone
@@ -1141,7 +1159,9 @@ PageFlickable {
                                     { kind: "brytonble", label: qsTr("Bryton Aero 60"),
                                       hint: qsTr("Turn it on, and turn off your phone's Bluetooth"),
                                       enabled: !root.brytonScanning }
-                                ]
+                                ].filter(c => c.kind === "watch" ? DeviceService.bleExperimentEnabled
+                                            : c.kind === "c406" ? BikeDevices.mageneShown
+                                            : BikeDevices.brytonBleShown)
                                 delegate: Rectangle {
                                     required property var modelData
                                     width: 388; height: 64
@@ -1519,7 +1539,11 @@ PageFlickable {
             // Forget buttons live here - André, 2026-09-26), even with one device or none.
             readonly property int deviceCount: DeviceService.connectedWatches.length
                                                + root.bikeComputers.length + (GarminService.connected ? 1 : 0)
-            readonly property bool bleButtons: DeviceService.bleExperimentEnabled && !DeviceService.demoMode
+            // ... any Bluetooth kind that is switched on: the watch (Experimental features >
+            // Bluetooth) or a bike computer (Show in the sidebar > Devices, 2026-10-22).
+            readonly property bool canPair: DeviceService.bleExperimentEnabled || BikeDevices.mageneShown
+                                            || BikeDevices.brytonBleShown
+            readonly property bool bleButtons: (canPair || BikeDevices.wahooShown) && !DeviceService.demoMode
             visible: deviceCount > 1 || bleButtons
 
             Column {
@@ -1596,6 +1620,7 @@ PageFlickable {
                     visible: deviceStrip.bleButtons
                     spacing: Theme.spacingSmall
                     RoundedButton {
+                        visible: deviceStrip.canPair
                         // Live feedback of whichever flow is running (the watch's passkey wait
                         // can legitimately run long - see DeviceService::connectBle()).
                         text: DeviceService.bleAttempting
@@ -1643,6 +1668,10 @@ PageFlickable {
                     if (brytonBleMemory.address.length > 0)
                         list = list.concat([{ address: brytonBleMemory.address, name: brytonBleMemory.name,
                                               kind: "brytonble", memoryOnly: true }])
+                    // The Wahoo is remembered once seen on the cable; it had no way to be forgotten
+                    // (2026-10-22). Nothing to unpair - Sommet just stops remembering it.
+                    if (wahooBleMemory.seen)
+                        list = list.concat([{ address: "", name: "", kind: "wahoo", memoryOnly: true }])
                     forgetDialog.devices = list
                     if (r && !r.ok && !r.unsupported) forgetDialog.msg = r.error || qsTr("Couldn't read the paired devices")
                 }
@@ -1681,17 +1710,19 @@ PageFlickable {
                                 Icon { anchors.centerIn: parent; visible: modelData.kind === "suunto"
                                        glyph: Icons.watch; size: 26; color: Theme.text }
                                 BikeComputerIcon { anchors.centerIn: parent; visible: modelData.kind !== "suunto"
-                                                   kind: modelData.kind === "magene" ? "c406" : "brytonble"; size: 28 }
+                                                   kind: modelData.kind === "magene" ? "c406" : modelData.kind; size: 28 }
                             }
                             Column {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: 220
                                 Text { text: modelData.kind === "magene" ? qsTr("Magene C406")
                                              : modelData.kind === "brytonble" ? qsTr("Bryton Aero 60")
+                                             : modelData.kind === "wahoo" ? qsTr("Wahoo ELEMNT")
                                              : (modelData.name || qsTr("Suunto watch"))
                                        color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true
                                        elide: Text.ElideRight; width: parent.width }
-                                Text { text: (modelData.kind !== "suunto" ? (modelData.name || "") + " · " : "") + modelData.address
+                                Text { text: modelData.kind === "wahoo" ? qsTr("Remembered from the cable")
+                                             : (modelData.kind !== "suunto" ? (modelData.name || "") + " · " : "") + modelData.address
                                        color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
                                        elide: Text.ElideRight; width: parent.width }
                             }
@@ -1718,6 +1749,8 @@ PageFlickable {
                 text: !forgetConfirm.device ? ""
                       : forgetConfirm.device.kind === "brytonble"
                         ? qsTr("Forget the Bryton Aero 60 in Sommet? Pair it again any time from “Pair another device by Bluetooth”.")
+                      : forgetConfirm.device.kind === "wahoo"
+                        ? qsTr("Forget the Wahoo ELEMNT in Sommet? It comes back the next time you plug it in.")
                       : forgetConfirm.device.kind === "magene"
                         ? qsTr("Forget the Magene C406? It goes back to its pair screen - pair it again from “Pair another device by Bluetooth”.")
                         : qsTr("Forget %1? To use it over Bluetooth again, pair it from the watch's own menu (“Pair Mobile App”).")
@@ -2264,8 +2297,11 @@ PageFlickable {
                 HomeViewModel.isGarmin ? GarminService.activitiesLoading
                 : HomeViewModel.isKailash ? (KailashService.loading && !KailashService.trackLogOk)
                 : ActivityService.loading
-            visible: activityLoading || lastActivityColumn.activity !== null
-                     || (!HomeViewModel.isGarmin && !HomeViewModel.isKailash
+            // Loading and errors only while a device is there to read (audit 2026-10-22): with no
+            // watch plugged in, a new user saw "Reading activities off the watch..." and then a
+            // raw "Error transferring http://127.0.0.1:8766/api/activities ... Bad Gateway".
+            visible: (activityLoading && HomeViewModel.anyDevice) || lastActivityColumn.activity !== null
+                     || (!HomeViewModel.isGarmin && !HomeViewModel.isKailash && HomeViewModel.connected
                          && ActivityService.lastError.length > 0)
 
             // 2026-08-11 designer pass: this card was a dead end - the whole card now
@@ -2343,7 +2379,7 @@ PageFlickable {
 
                 Text {
                     visible: !HomeViewModel.isGarmin && !HomeViewModel.isKailash && !ActivityService.loading
-                             && ActivityService.lastError.length > 0
+                             && HomeViewModel.connected && ActivityService.lastError.length > 0
                     width: parent.width
                     wrapMode: Text.WordWrap
                     color: Theme.error

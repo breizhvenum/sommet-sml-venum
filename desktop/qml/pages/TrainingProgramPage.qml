@@ -47,7 +47,11 @@ Item {
             } catch (e) {}
             root.brytonConnected = found
             root.wahooUsb = wahoo
-            if (wahoo) wahooSeen.seen = true
+            if (wahoo) {
+                // First time seen: its switch in Settings > Devices turns on (2026-10-22).
+                if (!wahooSeen.seen) BikeDevices.wahooShown = true
+                wahooSeen.seen = true
+            }
         }
         xhr.open("GET", "http://127.0.0.1:8766/api/mtp/devices")
         xhr.send()
@@ -91,7 +95,8 @@ Item {
     // ELEMNT imports it when its Workouts list refreshes. Same "seen" flag as the Routes page.
     property bool wahooUsb: false
     Settings { id: wahooSeen; category: "wahoo"; property bool seen: false }
-    readonly property bool wahooConnected: root.wahooUsb || wahooSeen.seen
+    // Over Bluetooth only while its switch is on (Settings > Show in the sidebar > Devices).
+    readonly property bool wahooConnected: root.wahooUsb || (wahooSeen.seen && BikeDevices.wahooShown)
     readonly property bool watchConnected: HomeViewModel.anyDevice
     property string sendMsg: ""
     property bool sending: false
@@ -654,7 +659,7 @@ Item {
                             Text {
                                 width: parent.width
                                 horizontalAlignment: Text.AlignHCenter
-                                text: qsTr("%1 planned workouts").arg(root.entries.length)
+                                text: root.entries.length === 1 ? qsTr("1 planned workout") : qsTr("%1 planned workouts").arg(root.entries.length)
                                 color: Theme.mutedText
                                 font.pixelSize: Theme.fontSizeCaption
                             }

@@ -1,5 +1,7 @@
 pragma Singleton
 import QtQuick
+import QtCore
+import AmbitApp
 
 // Bike computers available right now, shared across pages (2026-09-25). USB ones (Bryton/Edge/
 // Karoo) are cheap to re-probe from any page (/api/mtp/devices), but the Magene C406 is Bluetooth:
@@ -10,6 +12,50 @@ QtObject {
     id: bikes
     // The found C406: {kind: "c406", name, address, activityCount, files}, or null.
     property var magene: null
+
+    // --- Devices on Home (André, 2026-10-22): one switch per Bluetooth bike computer, in
+    // Settings > Show in the sidebar > Devices. Off: no card on Home, not in the pairing list, no
+    // background scan, not offered by Routes or the Training Program - but still remembered, so
+    // turning it back on brings it back as it was. A plugged-in device always shows. The first
+    // time this runs, each switch starts on for a device already paired (or, for the Wahoo,
+    // already seen on the cable) and off otherwise. ---
+    property Settings shownObj: Settings {
+        id: shownId
+        category: "devicesOnHome"
+        property bool magene: false
+        property bool brytonBle: false
+        property bool wahoo: false
+        property bool initialised: false
+    }
+    property alias mageneShown: shownId.magene
+    property alias brytonBleShown: shownId.brytonBle
+    property alias wahooShown: shownId.wahoo
+    // What Home remembers (same QSettings keys as HomePage.qml), read once for the first run.
+    property Settings mageneMemoryObj: Settings { id: mageneMemoryId; category: "magene"; property string address: "" }
+    property Settings brytonMemoryObj: Settings { id: brytonMemoryId; category: "brytonble"; property string address: "" }
+    property Settings wahooMemoryObj: Settings { id: wahooMemoryId; category: "wahoo"; property bool seen: false }
+    function _initShown() {
+        if (shownId.initialised)
+            return
+        shownId.magene = mageneMemoryId.address.length > 0
+        shownId.brytonBle = brytonMemoryId.address.length > 0
+        shownId.wahoo = wahooMemoryId.seen
+        shownId.initialised = true
+    }
+    Component.onCompleted: Qt.callLater(_initShown)
+    // Switched off: drop it here at once (stops its scan; Routes and the Training Program stop
+    // offering it), and hand the active device back if it was this one. Home rebuilds its list
+    // from what it remembers when it next opens.
+    onMageneShownChanged: if (!mageneShown) {
+        magene = null
+        mageneAnswered(false)
+        if (DeviceService.activeBikeKind === "c406") DeviceService.selectBikeComputer("")
+    }
+    onBrytonBleShownChanged: if (!brytonBleShown) {
+        brytonBle = null
+        brytonBleAnswered(false)
+        if (DeviceService.activeBikeKind === "brytonble") DeviceService.selectBikeComputer("")
+    }
 
     // Is the remembered C406 actually on (André, 2026-09-26: "the c406 is on but appears as
     // disconnected")? Set by any real answer (Home's "hello", a ride list) AND by a background
@@ -38,7 +84,7 @@ QtObject {
     property bool _brytonScanning: false
     function brytonBleAnswered(ok) { brytonBleSeenAt = ok ? Date.now() : 0; brytonBleReachable = ok }
     function scanBrytonBle() {
-        if (!brytonBle || _brytonScanning || mageneConnecting || _scanning)
+        if (!brytonBle || !brytonBleShown || _brytonScanning || mageneConnecting || _scanning)
             return
         _brytonScanning = true
         const addr = brytonBle.address
@@ -61,7 +107,7 @@ QtObject {
     onBrytonBleChanged: if (brytonBle && !brytonBleReachable) Qt.callLater(scanBrytonBle)
 
     function scanMagene() {
-        if (!magene || _scanning || _brytonScanning || mageneConnecting)
+        if (!magene || !mageneShown || _scanning || _brytonScanning || mageneConnecting)
             return
         _scanning = true
         const addr = magene.address
@@ -87,14 +133,14 @@ QtObject {
 
     property Timer _scanTimer: Timer {
         interval: 60000
-        running: bikes.magene !== null
+        running: bikes.magene !== null && bikes.mageneShown
         repeat: true
         onTriggered: if (!bikes.mageneReachable || Date.now() - bikes.mageneSeenAt > 300000) bikes.scanMagene()
     }
     // Offset by 30 s from the Magene's so the two scans never share the radio.
     property Timer _brytonScanTimer: Timer {
         interval: 60000
-        running: bikes.brytonBle !== null
+        running: bikes.brytonBle !== null && bikes.brytonBleShown
         repeat: true
         onTriggered: bikes._brytonDelay.restart()
     }

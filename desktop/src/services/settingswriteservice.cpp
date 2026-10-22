@@ -1,4 +1,5 @@
 #include "settingswriteservice.h"
+#include "backenderror.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -62,13 +63,20 @@ void SettingsWriteService::refresh()
         m_ok = (reply->error() == QNetworkReply::NoError) && obj.value(QStringLiteral("ok")).toBool();
 
         if (!m_ok) {
-            setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("GET /api/settings: %1").arg(reply->errorString())
-                : QStringLiteral("GET /api/settings: %1")
-                    .arg(obj.value(QStringLiteral("error")).toString(
-                        obj.value(QStringLiteral("stderr")).toString())));
+            const QString own = obj.value(QStringLiteral("error")).toString();
+            setLastError(!own.isEmpty() ? own
+                : reply->error() != QNetworkReply::NoError ? backendErrorText(reply)
+                : obj.value(QStringLiteral("stderr")).toString());
+            m_lastErrorIsRead = true;
             emit settingsChanged();
             return;
+        }
+
+        // A read that works clears an earlier READ error; a write error stays until the next
+        // write, so the re-read after a failed write doesn't hide it.
+        if (m_lastErrorIsRead) {
+            m_lastErrorIsRead = false;
+            setLastError(QString());
         }
 
         QVariantList rows;
@@ -114,7 +122,8 @@ void SettingsWriteService::refresh()
             rows.append(row);
         }
         m_settings = rows;
-        setLastError(QString());
+        // No blanket setLastError(QString()) here (2026-10-22): it wiped a failed write's error
+        // the moment the re-read after it came back. Read errors are cleared above.
         emit settingsChanged();
     });
 }
@@ -145,11 +154,24 @@ void SettingsWriteService::writeSetting(const QString &key, const QVariant &valu
             && obj.value(QStringLiteral("ok")).toBool();
 
         if (!writeOk) {
-            setLastError(reply->error() != QNetworkReply::NoError
-                ? QStringLiteral("POST /api/settings (%1): %2").arg(key, reply->errorString())
-                : QStringLiteral("POST /api/settings (%1): %2").arg(key,
-                    obj.value(QStringLiteral("error")).toString(
-                        QStringLiteral("write not confirmed by re-read"))));
+            // The backend's own message first (e.g. "the watch isn't connected", or Testing mode
+            // refusing a real write) - Qt's "server replied: Conflict" says nothing (2026-10-22).
+            const QString bodyError = obj.value(QStringLiteral("error")).toString();
+            QString label = key;   // the row's own label ("Storm alarm"), not the schema key
+            for (const auto &row : std::as_const(m_settings)) {
+                const auto m = row.toMap();
+                if (m.value(QStringLiteral("key")).toString() == key) {
+                    label = m.value(QStringLiteral("label")).toString();
+                    if (label.isEmpty())
+                        label = key;
+                    break;
+                }
+            }
+            setLastError(QStringLiteral("Couldn't change %1: %2").arg(label,
+                !bodyError.isEmpty() ? bodyError
+                : reply->error() != QNetworkReply::NoError ? backendErrorText(reply)
+                : QStringLiteral("the watch didn't confirm the change")));
+            m_lastErrorIsRead = false;
             // Real value may or may not have changed depending on where the write failed -
             // re-fetching is the only honest way to show what the watch actually has now,
             // rather than leaving the UI showing the value the user tried to set.

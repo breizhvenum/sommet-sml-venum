@@ -564,7 +564,9 @@ PageFlickable {
             // POI shows up here without a manual page reload.
             Connections {
                 target: PoiService
-                function onAddOkChanged() {
+                // addOk notifies through addResultChanged (poiservice.h) - there is no
+                // addOkChanged, so this never ran (audit 2026-10-22).
+                function onAddResultChanged() {
                     if (legacyPoiCard.visible && PoiService.addOk) legacyPoiCard.refresh()
                 }
             }

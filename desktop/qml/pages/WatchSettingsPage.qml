@@ -149,6 +149,18 @@ PageFlickable {
                     detail: SettingsWriteService.ok ? "" : SettingsWriteService.lastError
                     context: qsTr("reading or writing watch settings")
                 }
+                // A change the watch didn't take, said plainly (audit 2026-10-22): it used to be
+                // wiped by the re-read that follows a failed write, so nothing was shown at all.
+                // The settings read fine, so lastError here is the write's (read errors are cleared
+                // by a good read, and get the banner above).
+                Text {
+                    width: parent.width
+                    visible: SettingsWriteService.ok && SettingsWriteService.lastError.length > 0
+                    text: SettingsWriteService.lastError
+                    wrapMode: Text.WordWrap
+                    color: Theme.error
+                    font.pixelSize: Theme.fontSizeBody
+                }
 
                 // --- Orbital data - real, 2026-08-10 (André: "let's enable by default for
                 // traverse, traverse and kailash. on kailash settings, give the option to
@@ -324,6 +336,17 @@ PageFlickable {
                         }
 
                         function commit(v) { SettingsWriteService.writeSetting(item.key, v) }
+                        // A click or drag sets the control's own value, which cuts its binding to
+                        // what the watch has; each control re-binds after committing, so a refused
+                        // or failed write snaps back to the watch's real value on the re-read
+                        // (audit 2026-10-22: a failed Storm alarm write stayed ticked for good).
+                        function choiceIndex() {
+                            for (let i = 0; i < settingRow.choices.length; i++) {
+                                if (settingRow.choices[i].value === settingRow.item.value)
+                                    return i;
+                            }
+                            return -1;
+                        }
 
                         Row {
                             spacing: Theme.spacingSmall
@@ -357,7 +380,10 @@ PageFlickable {
                                     checked: modelData.value === settingRow.item.value
                                     text: modelData.label
                                     enabled: !settingRow.busy
-                                    onClicked: settingRow.commit(modelData.value)
+                                    onClicked: {
+                                        settingRow.commit(modelData.value)
+                                        checked = Qt.binding(() => modelData.value === settingRow.item.value)
+                                    }
                                 }
                             }
                         }
@@ -366,7 +392,10 @@ PageFlickable {
                             visible: settingRow.control === "checkbox" && settingRow.editable
                             checked: settingRow.item.value === 1 || settingRow.item.value === true
                             enabled: !settingRow.busy
-                            onToggled: settingRow.commit(checked ? 1 : 0)
+                            onToggled: {
+                                settingRow.commit(checked ? 1 : 0)
+                                checked = Qt.binding(() => settingRow.item.value === 1 || settingRow.item.value === true)
+                            }
                         }
 
                         RoundedComboBox {
@@ -376,14 +405,11 @@ PageFlickable {
                             textRole: "label"
                             valueRole: "value"
                             enabled: !settingRow.busy
-                            currentIndex: {
-                                for (let i = 0; i < settingRow.choices.length; i++) {
-                                    if (settingRow.choices[i].value === settingRow.item.value)
-                                        return i;
-                                }
-                                return -1;
+                            currentIndex: settingRow.choiceIndex()
+                            onActivated: {
+                                settingRow.commit(currentValue)
+                                currentIndex = Qt.binding(() => settingRow.choiceIndex())
                             }
-                            onActivated: settingRow.commit(currentValue)
                         }
 
                         Row {
@@ -402,7 +428,16 @@ PageFlickable {
                                 to: settingRow.item.max !== undefined ? settingRow.item.max : 100
                                 value: settingRow.item.value !== undefined ? settingRow.item.value : 0
                                 enabled: !settingRow.busy
-                                onMoved: settingRow.commit(Math.round(value))
+                                // One write when the drag ends (or per arrow-key step), not one per
+                                // pixel: the first write disabled the slider (busy) mid-drag, so a
+                                // drag only ever moved it one step.
+                                function send() {
+                                    if (Math.round(value) !== settingRow.item.value)
+                                        settingRow.commit(Math.round(value))
+                                    value = Qt.binding(() => settingRow.item.value !== undefined ? settingRow.item.value : 0)
+                                }
+                                onPressedChanged: if (!pressed) send()
+                                onMoved: if (!pressed) send()
                             }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter

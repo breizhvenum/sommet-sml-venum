@@ -276,7 +276,7 @@ Item {
                             Text {
                                 width: parent.width
                                 horizontalAlignment: Text.AlignHCenter
-                                text: qsTr("%1 activities").arg(root.monthActivities.length)
+                                text: root.monthActivities.length === 1 ? qsTr("1 activity") : qsTr("%1 activities").arg(root.monthActivities.length)
                                 color: Theme.mutedText
                                 font.pixelSize: Theme.fontSizeCaption
                             }

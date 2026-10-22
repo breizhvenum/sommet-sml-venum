@@ -251,7 +251,11 @@ Item {
     function probeWahoo() {
         api("GET", "/api/mtp/devices", null, function(status, res) {
             root.wahooUsb = !!(res && res.devices && res.devices.some(d => d.kind === "wahoo" && d.transport === "adb"))
-            if (root.wahooUsb) wahooSeen.seen = true
+            if (root.wahooUsb) {
+                // First time seen: its switch in Settings > Devices turns on (2026-10-22).
+                if (!wahooSeen.seen) BikeDevices.wahooShown = true
+                wahooSeen.seen = true
+            }
         })
     }
     function sendToWahoo(via) {
@@ -694,7 +698,7 @@ Item {
         ThemedMenuItem { text: qsTr("Bryton"); visible: root.brytonHere; onTriggered: root.sendToBryton() }
         ThemedMenuItem { text: qsTr("Magene C406"); visible: root.mageneHere; onTriggered: root.sendToMagene() }
         ThemedMenuItem { text: qsTr("Wahoo ELEMNT"); visible: root.wahooUsb; onTriggered: root.sendToWahoo("usb") }
-        ThemedMenuItem { text: qsTr("Wahoo ELEMNT (Bluetooth)"); visible: !root.wahooUsb && wahooSeen.seen
+        ThemedMenuItem { text: qsTr("Wahoo ELEMNT (Bluetooth)"); visible: !root.wahooUsb && wahooSeen.seen && BikeDevices.wahooShown
                          onTriggered: root.sendToWahoo("ble") }
         ThemedMenuItem { text: qsTr("Wahoo ELEMNT maps for this route"); visible: root.wahooUsb
                          onTriggered: root.wahooMapsForRoute() }
@@ -708,7 +712,7 @@ Item {
                          onTriggered: root.exportForEtrex("route", true) }
         ThemedMenuItem { text: qsTr("No device connected"); enabled: false
                          visible: !root.watchCanTakeRoute && !root.brytonHere && !root.mageneHere
-                                  && !root.wahooUsb && !wahooSeen.seen
+                                  && !root.wahooUsb && !(wahooSeen.seen && BikeDevices.wahooShown)
                                   && !(GarminService.connected && GarminService.hasSdCard) }
     }
 

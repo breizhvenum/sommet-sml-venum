@@ -41,48 +41,34 @@ PageFlickable {
     // a manual file copy. Plain XMLHttpRequest to the local backend, same pattern as
     // FirmwarePage.qml - no new C++ service needed for local file I/O this simple. ---
     readonly property string apiBase: "http://127.0.0.1:8766"
-    property bool catalogImported: false
-    property int catalogEntries: 0
+    // The catalog goes through AppsService, the same calls the Apps picker uses (audit
+    // 2026-10-22: this card called /api/apps/catalog/status and /api/apps/catalog/import,
+    // neither of which exists - it always read "Not imported" and every import failed).
+    readonly property bool catalogImported: AppsService.hasCatalog
+    readonly property int catalogEntries: AppsService.catalogCount
     property bool catalogChecking: true
-    property bool catalogImporting: false
+    readonly property bool catalogImporting: AppsService.importing
     property string catalogError: ""
 
     function checkCatalogStatus() {
         catalogChecking = true;
-        const xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
-                return;
-            catalogChecking = false;
-            let d = null;
-            try { d = JSON.parse(xhr.responseText); } catch (e) {}
-            catalogImported = !!(d && d.imported);
-            catalogEntries = (d && d.entries) || 0;
-        };
-        xhr.open("GET", apiBase + "/api/apps/catalog/status");
-        xhr.send();
+        AppsService.refreshCatalogStatus();
     }
 
     function importCatalogFile(fileUrl) {
-        catalogImporting = true;
         catalogError = "";
-        const xhr = new XMLHttpRequest();
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState !== XMLHttpRequest.DONE)
-                return;
-            catalogImporting = false;
-            let d = null;
-            try { d = JSON.parse(xhr.responseText); } catch (e) {}
-            if (!d || !d.ok) {
-                catalogError = (d && d.error) || qsTr("Import failed.");
-                return;
-            }
-            catalogImported = true;
-            catalogEntries = d.entries || 0;
-        };
-        xhr.open("POST", apiBase + "/api/apps/catalog/import");
-        xhr.setRequestHeader("Content-Type", "application/json");
-        xhr.send(JSON.stringify({ path: fileUrl.toString() }));
+        AppsService.importCatalog(fileUrl.toString());
+    }
+
+    Connections {
+        target: AppsService
+        function onCatalogStatusChanged() { root.catalogChecking = false }
+        function onCatalogImported(ok, count, error) {
+            if (!ok)
+                root.catalogError = error || qsTr("Import failed.");
+            else
+                AppsService.refreshCatalogStatus();
+        }
     }
 
     // --- intervals.icu "Sync now" (André, 2026-08-18): run the enabled toggles. Each flow
@@ -522,6 +508,49 @@ PageFlickable {
                     experimental: true
                     checked: DeviceService.suuntoT6ExperimentEnabled
                     onToggled: (on) => DeviceService.suuntoT6ExperimentEnabled = on
+                }
+
+                // --- Devices (André, 2026-10-22): one switch per Bluetooth bike computer. Off: no
+                // card on Home, not in the pairing list, no background scan - still remembered.
+                // Plugged-in devices always show. Kept in BikeDevices (shared with Home/Routes).
+                Column {
+                    width: parent.width
+                    spacing: 2
+                    topPadding: Theme.spacingSmall
+                    Text {
+                        text: qsTr("Devices")
+                        font.bold: true
+                        font.pixelSize: Theme.fontSizeBody
+                        color: Theme.text
+                    }
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: qsTr("A card on Home and a choice in the Bluetooth pairing list. Plugged-in devices always show.")
+                        color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeLabel
+                    }
+                }
+                SidebarSwitch {
+                    title: qsTr("Magene C406")
+                    description: qsTr("Bike GPS over Bluetooth.")
+                    experimental: true
+                    checked: BikeDevices.mageneShown
+                    onToggled: (on) => BikeDevices.mageneShown = on
+                }
+                SidebarSwitch {
+                    title: qsTr("Bryton Aero 60")
+                    description: qsTr("Bike GPS over Bluetooth.")
+                    experimental: true
+                    checked: BikeDevices.brytonBleShown
+                    onToggled: (on) => BikeDevices.brytonBleShown = on
+                }
+                SidebarSwitch {
+                    title: qsTr("Wahoo ELEMNT")
+                    description: qsTr("Bike GPS (cable, then Bluetooth).")
+                    experimental: true
+                    checked: BikeDevices.wahooShown
+                    onToggled: (on) => BikeDevices.wahooShown = on
                 }
             }
         }

@@ -77,6 +77,7 @@ private:
     bool m_loading = false;
     bool m_ok = false;
     QString m_lastError;
+    bool m_lastErrorIsRead = false;   // m_lastError came from a read (a later good read clears it)
     QVariantList m_settings;
     QString m_writingKey;
     QString m_device;
