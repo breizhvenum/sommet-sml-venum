@@ -290,7 +290,49 @@ DEMO_REFUSED_POSTS = {
     "/api/customodes/rename", "/api/customodes/field", "/api/customodes/interval-timer",
     "/api/customodes/display-field",
     "/api/legacy/sport-modes/write", "/api/legacy/sport-modes/write-presets",
+    "/api/watch/lend",
 }
+# Lending the watch to the local browser tools (2026-10-22, a Linux Mint user: the Workout
+# Builder's "Install to Watch" always said "couldn't read the watch's sport modes"). This backend
+# keeps an idle handle on every watch (_KEEPALIVE); with libusb-backed hidapi (Ubuntu/Mint's
+# python3-hid) that claim is EXCLUSIVE, so a tool started by the Workout Builder, App Builder or
+# Training Calendar - separate processes - couldn't open the watch while Sommet ran. Reproduced
+# on André's Peak: custom_modes.py --json "open failed" after a GET /api/device, fine without it.
+# POST /api/watch/lend takes WATCH_LOCK in a holder thread, drops the keep-alive handles and keeps
+# the lock (so this backend touches no watch) until POST /api/watch/return or the time is up.
+_WATCH_LENDS = {}                      # token -> threading.Event that ends the loan
+_WATCH_LENDS_LOCK = threading.Lock()
+
+
+def lend_watch(seconds):
+    """Returns a token once the watch is free for another process, or None if it stayed busy."""
+    import secrets
+    ready, done = threading.Event(), threading.Event()
+
+    def hold():
+        with WATCH_LOCK:
+            drop_keepalive_handles()
+            ready.set()
+            done.wait(seconds)
+
+    threading.Thread(target=hold, name="watch-lend", daemon=True).start()
+    if not ready.wait(60):
+        done.set()          # if the holder gets the lock later, it lets go straight away
+        return None
+    token = secrets.token_hex(8)
+    with _WATCH_LENDS_LOCK:
+        _WATCH_LENDS[token] = done
+    return token
+
+
+def return_watch(token):
+    with _WATCH_LENDS_LOCK:
+        done = _WATCH_LENDS.pop(token, None)
+    if done is not None:
+        done.set()
+    return done is not None
+
+
 DEMO_REFUSED_MSG = ("Testing mode is on, so this wasn't sent to a watch - the sample watch can't "
                     "take it, and a real one is never touched. Turn Testing mode off in Settings "
                     "to use your own watch.")
@@ -956,6 +998,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/time/sync", "/api/apps/install", "/api/apps/logging", "/api/apps/import",
             "/api/hrv/install", "/api/workout/install", "/api/restore",
             "/api/firmware/flash", "/api/gpstrackpod/retrieve", "/api/suuntot6/retrieve",
+            "/api/watch/return",
         }
 
     def _read_json_body(self):
@@ -1577,6 +1620,11 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_magene_workout(body)
         elif self.path == "/api/magene/workout/native":
             self._handle_magene_workout(body, native=True)
+        elif self.path == "/api/watch/lend":
+            self._handle_watch_lend(body)
+        elif self.path == "/api/watch/return":
+            ok = return_watch(str((body or {}).get("token") or ""))
+            self._send_json(200 if ok else 404, {"ok": ok})
         elif self.path == "/api/time/sync":
             self._handle_time_sync(body)
         elif self.path == "/api/demo":
@@ -7341,6 +7389,25 @@ class Handler(BaseHTTPRequestHandler):
                                    "stderr": err})
             return
         self._send_json(200, info)
+
+    def _handle_watch_lend(self, body):
+        """POST /api/watch/lend {"seconds": n} -> {"ok", "token", "productId", "serial"}. Frees
+        the watch for a local browser tool (see lend_watch) and tells it which watch this backend
+        is pinned to, so the tool drives the same one (AMBIT_PRODUCT_ID / AMBIT_SERIAL, as
+        run_tool passes them). Testing mode refuses it (DEMO_REFUSED_POSTS)."""
+        try:
+            seconds = max(10, min(int((body or {}).get("seconds") or 240), 900))
+        except (TypeError, ValueError):
+            seconds = 240
+        autopin_if_needed()
+        token = lend_watch(seconds)
+        if token is None:
+            self._send_json(503, {"ok": False, "error": "Sommet is busy with the watch right now "
+                                  "- wait for it to finish (a sync or a backup), then try again."})
+            return
+        self._send_json(200, {"ok": True, "token": token, "seconds": seconds,
+                              "productId": hex(SELECTED_PRODUCT_ID) if SELECTED_PRODUCT_ID is not None else None,
+                              "serial": SELECTED_SERIAL})
 
     def _handle_workout_install(self, body):
         """POST /api/workout/install. Body: {"workout": {...}, "mode": "<mode name>"}. Installs

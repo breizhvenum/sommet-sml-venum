@@ -14,7 +14,6 @@ The Plan itself lives in the browser (localStorage) — this tool has no server-
 """
 import argparse
 import json
-import subprocess
 import sys
 import tempfile
 import threading
@@ -26,13 +25,9 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 
 
-def run_tool(script, args, timeout=180):
-    """Same shape as workout_gui.py's own run_tool() / desktop/backend/server.py's — runs one
-    of tools/*.py exactly as a person at a terminal would. Returns (returncode, stdout, stderr);
-    never raises for a nonzero exit, the caller decides what that means."""
-    proc = subprocess.run([sys.executable, str(TOOLS_DIR / script), *args],
-                          cwd=TOOLS_DIR, capture_output=True, text=True, timeout=timeout)
-    return proc.returncode, proc.stdout, proc.stderr
+# Shared with the other two browser tools (tool_runner.py): borrows the watch from Sommet's backend
+# for the duration of a watch tool, and runs tools correctly from the packaged app (2026-10-22).
+from tool_runner import run_tool, run_tool_entry_if_requested, sommet_error  # noqa: E402
 
 
 def parse_last_json_line(out):
@@ -601,8 +596,9 @@ class Handler(BaseHTTPRequestHandler):
         info = parse_last_json_line(out)
         if info is None or not info.get("ok"):
             self._send_json(502, {"ok": False,
-                                   "error": "couldn't read the watch's sport modes - is it "
-                                   "connected and on the time screen?",
+                                   "error": sommet_error(info, "couldn't read the watch's sport "
+                                                         "modes - is it connected and on the "
+                                                         "time screen?"),
                                    "raw_output": out, "stderr": err})
             return
         modes = [{"name": m.get("name")} for m in info.get("exerciseModes", [])]
@@ -661,6 +657,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    run_tool_entry_if_requested()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8766)

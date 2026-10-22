@@ -304,8 +304,13 @@ class Link:
                 time.sleep(delay_s)
         raise RuntimeError(
             f"{len(failures)} Suunto watch(es) on the USB bus, still not openable after {attempts} "
-            f"tries over {attempts * delay_s:.1f}s (past the usual reconnect race). "
-            "Check with:\n"
+            f"tries over {attempts * delay_s:.1f}s (past the usual reconnect race).\n"
+            # Most often another program holds it (2026-10-22: Sommet's own backend, while a
+            # Linux Mint user's Workout Builder tried to install) - say that before permissions.
+            "  Most likely another program has the watch open: Sommet (its backend keeps hold "
+            "of it), SuuntoLink, or another tool. Close it, or install from inside Sommet, "
+            "and try again.\n"
+            "  If nothing else is running, check permissions with:\n"
             "    lsusb | grep 1493   # confirm the device and its bus/device numbers\n"
             "    ls -la /dev/bus/usb/<bus>/<device>   # from lsusb above\n"
             "  Should read crw-rw-rw- (or at least rw for your user) shortly after "
