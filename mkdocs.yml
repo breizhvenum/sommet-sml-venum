@@ -53,6 +53,7 @@ nav:
       - how-to/index.md
       - Build and run: how-to/build-and-run.md
       - Use the tools: how-to/using-the-tools.md
+      - Create a structured workout: how-to/create-a-structured-workout.md
   - Reference:
       - reference/index.md
       - Supported devices: reference/supported-devices.md
