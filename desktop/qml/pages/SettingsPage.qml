@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
-import Qt.labs.settings
+import QtCore
 import AmbitApp
 
 // Step 11, the last one. General/Connections/Maps/Weather/Backup/About per the spec.
@@ -527,10 +527,11 @@ PageFlickable {
         }
 
         // --- Backup & restore (moved here from the nav rail, André 2026-08-31) ---
+        // Always shown (2026-10-22, Android parity): the Backup page's App data card backs up this
+        // app's own database with or without a watch, and this card is the only way to it.
         Card {
             id: backupCard
             width: parent.width
-            visible: HomeViewModel.anyDevice
             Column {
                 width: parent.width
                 spacing: Theme.spacingSmall
@@ -994,6 +995,9 @@ PageFlickable {
                 // Its sidebar switch is in "Show in the sidebar" (2026-10-21).
                 SettingsSection {
                     id: emberSection
+                    // Shown while Ember is on in "Show in the sidebar", like the Coach row and the
+                    // Android app (André, 2026-10-22).
+                    visible: Theme.emberEnabled
                     title: qsTr("Ember")
                     summary: qsTr("Phone install link · intervals.icu sync · food search key")
                     glyph: Icons.ember

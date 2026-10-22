@@ -167,31 +167,54 @@ void WeatherService::fetchPlaceName()
 
 void WeatherService::detectLocationFromIp()
 {
-    // ip-api.com's free tier: no key, plain HTTP only (no HTTPS on the free tier), a real,
-    // commonly-used service. Approximate (city-level, from the IP's registered location,
-    // not true GPS) - the honest limit of anything IP-based, stated here rather than implied
-    // to be more precise than it is.
-    QNetworkReply *reply = m_network.get(
-        QNetworkRequest(QUrl(QStringLiteral("http://ip-api.com/json/"))));
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
-        reply->deleteLater();
-        // This is the real startup path now (HomePage.qml calls this instead of refresh()
-        // directly), so a failed IP lookup still has to end in a real refresh() call with
-        // whatever coordinates are already set (the static central-Europe fallback, or
-        // wherever the user last pointed it via Settings) - otherwise hasFetchedOnce would
-        // never become true on a genuinely offline launch, and WeatherCard.qml would stay
-        // hidden forever instead of showing its real offline message.
-        if (reply->error() != QNetworkReply::NoError) {
-            refresh();
-            return;
-        }
-        const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-        if (obj.value(QStringLiteral("status")).toString() != QStringLiteral("success")) {
-            refresh();
-            return;
-        }
-        setLatitude(obj.value(QStringLiteral("lat")).toDouble());
-        setLongitude(obj.value(QStringLiteral("lon")).toDouble());
+    tryIpLocation(0);
+}
+
+// IP-based location over HTTPS (2026-10-22). It used ip-api.com, whose free tier is plain HTTP
+// only: the Android app can't use that (Android blocks plain HTTP), so its weather always fell
+// back to the default. Both apps now ask the same HTTPS services, free and without a key:
+// ipapi.co first, get.geojs.io if that fails or is rate-limited. City-level at best, from the
+// IP's registered location - not true GPS.
+void WeatherService::tryIpLocation(int provider)
+{
+    static const char *const kServices[] = {
+        "https://ipapi.co/json/",
+        "https://get.geojs.io/v1/ip/geo.json",
+    };
+    // Every service failed: a failed IP lookup still has to end in a real refresh() call with
+    // whatever coordinates are already set (the static central-Europe fallback, or wherever the
+    // user last pointed it via Settings) - otherwise hasFetchedOnce would never become true on a
+    // genuinely offline launch, and WeatherCard.qml would stay hidden forever instead of showing
+    // its real offline message.
+    if (provider >= int(sizeof(kServices) / sizeof(kServices[0]))) {
         refresh();
+        return;
+    }
+    QNetworkRequest request(QUrl(QString::fromLatin1(kServices[provider])));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("Sommet/2.0"));
+    QNetworkReply *reply = m_network.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, provider] {
+        reply->deleteLater();
+        if (reply->error() == QNetworkReply::NoError) {
+            const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
+            // ipapi.co sends the coordinates as numbers, get.geojs.io as strings.
+            const auto number = [](const QJsonValue &v, bool *ok) {
+                if (v.isDouble()) {
+                    *ok = true;
+                    return v.toDouble();
+                }
+                return v.toString().toDouble(ok);
+            };
+            bool latOk = false, lonOk = false;
+            const double lat = number(obj.value(QStringLiteral("latitude")), &latOk);
+            const double lon = number(obj.value(QStringLiteral("longitude")), &lonOk);
+            if (latOk && lonOk && !obj.value(QStringLiteral("error")).toBool()) {
+                setLatitude(lat);
+                setLongitude(lon);
+                refresh();
+                return;
+            }
+        }
+        tryIpLocation(provider + 1);
     });
 }

@@ -70,7 +70,8 @@ public:
 
     Q_INVOKABLE void refresh();
     // Real "use this computer's location" - desktops have no GPS, so this is IP-based
-    // geolocation (ip-api.com, free, no key) rather than anything satellite-based. Sets
+    // geolocation (ipapi.co, then get.geojs.io; free, no key, HTTPS) rather than anything
+    // satellite-based. Sets
     // latitude/longitude from the result and calls refresh(); leaves them untouched on
     // failure rather than snapping to some default.
     Q_INVOKABLE void detectLocationFromIp();
@@ -84,6 +85,9 @@ signals:
     void placeNameChanged();
 
 private:
+    // One IP-location service after another until one answers (see detectLocationFromIp).
+    void tryIpLocation(int provider);
+
     QNetworkAccessManager m_network;
     QTimer m_refreshTimer;
     bool m_loading = false;

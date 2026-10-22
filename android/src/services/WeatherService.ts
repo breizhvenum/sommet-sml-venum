@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 // v3.0 UI port (2026-08-09, "replicate the desktop version feature wise") - ports
 // desktop/src/services/weatherservice.cpp + qml/viewmodels/WeatherViewModel.qml byte-for-byte
 // in intent: same Open-Meteo endpoint/params, same Nominatim reverse-geocode, same
-// ip-api.com IP-based location fallback, same WMO weather-code -> icon/label mapping, same
+// IP-based location fallback (same HTTPS services), same WMO weather-code -> icon/label mapping, same
 // 10-minute auto-refresh, same "hide until hasFetchedOnce, then show a friendly offline
 // message rather than an error" rule. No API key anywhere, matching AMBITAPP_SPEC.md's own
 // "Open-Meteo (no API key)" choice - see weatherservice.h's own header comment.
@@ -92,19 +92,33 @@ export async function fetchPlaceName(latitude: number, longitude: number): Promi
   }
 }
 
+// IP-based location over HTTPS (2026-10-22). It used ip-api.com, whose free tier is plain HTTP
+// only - which Android blocks (network_security_config.xml), so the weather always fell back to
+// the default. Same services as the desktop now, free and without a key: ipapi.co first,
+// get.geojs.io if that fails or is rate-limited. City-level at best, not true GPS.
+const IP_LOCATION_SERVICES = [
+  'https://ipapi.co/json/',
+  'https://get.geojs.io/v1/ip/geo.json',
+];
+
 export async function detectLocationFromIp(): Promise<{ latitude: number; longitude: number } | null> {
-  try {
-    // ip-api.com's free tier: no key, HTTP only (no HTTPS) - same real, commonly-used
-    // service weatherservice.cpp's own detectLocationFromIp() calls. Approximate
-    // (city-level from the IP's registered location, not true GPS).
-    const res = await fetch('http://ip-api.com/json/');
-    if (!res.ok) return null;
-    const body = await res.json();
-    if (body?.status !== 'success') return null;
-    return { latitude: body.lat, longitude: body.lon };
-  } catch {
-    return null;
+  for (const url of IP_LOCATION_SERVICES) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Sommet/2.0' } });
+      if (!res.ok) continue;
+      const body = await res.json();
+      if (body?.error) continue;
+      // ipapi.co sends the coordinates as numbers, get.geojs.io as strings.
+      const latitude = Number(body?.latitude);
+      const longitude = Number(body?.longitude);
+      if (body?.latitude == null || body?.longitude == null
+          || !Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+      return { latitude, longitude };
+    } catch {
+      // next service
+    }
   }
+  return null;
 }
 
 // Real WMO weather-interpretation codes (open-meteo.com/en/docs, "WMO Weather interpretation
