@@ -16,7 +16,23 @@ export const MAX_ROUTES = 50;
 export const MAX_TOTAL_POINTS = 10000;
 export const MAX_TOTAL_WAYPOINTS = 100;
 
-const sameName = (a: string, b: string) => a.trim() === b.trim();
+// A name as the watch keeps it: 15 UTF-8 bytes, never half a character (ambit_format.encode_name).
+// Compared in that form so a long or accented new name still matches the one read back off the
+// watch (desktop write_nav.stored_name, 2026-10-22).
+export function storedName(name: string): string {
+  let bytes = 0;
+  let out = '';
+  for (const ch of name ?? '') {
+    const cp = ch.codePointAt(0) ?? 0;
+    const n = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (bytes + n > 15) break;
+    bytes += n;
+    out += ch;
+  }
+  return out.trim();
+}
+
+const sameName = (a: string, b: string) => storedName(a) === storedName(b);
 
 export function existingRoutesToKeep(nav: WatchNavigation, newName: string, timestampSec: number): NativeRoute[] {
   return nav.routes

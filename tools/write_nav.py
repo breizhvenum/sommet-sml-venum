@@ -1163,6 +1163,29 @@ def waypoint_size(link):
     return F.waypoint_size_for_product(pid)
 
 
+def stored_name(name):
+    """A route name as the watch keeps it (15 UTF-8 bytes), for comparing names."""
+    return F.decode_name(F.encode_name(name or "", "utf-8")).strip()
+
+
+def replace_same_name(routes):
+    """The new route (last) replaces any route already on the watch with the same name
+    (2026-10-22, the Android rule in RouteMerge.ts). The watch ties waypoints to routes BY NAME,
+    so two routes of one name share their pins: each re-send of a route (e.g. the planner's
+    default "Sommet plan") read the other's pins back as its own (route_to_gpx) and doubled
+    them, until serialize refused at 100 waypoints. Callers pass the routes already on the
+    watch first and the new one last. Duplicates among the existing routes are left alone."""
+    if len(routes) < 2:
+        return routes
+    new_name = stored_name(routes[-1].name)
+    replaced = [r.name for r in routes[:-1] if stored_name(r.name) == new_name]
+    if not replaced:
+        return routes
+    print(f"  replacing {len(replaced)} route(s) already named {routes[-1].name!r} "
+          "with the new one")
+    return [r for r in routes[:-1] if stored_name(r.name) != new_name] + [routes[-1]]
+
+
 def build_routes(gpx_paths, meta_capture, wpt_size=F.WAYPOINT_SIZE):
     stamps = []
     if meta_capture:
@@ -1175,6 +1198,7 @@ def build_routes(gpx_paths, meta_capture, wpt_size=F.WAYPOINT_SIZE):
         # verified on hardware yet.
         stamps = [(0, 0, 0, (1, 1, 0, 0, 0, 0)) for _ in gpx_paths]
     routes = [route_from_gpx(path, *stamp) for path, stamp in zip(gpx_paths, stamps)]
+    routes = replace_same_name(routes)
     for route in routes:
         print(f"  route {route.name!r}: {len(route.points)} points, "
               f"{len(route.waypoints)} waypoint(s)")
