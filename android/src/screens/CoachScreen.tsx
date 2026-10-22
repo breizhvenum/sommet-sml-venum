@@ -6,12 +6,13 @@ import {
 import Svg, { Path, Line, Text as SvgText } from 'react-native-svg';
 import { niceTicks } from '../components/chartTicks';
 import { fmtDate } from '../i18n';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useV3Theme, v3Radius, v3Spacing, v3Type } from '../theme/v3';
 import { loadCoachData, CoachData, ReadinessLight, WorkoutPick } from '../services/CoachService';
 import {
-  sendCoachMessage, hasAnthropicKey, ChatMessage, ChatBackend,
+  sendCoachMessage, hasAnthropicKey, getChatBackend, ChatMessage, ChatBackend,
 } from '../services/CoachChat';
+import Icon from '../components/ui/Icon';
 
 // Coach — the Android counterpart of desktop/qml/pages/CoachPage.qml's readiness beacon
 // (André, 2026-08-26: "port everything to android").
@@ -50,12 +51,15 @@ export default function CoachScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [backend, setBackend] = useState<ChatBackend>('canned');
+  const [keySet, setKeySet] = useState(false);
 
-  // The backend follows whether a key is actually stored: no key means canned, so the chat is
-  // never silently dead waiting on a credential the user never entered.
-  useEffect(() => {
-    hasAnthropicKey().then(has => setBackend(has ? 'claude' : 'canned'));
-  }, []);
+  // Settings -> Coach picks the replies (desktop parity). Re-read on every visit, so coming back
+  // from Settings shows the new choice. Claude without a key still answers pre-written
+  // (sendCoachMessage), so the chat is never silently dead.
+  useFocusEffect(useCallback(() => {
+    getChatBackend().then(setBackend);
+    hasAnthropicKey().then(setKeySet);
+  }, []));
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -190,15 +194,31 @@ export default function CoachScreen() {
 
       {/* ── Chat ── */}
       <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card, marginTop: v3Spacing.medium }]}>
-        <Text style={[styles.label, { color: t.mutedText, marginBottom: v3Spacing.small }]}>
-          {backend === 'claude' ? 'Coach' : 'Coach (pre-written replies)'}
-        </Text>
+        {/* Same header as the desktop chat: what replies you get, and a settings button that opens
+            Settings -> Coach (2026-10-22). */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: v3Spacing.small, marginBottom: v3Spacing.small }}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.label, { color: t.mutedText }]}>Coach</Text>
+            <Text style={[styles.caption, { color: t.mutedText }]}>
+              {backend === 'claude'
+                ? (keySet ? 'AI chat on' : 'Add your API key in Settings → Coach to turn on AI chat')
+                : 'Pre-written answers — turn on AI chat in Settings → Coach'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Settings', { section: 'coach' })}
+            accessibilityRole="button"
+            accessibilityLabel="Coach settings"
+            hitSlop={8}
+            style={{ padding: 8, borderRadius: v3Radius.small, borderWidth: 1, borderColor: t.mutedText, backgroundColor: t.card }}
+          >
+            <Icon name="settings" size={18} color={t.text} />
+          </TouchableOpacity>
+        </View>
 
-        {messages.length === 0 && (
+        {messages.length === 0 && backend === 'claude' && keySet && (
           <Text style={[styles.caption, { color: t.mutedText, marginBottom: v3Spacing.small }]}>
-            {backend === 'claude'
-              ? 'Ask about today, and I read your real training when I answer.'
-              : 'Add your Anthropic API key in Settings for a real conversation. Until then these are pre-written answers.'}
+            Ask about today, and I read your real training when I answer.
           </Text>
         )}
 

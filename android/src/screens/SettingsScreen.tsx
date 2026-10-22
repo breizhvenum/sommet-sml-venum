@@ -12,11 +12,16 @@ import { RootStackParamList } from '../../App';
 import { useThemeMode, ThemeMode } from '../theme/ThemeModeContext';
 import { useExperimental } from '../config/ExperimentalContext';
 // The experimental features, one toggle each (André, 2026-08-17). Screen names must match the
-// RootStackParamList routes; icons/labels reuse the existing i18n strings.
+// RootStackParamList routes.
+// 2026-10-22 (desktop parity): same names, descriptions and order as the desktop's "Show in the
+// sidebar" card - Intervals, App Zone, Smart Sensor, Coach. Training Program is Android-only here
+// (the desktop shows it without a switch). GPS Track Pod isn't on Android; T6/X6 is desktop-only.
 const EXP_FEATURE_ROWS = [
-  { flag: 'intervals' as const,   label: t.experimentalIntervals,   desc: t.experimentalIntervalsDesc,   screen: 'Intervals' as const,   icon: 'chart' as const },
-  { flag: 'smartSensor' as const, label: t.experimentalSmartSensor, desc: t.experimentalSmartSensorDesc, screen: 'SmartSensor' as const, icon: 'link' as const },
-  { flag: 'workoutCalendar' as const, label: t.experimentalWorkoutCalendar, desc: t.experimentalWorkoutCalendarDesc, screen: 'WorkoutCalendar' as const, icon: 'chart' as const },
+  { flag: 'intervals' as const,   label: 'Intervals',    desc: 'Build interval workouts.',              screen: 'Intervals' as const },
+  { flag: 'appZone' as const,     label: 'App Zone',     desc: 'Build & install Suunto Apps.',          screen: 'AppZone' as const },
+  { flag: 'smartSensor' as const, label: 'Smart Sensor', desc: 'Suunto HR belt over Bluetooth.',        screen: 'SmartSensor' as const },
+  { flag: 'coach' as const,       label: 'Coach',        desc: 'Readiness beacon + chat, v2 concept.',  screen: 'Coach' as const },
+  { flag: 'workoutCalendar' as const, label: t.experimentalWorkoutCalendar, desc: t.experimentalWorkoutCalendarDesc, screen: 'WorkoutCalendar' as const },
 ];
 import { isMarkSyncedEnabled, setMarkSyncedEnabled as persistMarkSynced } from '../services/MarkSynced';
 import { isStrapHrvEnabled, setStrapHrvEnabled as persistStrapHrv } from '../services/StrapHrvPref';
@@ -30,7 +35,13 @@ import {
 import {
   getIntervalsIcuCredentials, saveIntervalsIcuCredentials, removeIntervalsIcuCredentials,
 } from '../services/ApiIntervalsIcu';
-import { setAnthropicKey, clearAnthropicKey, hasAnthropicKey } from '../services/CoachChat';
+import {
+  setAnthropicKey, clearAnthropicKey, hasAnthropicKey, getChatBackend, setChatBackend, ChatBackend,
+} from '../services/CoachChat';
+import {
+  isCatalogAvailable, hasCatalog, importCatalog, getEntries, invalidateEntries,
+} from '../services/CatalogService';
+import { useWeatherLocation, locateByIp, setManualLocation } from '../services/WeatherService';
 import { isEmberUnlocked, setEmberUnlocked } from '../services/EmberUnlock';
 import { getEmberSyncCfg, setEmberSyncCfg } from '../services/EmberSync';
 import { getUsdaApiKey, setUsdaApiKey } from '../services/EmberFood';
@@ -53,7 +64,7 @@ import { getTileCacheSizeBytes, clearTileCache } from '../services/TileCache';
 import { t } from '../i18n';
 import { APP_VERSION } from '../config/version';
 import { useV3Theme } from '../theme/v3';
-import { Button, Chip, FieldRow, IconBadge, StatusLine, Toggle } from '../components/ui/primitives';
+import { Button, Chip, Dropdown, FieldRow, IconBadge, StatusLine, Toggle } from '../components/ui/primitives';
 import { SettingsSection } from '../components/ui/SettingsSection';
 
 // Real, 2026-08-09 ("no button to change provider, nor in the settings like the desktop
@@ -84,8 +95,10 @@ const THEME_OPTIONS: { mode: ThemeMode; icon: IconName; label: () => string }[] 
 // top; everything else is one closed row each (SettingsSection) showing its current value. Which
 // rows are open is remembered between visits.
 const OPEN_SECTIONS_KEY = 'ambitapp:settings:openSections';
-const CLOSED_SECTIONS = ['activities', 'health', 'maps', 'ember', 'database', 'experimental',
-  'testing', 'firmware', 'about'];
+const CLOSED_SECTIONS = ['activities', 'health', 'maps', 'weather', 'ember', 'coach', 'database',
+  'catalog', 'experimental', 'testing', 'firmware', 'devices', 'about'];
+// How many apps the Coach's offline workout catalogue holds (data/systm-sample.json).
+const COACH_SAMPLE_SESSIONS = 55;
 
 // One account in the Connections card: name, status, and a real button (desktop parity, and the
 // a11y audit of 2026-10-21: the old "— Log in" lines read as plain text, not as something to tap).
@@ -101,6 +114,27 @@ function ConnectionRow({ name, status, connected, action, onPress }: {
         <Text style={{ fontSize: 14, color: t.mutedText }}>{` · ${status}`}</Text>
       </Text>
       <Button label={action} variant="outline" grow={false} onPress={onPress} />
+    </View>
+  );
+}
+
+// A switch with a label to its right - the desktop's RoundedSwitch rows (switch first, then the
+// words), used inside the rows below. Tapping the words flips it too.
+function SwitchLine({ value, onValueChange, label, a11yLabel, accent = false }: {
+  value: boolean; onValueChange: (v: boolean) => void; label: string;
+  // What a screen reader calls the switch, when `label` is only its state ("On", "Off").
+  a11yLabel?: string;
+  // Desktop colours a state label primary while on (Theme.primary vs Theme.mutedText).
+  accent?: boolean;
+}) {
+  const t = useV3Theme();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 }}>
+      <Toggle value={value} onValueChange={onValueChange} accessibilityLabel={a11yLabel ?? label} />
+      <TouchableOpacity style={{ flex: 1 }} activeOpacity={0.7} onPress={() => onValueChange(!value)}
+        accessible={false}>
+        <Text style={{ fontSize: 13, lineHeight: 19, color: accent ? (value ? t.primary : t.mutedText) : t.text }}>{label}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -175,21 +209,36 @@ export default function SettingsScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const cardY = useRef<Record<string, number>>({});
   const rowY = useRef<Record<string, number>>({});
-  const recordCard = (id: string) => (e: LayoutChangeEvent) => { cardY.current[id] = e.nativeEvent.layout.y; };
-  const recordRow = (id: string) => (e: LayoutChangeEvent) => { rowY.current[id] = e.nativeEvent.layout.y; };
+  // Some rows appear a moment after the screen opens (Ember, Coach, the catalog: their on/off
+  // state is read from storage, which can take a few seconds right after the app starts), which
+  // moves the rows under them. So after a link the scroll follows the target as the layout
+  // settles - for up to 4 s, and only until the user touches the page.
+  const pendingScroll = useRef<{ id: string; until: number } | null>(null);
+  const scrollToPending = useCallback(() => {
+    const p = pendingScroll.current;
+    if (!p) return;
+    if (Date.now() > p.until) { pendingScroll.current = null; return; }
+    const y = cardY.current[p.id] ?? (cardY.current.rows ?? 0) + (rowY.current[p.id] ?? 0);
+    // The screen's own top padding (20) stays above the section, as when it first opens.
+    scrollRef.current?.scrollTo({ y: Math.max(0, y - 20), animated: true });
+  }, []);
+  const recordCard = (id: string) => (e: LayoutChangeEvent) => {
+    cardY.current[id] = e.nativeEvent.layout.y;
+    scrollToPending();
+  };
+  const recordRow = (id: string) => (e: LayoutChangeEvent) => {
+    rowY.current[id] = e.nativeEvent.layout.y;
+    scrollToPending();
+  };
   const requestedSection = route.params?.section;
   useEffect(() => {
     if (!requestedSection) return;
     if (CLOSED_SECTIONS.includes(requestedSection)) setSectionOpen(requestedSection, true);
+    pendingScroll.current = { id: requestedSection, until: Date.now() + 4000 };
     // Short delay so an opened row is laid out before measuring where it is.
-    setTimeout(() => {
-      const y = cardY.current[requestedSection]
-        ?? (cardY.current.rows ?? 0) + (rowY.current[requestedSection] ?? 0);
-      // The screen's own top padding (20) stays above the section, as when it first opens.
-      scrollRef.current?.scrollTo({ y: Math.max(0, y - 20), animated: true });
-      navigation.setParams({ section: undefined } as never);
-    }, 150);
-  }, [requestedSection, setSectionOpen, navigation]);
+    setTimeout(scrollToPending, 150);
+    navigation.setParams({ section: undefined } as never);
+  }, [requestedSection, setSectionOpen, navigation, scrollToPending]);
 
   const [runalyzeKey, setRunalyzeKey]     = useState('');
   const [savedKey, setSavedKey]           = useState<string | null>(null);
@@ -204,6 +253,67 @@ export default function SettingsScreen() {
   const [anthropicKey, setAnthropicKeyInput]        = useState('');
   const [anthropicSaved, setAnthropicSaved]         = useState(false);
   const [savingAnthropic, setSavingAnthropic]       = useState(false);
+  // Settings -> Coach -> "Chat with a real AI coach" (desktop CoachService.chatBackend).
+  const [chatBackend, setChatBackendState]          = useState<ChatBackend>('canned');
+  function handleChatBackend(on: boolean) {
+    const v: ChatBackend = on ? 'claude' : 'canned';
+    setChatBackendState(v);
+    setChatBackend(v).catch(() => undefined);
+  }
+  // Suunto Apps Catalog (desktop parity): imported from the user's own SuuntoLink index.json.
+  // null = still checking. The count needs the catalog read once (a few MB), so it is read after
+  // the screen has drawn.
+  const [catalogEntries, setCatalogEntries]         = useState<number | null>(null);
+  const [catalogImported, setCatalogImported]       = useState(false);
+  const [catalogImporting, setCatalogImporting]     = useState(false);
+  const [catalogError, setCatalogError]             = useState('');
+  useEffect(() => {
+    if (!isCatalogAvailable()) return;
+    const timer = setTimeout(async () => {
+      try {
+        const has = await hasCatalog();
+        setCatalogImported(has);
+        setCatalogEntries(has ? (await getEntries()).length : 0);
+      } catch { setCatalogEntries(0); }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, []);
+  async function handleImportCatalog() {
+    setCatalogImporting(true);
+    setCatalogError('');
+    try {
+      const r = await importCatalog();
+      invalidateEntries();
+      setCatalogImported(true);
+      setCatalogEntries(r.count);
+    } catch (e: any) {
+      // The picker being closed without a file is not an error worth showing.
+      const msg = e?.message ?? String(e);
+      if (!/cancel/i.test(msg)) setCatalogError(msg);
+    } finally {
+      setCatalogImporting(false);
+    }
+  }
+  // Weather (desktop parity): where the forecast on Home is for.
+  const weatherLoc = useWeatherLocation();
+  const [weatherManual, setWeatherManual]           = useState(false);
+  const [latText, setLatText]                       = useState('');
+  const [lonText, setLonText]                       = useState('');
+  useEffect(() => { setWeatherManual(weatherLoc.manual); }, [weatherLoc.manual]);
+  useEffect(() => {
+    setLatText(String(weatherLoc.latitude));
+    setLonText(String(weatherLoc.longitude));
+  }, [weatherLoc.latitude, weatherLoc.longitude]);
+  function handleApplyWeather() {
+    const lat = parseFloat(latText.replace(',', '.'));
+    const lon = parseFloat(lonText.replace(',', '.'));
+    if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      Alert.alert('Weather', 'Enter a latitude (-90 to 90) and a longitude (-180 to 180).');
+      return;
+    }
+    setWeatherManual(true);
+    setManualLocation(lat, lon);
+  }
   // Ember visibility (2026-08-29): an open opt-in toggle now (the 10-tap easter egg was retired).
   // `emberOn` mirrors the persisted flag via isEmberUnlocked/setEmberUnlocked; the storage key is
   // unchanged so an already-unlocked install keeps Ember showing.
@@ -312,6 +422,7 @@ export default function SettingsScreen() {
     // Reflect whether a Coach key is already stored (the key itself is never read back into
     // the field - only whether one exists).
     hasAnthropicKey().then(setAnthropicSaved);
+    getChatBackend().then(setChatBackendState);
     isEmberUnlocked().then(setEmberOn);
     getEmberSyncCfg().then(c => { if (c) { setEmberSyncUrl(c.url); setEmberSyncToken(c.token); } });
     getUsdaApiKey().then(setUsdaKey);
@@ -386,6 +497,15 @@ export default function SettingsScreen() {
     } finally {
       setSavingSommet(false);
     }
+  }
+
+  // Desktop parity: "Stop syncing" forgets the server; the copy on this phone stays.
+  async function handleStopSommet() {
+    await setSommetSyncCfg(null);
+    setSommetSyncUrl('');
+    setSommetSyncToken('');
+    setSommetSaved(false);
+    setSommetStatus('Stopped syncing.');
   }
 
   async function handleTestSommet() {
@@ -532,7 +652,11 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScrollView ref={scrollRef} style={styles.root} contentContainerStyle={styles.content}>
+    // keyboardShouldPersistTaps: a tap on Save/Apply works while the keyboard is up, instead of
+    // only closing the keyboard.
+    <ScrollView ref={scrollRef} style={styles.root} contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      onScrollBeginDrag={() => { pendingScroll.current = null; }}>
       {/* ── Connections - real, 2026-08-09 ("settings was completely reworked in our
           desktop app... proceed"). Ports SettingsPage.qml's real Connections card: one
           compact card, a status-dot row per service, tap opens that service's own form in
@@ -540,7 +664,7 @@ export default function SettingsScreen() {
       {/* 2026-10-21 (Settings split): first card on the screen, each account with its own button. */}
       <View style={styles.section} onLayout={recordCard('connections')}>
         <View style={styles.cardHead}>
-          <IconBadge icon="link" />
+          <IconBadge icon="sync" />
           <Text style={styles.cardTitle}>{t.connectionsSection}</Text>
         </View>
         <ConnectionRow
@@ -657,33 +781,6 @@ export default function SettingsScreen() {
             </View>
             {intervalsSaved && <StatusLine text={t.credsStored} />}
 
-            {/* Coach chat key (2026-08-26, desktop parity). Deliberately spells out that this is
-                an Anthropic API key and NOT a claude.ai subscription - that is the mistake people
-                make, and it cannot work. Without a key the Coach still runs on pre-written
-                replies, so this is optional. */}
-            <Text style={[styles.cardTitle, { marginTop: 16 }]}>Coach chat</Text>
-            <Text style={styles.sectionDesc}>
-              Off, the coach replies from a few pre-written answers. Add your own Anthropic API
-              key (console.anthropic.com) for a real conversation about your training — not your
-              claude.ai login, which won't work here. Costs a few cents per conversation.
-            </Text>
-            <FieldRow
-              icon="key"
-              value={anthropicKey}
-              onChangeText={setAnthropicKeyInput}
-              placeholder={anthropicSaved ? 'Key saved (enter to replace)' : 'Anthropic API key'}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-            />
-            <View style={styles.row}>
-              <Button label={t.saveBtn} variant="filled" loading={savingAnthropic}
-                      onPress={handleSaveAnthropic} />
-              {anthropicSaved && (
-                <Button label={t.deleteBtn} icon="delete" variant="outline" tone="alert"
-                        grow={false} onPress={handleRemoveAnthropic} />
-              )}
-            </View>
             {/* Gear import/sync - lives here in the intervals.icu connection (André, 2026-08-18),
                 only once credentials are stored. Import pulls your gear down; Sync is two-way. */}
             {intervalsSaved && (
@@ -802,10 +899,7 @@ export default function SettingsScreen() {
           onToggle={toggleSection('activities')}
           onLayout={recordRow('activities')}
         >
-          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>Advanced power numbers</Text>
-            <Toggle value={advancedPower} onValueChange={handleToggleAdvancedPower} />
-          </View>
+          <SwitchLine value={advancedPower} onValueChange={handleToggleAdvancedPower} label="Advanced power numbers" />
           <Text style={styles.sectionDesc}>
             Adds normalized power, training load (TSS), intensity factor and work to rides with a power
             meter. Uses the FTP from your intervals.icu settings.
@@ -819,37 +913,34 @@ export default function SettingsScreen() {
             COOSPO, …) - the reader is device-agnostic. ── */}
         <SettingsSection
           title="Health"
-          summary={`Sleep score: ${icuSleepScore ? 'intervals.icu' : "Sommet's own"} · strap HRV: ${strapHrvEnabled ? 'on' : 'off'}`}
+          summary={`Sleep score: ${icuSleepScore ? 'from intervals.icu' : "Sommet's own"} · strap HRV: ${strapHrvEnabled ? 'on' : 'off'}`}
           icon="health"
           open={isOpen('health')}
           onToggle={toggleSection('health')}
           onLayout={recordRow('health')}
         >
-          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-              Morning HRV from a heart-rate strap
-            </Text>
-            <Toggle value={strapHrvEnabled} onValueChange={handleToggleStrapHrv} />
-          </View>
-          <Text style={styles.sectionDesc}>
-            Measure your morning HRV directly from a Bluetooth heart-rate strap (Polar Verity Sense,
-            COOSPO, …) - no watch needed. When on, a Measure card appears on the Health screen.
+          {/* Same controls as desktop, minus what Android has no source for: no Garmin Connect
+              (so no sleep/HRV provider choice) and no Ambit3 5+5 HRV import. */}
+          <Text style={[styles.sectionDesc, { fontSize: 11, lineHeight: 16 }]}>
+            Resting HR, steps, HRV and sleep come from intervals.icu, whatever device feeds it.
           </Text>
           {/* Which sleep score Health shows (André, 2026-10-04: "can we make it selectable?"). */}
-          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 14 }]}>
-            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-              Use intervals.icu's sleep score
-            </Text>
-            <Toggle
-              value={icuSleepScore}
-              onValueChange={v => { setIcuSleepScore(v); setSleepScoreSource(v ? 'intervals' : 'sommet').catch(() => {}); }}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <Text style={[styles.connRowText, { flex: 1 }]}>Sleep score</Text>
+            <Dropdown
+              value={icuSleepScore ? 1 : 0}
+              choices={[{ value: 0, label: "Sommet's own" }, { value: 1, label: 'From intervals.icu' }]}
+              onSelect={v => { setIcuSleepScore(v === 1); setSleepScoreSource(v === 1 ? 'intervals' : 'sommet').catch(() => {}); }}
             />
           </View>
-          <Text style={styles.sectionDesc}>
-            Off: Sommet scores each night itself, from how long you slept. On: the score that came
-            with the night on intervals.icu (from the watch or app that recorded it) is shown where
-            there is one.
-          </Text>
+          {/* Morning HRV from a BLE heart-rate strap (André, 2026-09-04). Opt-in, default OFF,
+              mirroring the desktop health/coospoHrvEnabled switch. */}
+          <SwitchLine
+            value={strapHrvEnabled}
+            onValueChange={handleToggleStrapHrv}
+            label="Heart-rate-strap morning HRV (Polar Verity Sense, COOSPO, …) — measure directly over Bluetooth, no watch. Turn on to show the Measure card on the Health page."
+            a11yLabel="Heart-rate-strap morning HRV"
+          />
         </SettingsSection>
 
         {/* ── Maps - real, 2026-08-09 ("no button to change provider, nor in the settings
@@ -902,6 +993,48 @@ export default function SettingsScreen() {
               disabled={!tileCacheBytes}
               onPress={handleClearTileCache}
             />
+          </View>
+        </SettingsSection>
+
+        {/* ── Weather (desktop parity, 2026-10-22): where Home's forecast is for. ── */}
+        <SettingsSection
+          title="Weather"
+          summary={weatherLoc.placeName ? `Open-Meteo · ${weatherLoc.placeName}` : 'Provider: Open-Meteo'}
+          icon="sun"
+          open={isOpen('weather')}
+          onToggle={toggleSection('weather')}
+          onLayout={recordRow('weather')}
+        >
+          <Text style={[styles.sectionDesc, { fontSize: 12 }]}>Provider: Open-Meteo</Text>
+          <Text style={[styles.connRowText, { marginTop: 4 }]}>Location source</Text>
+          <View style={[styles.chipRow, { justifyContent: 'flex-start', marginTop: 6 }]}>
+            {[{ manual: false, label: 'This phone (IP-based)' }, { manual: true, label: 'Manual' }].map(o => {
+              const on = weatherManual === o.manual;
+              return (
+                <TouchableOpacity
+                  key={o.label}
+                  style={[styles.chip, on && styles.chipActive]}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: on }}
+                  onPress={() => { setWeatherManual(o.manual); if (!o.manual) locateByIp(); }}
+                >
+                  <Text style={[styles.chipText, on && styles.chipTextActive]}>{o.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flex: 1 }}>
+              <FieldRow icon="poi" value={latText} onChangeText={setLatText} placeholder="Latitude"
+                keyboardType="numbers-and-punctuation" accessibilityLabel="Latitude" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <FieldRow icon="poi" value={lonText} onChangeText={setLonText} placeholder="Longitude"
+                keyboardType="numbers-and-punctuation" accessibilityLabel="Longitude" />
+            </View>
+          </View>
+          <View style={styles.row}>
+            <Button label="Apply" variant="outline" grow={false} onPress={handleApplyWeather} />
           </View>
         </SettingsSection>
 
@@ -964,6 +1097,60 @@ export default function SettingsScreen() {
         </SettingsSection>
         )}
 
+        {/* ── Coach (desktop parity, 2026-10-22): the reply choice and the Anthropic key, which used
+            to sit in the intervals.icu window. Shown while Coach is on in "Show in the sidebar". ── */}
+        {features.coach && (
+        <SettingsSection
+          title="Coach"
+          summary={`Replies: ${chatBackend === 'claude' ? 'Claude API' : 'pre-written'} · catalogue: bundled sample`}
+          icon="coach"
+          open={isOpen('coach')}
+          onToggle={toggleSection('coach')}
+          onLayout={recordRow('coach')}
+        >
+          <Text style={[styles.connRowText, { fontWeight: '700' }]}>Chat with a real AI coach</Text>
+          <Text style={[styles.sectionDesc, { fontSize: 11, lineHeight: 16, marginTop: 2 }]}>
+            Off, the coach replies from a few pre-written answers. On, it talks to Claude about your
+            real training. This needs an API key you create at console.anthropic.com — that's a
+            developer key, separate from a claude.ai subscription (your normal Claude login won't
+            work here), and it's billed separately, a few cents per chat.
+          </Text>
+          <SwitchLine
+            value={chatBackend === 'claude'}
+            onValueChange={handleChatBackend}
+            label={chatBackend === 'claude' ? 'Claude API' : 'Canned replies'}
+            a11yLabel="Chat with a real AI coach"
+            accent
+          />
+          {chatBackend === 'claude' && (
+            <>
+              <FieldRow
+                icon="key"
+                value={anthropicKey}
+                onChangeText={setAnthropicKeyInput}
+                placeholder={anthropicSaved ? 'Key saved (enter to replace)' : 'Anthropic API key'}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                accessibilityLabel="Anthropic API key"
+              />
+              <View style={styles.row}>
+                <Button label={t.saveBtn} variant="filled" grow={false} loading={savingAnthropic}
+                        disabled={!anthropicKey.trim()} onPress={handleSaveAnthropic} />
+                {anthropicSaved && (
+                  <Button label="Clear" variant="outline" grow={false} onPress={handleRemoveAnthropic} />
+                )}
+              </View>
+            </>
+          )}
+          <Text style={[styles.connRowText, { fontWeight: '700', marginTop: 16 }]}>Workout catalogue</Text>
+          <Text style={[styles.sectionDesc, { marginTop: 2 }]}>
+            Bundled sample ({COACH_SAMPLE_SESSIONS} sessions). The live wahoo-systm-mcp catalogue is on
+            the desktop app only.
+          </Text>
+        </SettingsSection>
+        )}
+
         {/* ── Database (#SYNC / André 2026-09-20): sync this phone with the computers through the
             user's own server/NAS — the only way to include the phone. A copy always stays on the
             phone (offline-first). No folder option here: phones can't keep their DB in a synced
@@ -1000,10 +1187,54 @@ export default function SettingsScreen() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
             <Button label="Test" variant="outline" onPress={handleTestSommet} />
             <Button label={t.saveBtn} variant="filled" loading={savingSommet} onPress={handleSaveSommet} />
-            <Button label="Sync now" variant="outline" loading={syncingSommet} onPress={handleSyncNow} />
+            <Button label="Sync now" variant="outline" loading={syncingSommet} disabled={!sommetSaved} onPress={handleSyncNow} />
           </View>
+          {sommetSaved && (
+            <Button label="Stop syncing" variant="outline" grow={false} onPress={handleStopSommet}
+              style={{ marginTop: 8, alignSelf: 'flex-start' }} />
+          )}
           {sommetStatus ? <StatusLine text={sommetStatus} /> : null}
         </SettingsSection>
+
+        {/* ── Suunto Apps Catalog (desktop parity, 2026-10-22). Same import the App Zone screen has. ── */}
+        {isCatalogAvailable() && (
+        <SettingsSection
+          title="Suunto Apps Catalog"
+          summary={catalogEntries === null ? ''
+            : catalogImported ? `Imported - ${catalogEntries} apps available`
+            : 'Not imported - only apps you create are available'}
+          icon="download"
+          open={isOpen('catalog')}
+          onToggle={toggleSection('catalog')}
+          onLayout={recordRow('catalog')}
+        >
+          <Text style={[styles.sectionDesc, { fontSize: 11, lineHeight: 16 }]}>
+            The official catalog of ~13,100 pre-compiled Suunto Apps - interval timers, HR-zone
+            displays, and thousands of Movescount-era community apps. This app never ships or
+            downloads it (most of it is other people's own work, not ours to redistribute) - import
+            your own copy of suunto-apps/index.json from your own SuuntoLink installation instead.
+            Suunto stopped updating this file when Movescount was retired, so any copy you have is
+            the same copy - there's nothing to keep up to date. If you don't import it, you'll still
+            have every app you create yourself in the Workout Builder - you just won't have this
+            existing catalog to browse and install from too.
+          </Text>
+          {catalogEntries !== null && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              {catalogImported && <Icon name="check" size={16} color={theme.success} />}
+              <Text style={{ fontSize: 12, color: theme.mutedText }}>
+                {catalogImported ? `Imported - ${catalogEntries} apps available`
+                  : 'Not imported - only apps you create are available'}
+              </Text>
+            </View>
+          )}
+          {!!catalogError && <StatusLine text={catalogError} tone="alert" />}
+          <Button
+            label={catalogImporting ? 'Importing…' : catalogImported ? 'Import a different copy' : 'Import Catalog'}
+            icon="download" variant="outline" grow={false} loading={catalogImporting}
+            disabled={catalogImporting || catalogEntries === null}
+            onPress={handleImportCatalog} style={{ marginTop: 10, alignSelf: 'flex-start' }} />
+        </SettingsSection>
+        )}
 
         {/* The feature switches moved to "Show in the sidebar" (2026-10-21). */}
         <SettingsSection
@@ -1017,14 +1248,10 @@ export default function SettingsScreen() {
           {/* Mark-synced write-back - independent opt-in, not gated by the master toggle
               (2026-08-16). Writes the watch's own per-move synced flag so the Suunto app /
               SuuntoLink don't duplicate; tradeoff spelled out so nobody enables it blindly. */}
-          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>{t.markSyncedLabel}</Text>
-            <Toggle
-              value={markSyncedEnabled}
-              onValueChange={handleToggleMarkSynced}
-            />
-          </View>
-          <Text style={styles.sectionDesc}>{t.markSyncedDesc}</Text>
+          <Text style={[styles.connRowText, { fontWeight: '700' }]}>{t.markSyncedLabel}</Text>
+          <Text style={[styles.sectionDesc, { marginTop: 2 }]}>{t.markSyncedDesc}</Text>
+          <SwitchLine value={markSyncedEnabled} onValueChange={handleToggleMarkSynced}
+            label={markSyncedEnabled ? 'On' : 'Off'} a11yLabel={t.markSyncedLabel} accent />
         </SettingsSection>
 
         {/* ── Testing mode (2026-08-16, ported from desktop): pretend a device is connected so
@@ -1039,15 +1266,12 @@ export default function SettingsScreen() {
           onLayout={recordRow('testing')}
         >
           <Text style={styles.sectionDesc}>{t.testingDesc}</Text>
-          <View style={[styles.row, { justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }]}>
-            <Text style={[styles.connRowText, { flex: 1, marginRight: 12 }]}>
-              {demo.enabled ? t.testingOnShowing(demo.device.name) : ' '}
-            </Text>
-            <Toggle value={demo.enabled} onValueChange={demo.setEnabled} />
-          </View>
+          <SwitchLine value={demo.enabled} onValueChange={demo.setEnabled}
+            label={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Off'} a11yLabel={t.testingSection} accent />
           {demo.enabled && (
             <View style={{ marginTop: 10 }}>
-              <Button label={t.testingChange} onPress={() => setDemoPickerOpen(true)} variant="outline" />
+              <Button label={t.testingChange} onPress={() => setDemoPickerOpen(true)} variant="outline" grow={false}
+                style={{ alignSelf: 'flex-start' }} />
             </View>
           )}
         </SettingsSection>
@@ -1068,6 +1292,27 @@ export default function SettingsScreen() {
           </Text>
           <Button label="Open firmware tool" icon="upload" variant="outline"
             onPress={() => navigation.navigate('Firmware')} style={{ marginTop: 10 }} />
+        </SettingsSection>
+        )}
+
+        {/* ── Supported devices (desktop parity, 2026-10-22): shown while a Garmin eTrex is plugged in. ── */}
+        {isGarminAttached && (
+        <SettingsSection
+          title="Supported devices"
+          summary="What Sommet can read, and how it connects"
+          icon="settings"
+          open={isOpen('devices')}
+          onToggle={toggleSection('devices')}
+          onLayout={recordRow('devices')}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.mutedText }} />
+            <Text style={{ fontSize: 12, color: theme.mutedText }}>Suunto Ambit 3 (USB)</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: theme.success }} />
+            <Text style={{ fontSize: 12, color: theme.text }}>Garmin eTrex — connected</Text>
+          </View>
         </SettingsSection>
         )}
 

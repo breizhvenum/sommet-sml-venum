@@ -1,4 +1,5 @@
 import * as Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Readiness } from './CoachService';
 
 // Coach chat — the Android port of desktop coachservice.cpp's chat half (André, 2026-08-26:
@@ -47,6 +48,26 @@ export async function clearAnthropicKey(): Promise<void> {
 
 export async function hasAnthropicKey(): Promise<boolean> {
   return !!(await getAnthropicKey());
+}
+
+// ---- which replies: pre-written or Claude -----------------------------------------------
+
+// Settings -> Coach -> "Chat with a real AI coach" (desktop parity, 2026-10-22: CoachService's
+// chatBackend). Saved on its own, apart from the key. Before this switch existed the replies
+// simply followed whether a key was stored, so with nothing saved yet that is still the answer -
+// an install that already chats with Claude keeps doing so.
+const CHAT_BACKEND_KEY = 'ambitapp:coach:chatBackend';
+
+export async function getChatBackend(): Promise<ChatBackend> {
+  try {
+    const v = await AsyncStorage.getItem(CHAT_BACKEND_KEY);
+    if (v === 'claude' || v === 'canned') return v;
+  } catch { /* fall through */ }
+  return (await hasAnthropicKey()) ? 'claude' : 'canned';
+}
+
+export async function setChatBackend(v: ChatBackend): Promise<void> {
+  await AsyncStorage.setItem(CHAT_BACKEND_KEY, v);
 }
 
 // ---- system prompt -----------------------------------------------------------------------

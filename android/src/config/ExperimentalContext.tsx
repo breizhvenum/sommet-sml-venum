@@ -9,17 +9,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // AsyncStorage/context pattern as ThemeModeContext. The three feature SCREENS are always
 // registered in navigation; a flag only controls whether Settings offers its entry point.
 
-export type ExpFeature = 'intervals' | 'smartSensor' | 'workoutCalendar';
-export const EXP_FEATURES: ExpFeature[] = ['intervals', 'smartSensor', 'workoutCalendar'];
+// appZone + coach added 2026-10-22 (desktop parity: the desktop has a sidebar switch for each,
+// both on by default, so turning them into switches here changes nothing until one is turned off).
+export type ExpFeature = 'intervals' | 'appZone' | 'smartSensor' | 'coach' | 'workoutCalendar';
+export const EXP_FEATURES: ExpFeature[] = ['intervals', 'appZone', 'smartSensor', 'coach', 'workoutCalendar'];
 const storageKey = (f: ExpFeature) => `ambitapp:experimental:${f}`;
 
 type FeatureFlags = Record<ExpFeature, boolean>;
-const ALL_OFF: FeatureFlags = { intervals: false, smartSensor: false, workoutCalendar: false };
+const ALL_OFF: FeatureFlags = { intervals: false, appZone: false, smartSensor: false, coach: false, workoutCalendar: false };
 // UX fix #1 (André, 2026-09-02): default these ON so owners find the features they bought the
 // watch for (structured workouts / App Zone via `intervals`, the HR belt via `smartSensor`, the
 // workout calendar). Desktop parity. A user who explicitly turned one OFF (stored '0') is still
-// respected below. (Coach is already always-on on Android; there are no T6/GPS-Pod flags here.)
-const DEFAULTS: FeatureFlags = { intervals: true, smartSensor: true, workoutCalendar: true };
+// respected below. (No T6/GPS-Pod flags here: T6/X6 is desktop-only, GPS Track Pod isn't on Android.)
+const DEFAULTS: FeatureFlags = { intervals: true, appZone: true, smartSensor: true, coach: true, workoutCalendar: true };
 
 interface ExperimentalContextValue {
   features: FeatureFlags;

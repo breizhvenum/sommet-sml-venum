@@ -133,19 +133,64 @@ interface WeatherState {
   data: WeatherData | null;
 }
 
-// Component-scoped (not a module-level singleton like WeatherService.cpp's own QML
-// singleton) - Home is the only real consumer right now, so a hook owning its own state +
-// refresh timer for as long as Home is mounted is the simplest thing that's still correct;
-// a shared singleton would only matter once a second screen needs the same live data.
+// Where the weather is for. Shared by Home's weather card and Settings -> Weather (desktop
+// parity: one WeatherService for the whole app). Detected from the IP at start, or set by hand
+// in Settings. Not saved, same as the desktop: the next start detects it from the IP again.
+export interface WeatherLocation {
+  latitude: number;
+  longitude: number;
+  placeName: string;
+  manual: boolean;
+}
+let currentLocation: WeatherLocation = {
+  latitude: DEFAULT_LAT, longitude: DEFAULT_LON, placeName: '', manual: false,
+};
+let detectedOnce = false;
+const locationListeners = new Set<(l: WeatherLocation) => void>();
+
+function publishLocation(next: WeatherLocation) {
+  currentLocation = next;
+  locationListeners.forEach(f => f(next));
+}
+
+export function getWeatherLocation(): WeatherLocation {
+  return currentLocation;
+}
+
+export function useWeatherLocation(): WeatherLocation {
+  const [loc, setLoc] = useState(currentLocation);
+  useEffect(() => {
+    locationListeners.add(setLoc);
+    setLoc(currentLocation);
+    return () => { locationListeners.delete(setLoc); };
+  }, []);
+  return loc;
+}
+
+/** Settings -> Weather -> "This phone (IP-based)": detect the location from the IP again. */
+export async function locateByIp(): Promise<void> {
+  detectedOnce = true;
+  const loc = await detectLocationFromIp();
+  const next = loc ?? { latitude: currentLocation.latitude, longitude: currentLocation.longitude };
+  publishLocation({ ...next, placeName: currentLocation.placeName, manual: false });
+}
+
+/** Settings -> Weather -> Manual: use these coordinates. */
+export function setManualLocation(latitude: number, longitude: number): void {
+  detectedOnce = true;
+  publishLocation({ latitude, longitude, placeName: '', manual: true });
+}
+
+// Home's weather card. Follows the shared location above: a change made in Settings refreshes
+// it (Home stays mounted under Settings).
 export function useWeather() {
   const [state, setState] = useState<WeatherState>({
     loading: false, available: false, hasFetchedOnce: false, placeName: '', data: null,
   });
-  const locationRef = useRef({ latitude: DEFAULT_LAT, longitude: DEFAULT_LON });
 
   async function refresh() {
     setState(s => ({ ...s, loading: true }));
-    const { latitude, longitude } = locationRef.current;
+    const { latitude, longitude } = currentLocation;
     const [data, placeName] = await Promise.all([
       fetchWeather(latitude, longitude),
       fetchPlaceName(latitude, longitude),
@@ -157,18 +202,28 @@ export function useWeather() {
       placeName,
       data,
     });
-  }
-
-  async function detectAndRefresh() {
-    const loc = await detectLocationFromIp();
-    if (loc) locationRef.current = loc;
-    await refresh();
+    // Share the place name too (Settings -> Weather shows it), if the location hasn't moved since.
+    if (currentLocation.latitude === latitude && currentLocation.longitude === longitude
+        && currentLocation.placeName !== placeName) {
+      publishLocation({ ...currentLocation, placeName });
+    }
   }
 
   useEffect(() => {
-    detectAndRefresh();
+    // A location change refreshes; a place-name-only update (published by refresh) does not.
+    let last = { latitude: currentLocation.latitude, longitude: currentLocation.longitude };
+    let fetched = false;
+    const onLocation = (l: WeatherLocation) => {
+      if (l.latitude === last.latitude && l.longitude === last.longitude) return;
+      last = { latitude: l.latitude, longitude: l.longitude };
+      fetched = true;
+      refresh();
+    };
+    locationListeners.add(onLocation);
+    if (!detectedOnce) locateByIp().then(() => { if (!fetched) refresh(); });
+    else refresh();
     const iv = setInterval(refresh, REFRESH_INTERVAL_MS);
-    return () => clearInterval(iv);
+    return () => { clearInterval(iv); locationListeners.delete(onLocation); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

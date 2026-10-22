@@ -1026,7 +1026,9 @@ export default function HomeScreen() {
     // Apps (2026-08-29, desktop parity): one entry -> a launcher with the Workout Builder +
     // the Suunto app catalog (AppsScreen), replacing the old separate 'Intervals' item. Same
     // App-Zone gating as before: Ambit3-family only, connected, not Kailash/Traverse/Ambit1-2.
-    ...(expFeatures.intervals && connected && deviceType === 'ambit' && !isKailash(ambitInfo) && !isTraverse(ambitInfo) && !isAmbit12(ambitInfo)
+    // Shown when either switch is on (Intervals = the builder, App Zone = the catalog), like the
+    // desktop's NavRail (2026-10-22).
+    ...((expFeatures.intervals || expFeatures.appZone) && connected && deviceType === 'ambit' && !isKailash(ambitInfo) && !isTraverse(ambitInfo) && !isAmbit12(ambitInfo)
       ? [{ id: 'apps', label: 'Apps', icon: 'apps' as const, onPress: () => navigation.navigate('Apps') }]
       : []),
     ...(expFeatures.smartSensor
@@ -1056,7 +1058,11 @@ export default function HomeScreen() {
       : []),
     // Weight/Health (2026-08-26, desktop parity): both read intervals.icu's wellness feed, so
     // like Gear they need no connected watch and sit unconditionally in this list.
-    { id: 'coach', label: 'Coach', icon: 'coach' as const, onPress: () => navigation.navigate('Coach'), group: 'training' as const },
+    // Coach: behind its own switch in Settings > Show in the sidebar, on by default (desktop parity,
+    // 2026-10-22: DeviceService.coachEnabled).
+    ...(expFeatures.coach
+      ? [{ id: 'coach', label: 'Coach', icon: 'coach' as const, onPress: () => navigation.navigate('Coach'), group: 'training' as const }]
+      : []),
     // Ember: off by default, shown once the user opts in via the open toggle in Settings
     // (the 10-tap easter egg was retired 2026-08-29, matching the desktop). `emberUnlocked` is
     // that persisted opt-in flag - the storage key is unchanged, so an already-on install keeps it.
