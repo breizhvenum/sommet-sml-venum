@@ -54,6 +54,25 @@ class BrytonUsbModule(private val reactContext: ReactApplicationContext) :
         return DocumentFile.fromTreeUri(reactContext, uri)
     }
 
+    /** Whether the drive a granted folder lives on is mounted now: true / false, or null when we
+     *  can't tell (not an external-storage tree, or the volume list is unavailable). A tree id
+     *  reads "<volume uuid>:<path>", e.g. "1234-ABCD:" for the root of a USB drive. */
+    private fun treeVolumeMounted(uri: Uri): Boolean? {
+        if (uri.authority != "com.android.externalstorage.documents") return null
+        val volumeId = try {
+            android.provider.DocumentsContract.getTreeDocumentId(uri).substringBefore(':')
+        } catch (_: Exception) { return null }
+        if (volumeId.isEmpty() || volumeId == "primary") return null
+        return try {
+            val sm = reactContext.getSystemService(Context.STORAGE_SERVICE) as StorageManager
+            sm.storageVolumes.any {
+                it.uuid.equals(volumeId, ignoreCase = true)
+                    && (it.state == android.os.Environment.MEDIA_MOUNTED
+                        || it.state == android.os.Environment.MEDIA_MOUNTED_READ_ONLY)
+            }
+        } catch (_: Exception) { null }
+    }
+
     // Non-prompting detection for the Home screen: is a BRYTON volume plugged in, and do we
     // already hold a usable grant? Never launches the picker.
     @ReactMethod
@@ -69,7 +88,10 @@ class BrytonUsbModule(private val reactContext: ReactApplicationContext) :
                 }
             } catch (_: Exception) {}
         }
-        val root = rootDoc()
+        // Home calls this every 4 s. With the granted drive unplugged, walking its folder fails
+        // inside DocumentFile and logs "Failed query" each time (tablet, 2026-10-23: 90 in 6 min),
+        // so skip the walk when we know that drive isn't mounted. Unsure -> walk, as before.
+        val root = if (!plugged && savedTree()?.let { treeVolumeMounted(it) } == false) null else rootDoc()
         val granted = root != null && traverse(root, "System/Profile.bin") != null
         promise.resolve(Arguments.createMap().apply {
             putBoolean("plugged", plugged || granted)

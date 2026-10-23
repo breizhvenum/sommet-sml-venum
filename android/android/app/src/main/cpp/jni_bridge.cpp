@@ -1008,7 +1008,11 @@ JNIEXPORT jstring JNICALL
 Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitGetLogAsFit(
         JNIEnv *env, jobject /* thiz */, jint index)
 {
-    if ((size_t)index >= g_log_fit_b64.size()) {
+    // getLogFits() reads until it gets null, so one past the end is how every sync stops - not an
+    // error. It used to log "hors limites" at error level on each sync (tablet, 2026-10-23).
+    if (index >= 0 && (size_t)index == g_log_fit_b64.size())
+        return nullptr;
+    if (index < 0 || (size_t)index > g_log_fit_b64.size()) {
         LOGE("nativeAmbitGetLogAsFit: index %d hors limites (cache=%zu)",
              index, g_log_fit_b64.size());
         return nullptr;

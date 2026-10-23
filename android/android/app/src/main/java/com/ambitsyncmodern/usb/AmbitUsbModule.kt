@@ -124,9 +124,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // null = "first found", the pre-switcher behaviour. Set from JS via selectDevice(); connect()
     // prefers it, falling back to the first match if that watch is no longer attached.
     @Volatile private var selectedDeviceName: String? = null
-    // Kept so a firmware re-enumeration reopen can close the dead connection before opening the
-    // re-enumerated one (normal connect() left this local; the flasher needs to manage it).
-    private var currentConnection: android.hardware.usb.UsbDeviceConnection? = null
+    // The open USB connection, closed by disconnect() and replaced by the next connect(). connect()
+    // used to leave it local and never close it: every sync left one open until the garbage
+    // collector got to it ("A resource failed to call close", tablet 2026-10-23), and the next
+    // claimInterface(force) had to take the watch from it. The firmware reopen uses it too.
+    @Volatile private var currentConnection: android.hardware.usb.UsbDeviceConnection? = null
     private var pendingConnectPromise: Promise? = null
     private var pendingPickGpxPromise: Promise? = null
     private var pendingSaveAsPromise: Promise? = null
@@ -349,6 +351,10 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
             promise.reject("AMBIT_INIT_FAILED", "libambit initialization failed (VID=0x${vid.toString(16)} PID=0x${pid.toString(16)})")
             return
         }
+        // nativeAmbitInit already let go of the previous device, so its connection can close now.
+        val previous = currentConnection
+        currentConnection = connection
+        if (previous !== connection) try { previous?.close() } catch (_: Exception) {}
 
         val deviceName = SUUNTO_PID_NAMES[pid] ?: device.productName ?: "Suunto (0x${pid.toString(16)})"
         val info = Arguments.createMap().apply {
@@ -1255,6 +1261,9 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun disconnect(promise: Promise) {
         if (jniLoaded) nativeAmbitDisconnect()
+        // After the native side let go of the fd (hid_close leaves it to us), not before.
+        try { currentConnection?.close() } catch (_: Exception) {}
+        currentConnection = null
         currentDevice = null
         promise.resolve(true)
     }

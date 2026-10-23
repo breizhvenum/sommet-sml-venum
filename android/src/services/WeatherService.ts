@@ -42,9 +42,17 @@ export async function fetchWeather(latitude: number, longitude: number): Promise
     timezone: 'auto',
     forecast_days: '3',
   });
-  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
-  if (!res.ok) return null;
-  const body = await res.json();
+  // No network (tablet asleep overnight, Wi-Fi off) makes fetch() throw "Network request failed".
+  // Return null like the location and place-name lookups: thrown, it went unhandled from the
+  // 10-minute refresh and left the card stuck on loading (tablet, 2026-10-23).
+  let body: any;
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
+    if (!res.ok) return null;
+    body = await res.json();
+  } catch {
+    return null;
+  }
   const current = body?.current;
   const daily = body?.daily;
   if (!current || !daily?.time?.length) return null;
