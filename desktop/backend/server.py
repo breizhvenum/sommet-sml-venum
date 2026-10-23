@@ -336,6 +336,11 @@ def return_watch(token):
 DEMO_REFUSED_MSG = ("Testing mode is on, so this wasn't sent to a watch - the sample watch can't "
                     "take it, and a real one is never touched. Turn Testing mode off in Settings "
                     "to use your own watch.")
+# The browser tools (Workout Builder, App Builder, Training Calendar) borrow the watch to READ
+# it too - opening the Install picker is a read - so "wasn't sent" would be wrong there.
+DEMO_LEND_REFUSED_MSG = ("Testing mode is on, so this page can't use a watch - Sommet is showing "
+                         "its sample watch, and a real one is never touched. Turn Testing mode "
+                         "off in Settings to use your own watch.")
 
 
 # A tool that found no watch fails with a Python traceback in stderr; say it plainly instead
@@ -1427,7 +1432,9 @@ class Handler(BaseHTTPRequestHandler):
         # next page read reflects the change (André writes sport modes; a stale cache would show
         # the pre-write mode). Coarse by design: an extra re-read after a write is cheap safety.
         if demo_ambit() and self.path.split("?", 1)[0] in DEMO_REFUSED_POSTS:
-            self._send_json(409, {"ok": False, "demo": True, "error": DEMO_REFUSED_MSG})
+            msg = (DEMO_LEND_REFUSED_MSG if self.path.split("?", 1)[0] == "/api/watch/lend"
+                   else DEMO_REFUSED_MSG)
+            self._send_json(409, {"ok": False, "demo": True, "error": msg})
             return
 
         if self._post_mutates_watch(self.path):
