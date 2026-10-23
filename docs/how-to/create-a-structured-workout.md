@@ -71,7 +71,7 @@ background.
 **"The WORKOUT menu is full".** The watch shows five workouts. The page offers to replace one;
 nothing is installed until you choose.
 
-**"Testing mode is on, so this wasn't sent to a watch".** Turn Testing mode off in Settings to
+**"Testing mode is on, so this page can't use a watch".** Turn Testing mode off in Settings to
 use your own watch.
 
 **The workout doesn't show in the WORKOUT menu.** Go into the sport mode you picked when
