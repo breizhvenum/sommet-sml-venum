@@ -152,7 +152,8 @@ PageFlickable {
                 // A change the watch didn't take, said plainly (audit 2026-10-22): it used to be
                 // wiped by the re-read that follows a failed write, so nothing was shown at all.
                 // The settings read fine, so lastError here is the write's (read errors are cleared
-                // by a good read, and get the banner above).
+                // by a good read, and get the banner above). If the re-read after the failed write
+                // fails too (watch unplugged), the service keeps this message and the last values.
                 Text {
                     width: parent.width
                     visible: SettingsWriteService.ok && SettingsWriteService.lastError.length > 0

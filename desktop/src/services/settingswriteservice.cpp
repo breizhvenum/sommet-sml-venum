@@ -7,6 +7,8 @@
 #include <QNetworkReply>
 #include <QSettings>
 
+#include <utility>
+
 static const QString kBackendBase = QStringLiteral("http://127.0.0.1:8766");
 
 SettingsWriteService::SettingsWriteService(QObject *parent) : QObject(parent)
@@ -54,14 +56,25 @@ void SettingsWriteService::refresh()
     QString path = QStringLiteral("/api/settings");
     if (!m_device.isEmpty())
         path += QStringLiteral("?device=") + QUrl::toPercentEncoding(m_device);
+    const bool afterFailedWrite = std::exchange(m_rereadAfterFailedWrite, false);
     QNetworkReply *reply = m_network.get(QNetworkRequest(backendUrl(path)));
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, afterFailedWrite] {
         reply->deleteLater();
         setLoading(false);
 
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
-        m_ok = (reply->error() == QNetworkReply::NoError) && obj.value(QStringLiteral("ok")).toBool();
+        const bool readOk = (reply->error() == QNetworkReply::NoError)
+            && obj.value(QStringLiteral("ok")).toBool();
 
+        // The re-read after a failed write failed too - the watch was unplugged, or the helper
+        // stopped (hardware test 2026-10-23). Keep the write's own "Couldn't change ..." and the
+        // values last read, instead of swapping both for the generic read banner.
+        if (!readOk && afterFailedWrite && !m_settings.isEmpty()) {
+            emit settingsChanged();   // the controls go back to the values last read
+            return;
+        }
+
+        m_ok = readOk;
         if (!m_ok) {
             const QString own = obj.value(QStringLiteral("error")).toString();
             setLastError(!own.isEmpty() ? own
@@ -175,6 +188,7 @@ void SettingsWriteService::writeSetting(const QString &key, const QVariant &valu
             // Real value may or may not have changed depending on where the write failed -
             // re-fetching is the only honest way to show what the watch actually has now,
             // rather than leaving the UI showing the value the user tried to set.
+            m_rereadAfterFailedWrite = true;
             refresh();
             return;
         }
