@@ -37,6 +37,35 @@ static bool isJunkActivity(int durationS, double distanceM)
     return durationS < 120 && distanceM < 100.0;
 }
 
+// Done indoors (Zwift, trainer, treadmill, indoor rower, gym, pool): no real GPS track. A Zwift
+// ride does carry positions, but they are the virtual world's, laid over the Pacific - its map,
+// that ocean's weather and "hours outside" in Totals were all wrong (André, 2026-10-24). Same
+// words as Android's SportNames.isIndoorSport; an intervals.icu import keeps its sport in `name`
+// ("Indoor cycling"). SQLite's LIKE ignores ASCII case.
+static const QString kNotIndoorName = QStringLiteral(
+    "COALESCE(name,'') NOT LIKE '%indoor%' AND COALESCE(name,'') NOT LIKE '%virtual%' "
+    "AND COALESCE(name,'') NOT LIKE '%trainer%' AND COALESCE(name,'') NOT LIKE '%treadmill%' "
+    "AND COALESCE(name,'') NOT LIKE '%pool%'");
+
+// Indoor intervals.icu imports keep no track: drops the ones fetched before that rule, and any a
+// shared-store pull brings back. They came from intervals.icu, so nothing is lost for good.
+static void dropIndoorImportTracks(QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    q.exec(QStringLiteral(
+        "UPDATE activities SET track_json = '' WHERE source = 'intervals' "
+        "AND COALESCE(track_json,'') NOT IN ('', '[]') AND NOT (%1)").arg(kNotIndoorName));
+}
+
+// An intervals.icu activity that has no positions there: the track backfill skips it from now on.
+static void markNoTrack(QSqlDatabase &db, const QString &externalId)
+{
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral("INSERT OR IGNORE INTO intervals_no_track (external_id) VALUES (?)"));
+    q.addBindValue(externalId);
+    q.exec();
+}
+
 
 static const QString kBackendBase = QStringLiteral("http://127.0.0.1:8766");
 
@@ -627,6 +656,14 @@ void ActivityService::openDatabase()
     // leave no activity row but must still be remembered so they aren't re-processed).
     q.exec(QStringLiteral(
         "CREATE TABLE IF NOT EXISTS bike_seen (key TEXT PRIMARY KEY)"));
+
+    // intervals.icu activities found to have no positions (a trainer ride filed as "Ride", a
+    // pool swim): asked once, not on every backfill run. Without this they stayed pending for
+    // good, and once the newest pending were all such rides the backfill never reached an older
+    // outdoor one. Android's twin is IntervalsTracks' intervals_no_track_v1.
+    q.exec(QStringLiteral(
+        "CREATE TABLE IF NOT EXISTS intervals_no_track (external_id TEXT PRIMARY KEY)"));
+    dropIndoorImportTracks(m_db);
 
     loadTombstones();
 }
@@ -1358,15 +1395,17 @@ void ActivityService::backfillIntervalsTracks(int maxCount)
     if (!m_db.isOpen()) return;
 
     // Only rows that genuinely need it: an intervals import, a real distance (so it plausibly
-    // has positions - indoor trainer rides have none), and no track stored yet. Newest first,
-    // because that is what the user is actually looking at.
+    // has positions), no track stored yet, not done indoors (kNotIndoorName), and not already
+    // found to have none. Newest first, because that is what the user is actually looking at.
     QSqlQuery q(m_db);
     q.prepare(QStringLiteral(
         "SELECT external_id FROM activities "
         "WHERE source = 'intervals' AND COALESCE(external_id,'') <> '' "
         "  AND COALESCE(distance_m,0) > 0 "
         "  AND COALESCE(track_json,'') IN ('', '[]') "
-        "ORDER BY start_time DESC LIMIT ?"));
+        "  AND %1 "
+        "  AND external_id NOT IN (SELECT external_id FROM intervals_no_track) "
+        "ORDER BY start_time DESC LIMIT ?").arg(kNotIndoorName));
     q.addBindValue(maxCount > 0 ? maxCount : 200);
     if (!q.exec()) return;
 
@@ -1394,7 +1433,9 @@ void ActivityService::fetchNextTrack()
             QSqlQuery c(QStringLiteral(
                 "SELECT COUNT(*) FROM activities WHERE source = 'intervals' "
                 "AND COALESCE(external_id,'') <> '' AND COALESCE(distance_m,0) > 0 "
-                "AND COALESCE(track_json,'') IN ('', '[]')"), m_db);
+                "AND COALESCE(track_json,'') IN ('', '[]') AND %1 "
+                "AND external_id NOT IN (SELECT external_id FROM intervals_no_track)")
+                .arg(kNotIndoorName), m_db);
             if (c.next()) remaining = c.value(0).toInt();
         }
         if (m_trackFilled > 0) {
@@ -1429,7 +1470,9 @@ void ActivityService::fetchNextTrack()
         ++m_trackDone;
 
         if (reply->error() == QNetworkReply::NoError) {
-            const QJsonArray streams = QJsonDocument::fromJson(reply->readAll()).array();
+            const QJsonDocument streamsDoc = QJsonDocument::fromJson(reply->readAll());
+            const bool answered = streamsDoc.isArray();   // else not a streams reply: next run
+            const QJsonArray streams = streamsDoc.array();
             QJsonArray lat, lon, alt;
             for (const QJsonValue &v : streams) {
                 const QJsonObject s = v.toObject();
@@ -1461,7 +1504,15 @@ void ActivityService::fetchNextTrack()
                     QJsonDocument(track).toJson(QJsonDocument::Compact)));
                 up.addBindValue(id);
                 if (up.exec()) ++m_trackFilled;
+            } else if (answered) {
+                markNoTrack(m_db, id);      // answered, no positions: don't ask again
             }
+        } else {
+            // No streams for it, gone, or refused for good: don't ask again. Login, rate-limit
+            // and server errors can clear up, so those are asked again on the next run.
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (status == 400 || status == 404 || status == 410 || status == 422)
+                markNoTrack(m_db, id);
         }
         // Deliberately continues past a failed activity rather than aborting the whole run -
         // one bad/streamless activity should not stop the rest of the backfill.
@@ -2844,6 +2895,7 @@ void ActivityService::sommetFetchNextBlob()
 {
     if (m_sommetBlobQueue.isEmpty()) {
         if (m_sommetPulled > 0) {
+            dropIndoorImportTracks(m_db);   // a pulled Zwift track stays off this one too
             dbLoadAll();
             emit activitiesChanged();
         }

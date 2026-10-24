@@ -6,6 +6,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { ActivityRecord, getAllActivities } from '../database/db';
 import { activityForName, colorForName } from '../services/ActivityColors';
 import { distanceLines, hoursLines, energyLines } from '../services/TotalsFacts';
+import { isIndoorSport } from '../services/SportNames';
 import { Card } from '../components/ui/Card';
 import { useV3Theme } from '../theme/v3';
 import { t } from '../i18n';
@@ -67,11 +68,13 @@ export default function TotalsScreen() {
     [activities, selectedYear],
   );
 
-  // "Hours outside": only activities that recorded a track. On Android every synced activity
-  // has its GPX file (gpx_path is NOT NULL - see db.ts), which is exactly the "has a GPS
-  // track" condition the desktop tests with a.track.length.
+  // "Hours outside": moves with a distance that weren't done indoors - the desktop's rule
+  // (TotalsPage.qml). A GPX file is no sign of being outside: every move read off the watch has
+  // one, treadmill and gym sessions included, and an intervals.icu ride has none until its trace
+  // arrives. Indoor is by sport (André, 2026-10-24): a trainer or treadmill distance, or a Zwift
+  // ride's virtual-world positions, is not time outside.
   const withTrack = useMemo(
-    () => yearActivities.filter(a => !!a.gpx_path),
+    () => yearActivities.filter(a => (a.distance_m || 0) > 0 && !isIndoorSport(a.activity_type)),
     [yearActivities],
   );
   const hoursOutside = useMemo(

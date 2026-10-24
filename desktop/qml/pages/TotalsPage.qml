@@ -70,9 +70,19 @@ Item {
     // an indoor session on the same watch does not count as time outside. A Kailash session
     // whose track fell outside TrackLog coverage is excluded too - that is honest, if
     // slightly conservative, and better than counting a treadmill hour as fresh air.
+    // Done indoors: never time outside, whatever its distance (a trainer, a treadmill) or track
+    // (a Zwift ride's virtual-world positions) - André, 2026-10-24. Same words as Android's
+    // isIndoorSport; a watch move named after its mode ("Zwift") is caught by its activity id.
+    function isIndoor(a) {
+        const re = /indoor|virtual|trainer|treadmill|pool/i
+        if (re.test(a.name || "")) return true
+        return (a.sportTypeRaw || 0) > 0 && re.test(ActivityTypes.forId(a.sportTypeRaw).name)
+    }
+
     readonly property real hoursOutside: {
         let seconds = 0
         for (const a of yearActivities) {
+            if (root.isIndoor(a)) continue
             // Outdoor/GPS proxy: a recorded GPS track, OR any positive distance. Imported rides
             // from intervals.icu / Garmin carry distance + duration but NO track array (they were
             // never read off the watch), so counting only track activities dropped them entirely
@@ -192,7 +202,8 @@ Item {
                 headline: qsTr("%1 h").arg(root.hoursOutside.toFixed(0))
                 subtitle: qsTr("Across %1 GPS activities")
                           .arg(root.yearActivities.filter(function(a) {
-                              return (a.hasGps || (a.distanceMeters || 0) > 0) }).length)
+                              return !root.isIndoor(a)
+                                  && (a.hasGps || (a.distanceMeters || 0) > 0) }).length)
                 lines: TotalsFacts.hoursLines(root.hoursOutside)
             }
 
