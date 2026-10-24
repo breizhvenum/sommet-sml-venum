@@ -62,6 +62,12 @@ export function isJunkActivity(durationS: number, distanceM: number): boolean {
   return (Number(durationS) || 0) < JUNK_MAX_S && (Number(distanceM) || 0) < JUNK_MAX_M;
 }
 
+/** Done indoors (Zwift, trainer, treadmill, indoor rower, gym, pool): no real GPS track. A Zwift
+ *  ride does carry positions, but they are the virtual world's, laid over the Pacific. */
+export function isIndoorSport(name: string): boolean {
+  return /indoor|virtual|trainer|treadmill|pool/i.test(String(name || ''));
+}
+
 /** On foot, pace (min/km) means something; on a bike or in a boat it does not - speed does. */
 export function isFootSport(name: string): boolean {
   return FOOT.has(String(name || '').trim().toLowerCase());

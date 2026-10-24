@@ -1,5 +1,7 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getIntervalsIcuCredentials } from './ApiIntervalsIcu';
 import { writeGpxFile } from './GpxService';
+import { isIndoorSport } from './SportNames';
 import { getAllActivities, markActivitySynced } from '../database/db';
 
 // Backfill the GPS trace for activities imported from intervals.icu (André, 2026-08-26:
@@ -20,6 +22,18 @@ import { getAllActivities, markActivitySynced } from '../database/db';
 // treating them as pairs yields garbage coordinates.
 
 const API_BASE = 'https://intervals.icu/api/v1';
+
+// Activities intervals.icu answered for with no positions (a pool swim, a trainer ride filed as
+// a plain "Ride"). Asked once, not on every run: they used to stay pending for good, so once the
+// 40 newest pending were such rides, the backfill never reached an older outdoor one.
+const NO_TRACK_KEY = 'intervals_no_track_v1';
+
+async function loadNoTrack(): Promise<Set<string>> {
+  try {
+    const v = JSON.parse((await AsyncStorage.getItem(NO_TRACK_KEY)) || '[]');
+    return new Set(Array.isArray(v) ? v.map(String) : []);
+  } catch { return new Set(); }
+}
 
 export interface BackfillResult {
   filled: number;
@@ -50,16 +64,19 @@ function buildGpx(name: string, lat: number[], lon: number[], alt: number[]): st
 }
 
 // Fetch and store the trace for one intervals activity. Returns the written file's FULL path
-// (what gpx_path must hold - MapScreen calls readGpxFile(activity.gpx_path) directly), or null
-// when the activity has no usable trace.
+// (what gpx_path must hold - MapScreen calls readGpxFile(activity.gpx_path) directly), 'none'
+// when intervals.icu has no positions for it, or null on an error worth trying again later.
 async function backfillOne(
   icuId: string, apiKey: string, name: string,
-): Promise<string | null> {
+): Promise<string | 'none' | null> {
   const raw = icuId.replace(/^icu:/, '');
   const resp = await fetch(`${API_BASE}/activity/${encodeURIComponent(raw)}/streams?types=latlng,altitude`, {
     headers: { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'Sommet/1.0' },
   });
-  if (!resp.ok) return null;                     // indoor/streamless activity, or a transient error
+  // No streams for it, gone, or refused for good: don't ask again. Login, rate-limit and server
+  // errors can clear up, so those are asked again on the next run.
+  if ([400, 404, 410, 422].includes(resp.status)) return 'none';
+  if (!resp.ok) return null;
   const streams = await resp.json();
   if (!Array.isArray(streams)) return null;
 
@@ -69,7 +86,7 @@ async function backfillOne(
     else if (s?.type === 'altitude') { alt = s.data ?? []; }
   }
   const gpx = buildGpx(name, lat, lon, alt);
-  if (!gpx) return null;
+  if (!gpx) return 'none';
 
   // overwrite=true: a re-run should replace a partial file rather than silently keep it.
   return await writeGpxFile(icuId, gpx, true);
@@ -83,17 +100,17 @@ export async function backfillIntervalsTracks(maxCount = 40): Promise<BackfillRe
   if (!creds) return { filled: 0, remaining: 0 };
 
   const all = await getAllActivities();
-  // Only intervals imports, with a real distance (so they plausibly have positions - an indoor
-  // trainer ride has none), and no trace yet.
-  const pending = all
-    .filter(a => a.id.startsWith('icu:') && (a.distance_m ?? 0) > 0 && !a.gpx_path)
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const noTrack = await loadNoTrack();
+  const pending = intervalsTrackQueue(all, noTrack);
 
-  let filled = 0;
+  let filled = 0, none = 0;
   for (const act of pending.slice(0, maxCount)) {
     try {
       const path = await backfillOne(act.id, creds.apiKey, act.activity_type || 'Activity');
-      if (path) {
+      if (path === 'none') {
+        noTrack.add(act.id);
+        none++;
+      } else if (path) {
         // Store the REAL path the writer returned - MapScreen reads gpx_path directly.
         await markActivitySynced({ ...act, gpx_path: path, synced_at: Date.now() });
         filled++;
@@ -102,5 +119,22 @@ export async function backfillIntervalsTracks(maxCount = 40): Promise<BackfillRe
       // One bad activity must not abort the whole backfill - keep going.
     }
   }
-  return { filled, remaining: Math.max(0, pending.length - filled) };
+  if (none > 0) {
+    try { await AsyncStorage.setItem(NO_TRACK_KEY, JSON.stringify([...noTrack])); } catch { /* asked again next run */ }
+  }
+  return { filled, remaining: Math.max(0, pending.length - filled - none) };
+}
+
+/** The imported activities still worth asking intervals.icu for a trace, newest first: a real
+ *  distance (so it plausibly has positions), no trace yet, not done indoors (a Zwift ride's
+ *  positions are a virtual world: no map, no weather, not "time outside" in Totals - same as an
+ *  indoor move read off the watch), and not already found to have none. */
+export function intervalsTrackQueue<T extends { id: string; distance_m?: number; gpx_path?: string;
+                                               activity_type?: string; date: string }>(
+  all: T[], noTrack: Set<string>,
+): T[] {
+  return all
+    .filter(a => a.id.startsWith('icu:') && (a.distance_m ?? 0) > 0 && !a.gpx_path
+                 && !isIndoorSport(a.activity_type || '') && !noTrack.has(a.id))
+    .sort((a, b) => b.date.localeCompare(a.date));
 }

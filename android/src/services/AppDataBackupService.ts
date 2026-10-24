@@ -2,6 +2,7 @@ import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDb } from '../database/db';
 import { saveFileAs, pickGpxFile } from '../native/AmbitUsbModule';
+import { activityFileStem } from './GpxService';
 
 /**
  * Back up (and restore) THIS app's own data - your synced activities (with their GPX/FIT
@@ -79,10 +80,16 @@ export function buildInsert(table: string, row: Record<string, any>):
 
 /** Point an activities row's gpx_path at the CURRENT install's activities dir. The column stores
  * an absolute path, and DocumentDirectory differs across installs/devices, so a restored row's
- * old path would dangle. The file is restored by basename, so recompute from id. */
+ * old path would dangle. The file is restored under its own name, so keep that name. A row with
+ * no track (an intervals.icu import before its trace came) stays without one: giving it a path
+ * made the map fail to open it, Totals count it as time outside and the trace backfill skip it.
+ * An "icu:<n>" id is stored as "icu_<n>.gpx" (activityFileStem), so the id alone isn't the name. */
 export function rewriteActivityPath<T extends Record<string, any>>(row: T, activitiesDir: string): T {
   if (row && typeof row.id === 'string' && 'gpx_path' in row) {
-    return { ...row, gpx_path: `${activitiesDir}/${row.id}.gpx` };
+    const old = typeof row.gpx_path === 'string' ? row.gpx_path : '';
+    if (!old) return { ...row, gpx_path: '' };
+    const name = old.split('/').pop() || `${activityFileStem(row.id)}.gpx`;
+    return { ...row, gpx_path: `${activitiesDir}/${name}` };
   }
   return row;
 }
