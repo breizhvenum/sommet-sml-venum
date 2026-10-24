@@ -120,7 +120,7 @@ cd ambit-app
 
 
 1. On your Android device, open the [latest release](https://github.com/skinnie/sommet/releases/latest)
-   and download `app-release-testing.apk`.
+   and download `Sommet_vX.Y.Z.apk` (X.Y.Z = the release's version).
 2. Tap the downloaded file to install it. The first time, Android will ask you to allow
    "Install from unknown sources" for your browser/file manager — allow it, then retry.
 3. To sync over USB you also need a **USB-OTG cable/adapter** between the phone and the
@@ -158,7 +158,7 @@ adb install -r <path-to-apk>
 ### Desktop (Linux / macOS / Windows)
 
 **Windows and macOS users: you don't need to build anything.** Each GitHub release carries
-a ready-made **Windows `.zip`** (unzip, double-click `ambitapp.exe`) and **macOS `.dmg`**
+a ready-made **Windows `.zip`** (unzip, double-click `Sommet.exe`) and **macOS `.dmg`**
 (open, drag to Applications) built automatically in the cloud — see the
 [latest release](https://github.com/skinnie/sommet/releases/latest). They are unsigned, so
 the first launch shows a one-time "unverified developer" prompt: on macOS right-click the
@@ -174,7 +174,12 @@ To build it yourself (the only path on Linux):
 The desktop app is Qt 6 / QML with a small stdlib-only Python backend that does the actual
 USB work. Prerequisites (all three platforms):
 - **Qt 6.5+** and **CMake** (3.21+) with a C++ compiler
-- **Python 3.8+** on `PATH` (runs the backend — no pip packages needed, stdlib only)
+- **Python 3.8+** on `PATH` (runs the backend)
+- **USB access to the watch** (Linux): the `hid` module and a udev rule, or the watch is never
+  found. On Mint/Ubuntu: `sudo apt install python3-hid libhidapi-hidraw0`, then
+  `echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1493", MODE="0666"' | sudo tee /etc/udev/rules.d/99-suunto.rules`
+  and `sudo udevadm control --reload-rules`, and unplug/replug the watch. Other
+  distributions: `pip install hid` - see [the runbook](docs/tutorials/runbook.md), step 0.3.
 
 That's the whole list — the map is drawn with plain Qt, so there is **no extra native
 library to build** (an earlier MapLibre dependency was removed; see `desktop/CMakeLists.txt`).
@@ -187,16 +192,16 @@ Build, then run:
 ```
 
 **Run it with `run-desktop.sh`, not the bare binary** — the app does not spawn its own
-backend, so launching `desktop/build/ambitapp` directly shows "backend not running".
+backend, so launching `desktop/build/Sommet` directly shows "backend not running".
 
 Per-platform build command and output (the two helper scripts are Linux/macOS shell
 scripts; on Windows run the raw `cmake` commands):
 
 | Platform | Command | Output | Status |
 |----------|---------|--------|--------|
-| **Linux** | `./build-desktop.sh` | `desktop/build/ambitapp` | ✅ Built and run on real hardware (Linux Mint, Qt 6.12.0) |
-| **macOS** | `cmake -S desktop -B desktop/build && cmake --build desktop/build` | `desktop/build/AmbitApp.app` | ⚠️ Should work; not tested yet |
-| **Windows** | `cmake -S desktop -B desktop/build && cmake --build desktop/build` | `desktop/build/ambitapp.exe` | ⚠️ Should work; not tested yet |
+| **Linux** | `./build-desktop.sh` | `desktop/build/Sommet` | ✅ Built and run on real hardware (Linux Mint, Qt 6.12.0) |
+| **macOS** | `cmake -S desktop -B desktop/build && cmake --build desktop/build` | `desktop/build/Sommet.app` | ⚠️ Should work; not tested yet |
+| **Windows** | `cmake -S desktop -B desktop/build && cmake --build desktop/build` | `desktop/build/Release/Sommet.exe` | ⚠️ Should work; not tested yet |
 
 On macOS and Windows, start the backend yourself before launching the binary:
 `cd desktop/backend && python3 server.py` (use `python` on Windows). Only the **Linux**
