@@ -9,7 +9,8 @@ import { useV3Theme } from '../theme/v3';
 import { t, fmtDate } from '../i18n';
 import { Workout } from '../services/WorkoutSource';
 import { parseCompiledApp, CompiledApp, COMPILE_SITE_URL } from '../services/IntervalsService';
-import { pickFile } from '../services/CatalogService';
+import { pickFile, copyText } from '../services/CatalogService';
+import { CompiledPasteBox } from '../components/CompiledPasteBox';
 import { readCustomModes } from '../services/CustomModesService';
 import { ExerciseMode } from '../services/CustomModesReader';
 import { syncCalendar, CalendarPlanEntry, SyncState, SyncResult } from '../services/TrainingCalendar';
@@ -93,6 +94,7 @@ export default function WorkoutCalendarScreen() {
   const [name, setName] = useState('My workout');
 
   const [generatedJson, setGeneratedJson] = useState<string | null>(null);
+  const [sourceCopied, setSourceCopied] = useState(false);
   const [compiledPending, setCompiledPending] = useState<CompiledApp | null>(null);
 
   // intervals.icu import (a date range -> planned workouts) + which pending plan row a compile is for
@@ -234,12 +236,20 @@ export default function WorkoutCalendarScreen() {
   // IntervalsScreen uses. Confirmed by reading the site's own bundled main.js, 2026-08-21.
   function handleGenerateAndOpen() {
     try {
-      setGeneratedJson(JSON.stringify(withSiUnits(withDefaultLabels(buildWorkout())), null, 2));
-      Linking.openURL(COMPILE_SITE_URL);
-      Alert.alert(t.experimentalWorkoutCalendar, t.intervalsSourceCopiedMsg);
+      showSourceAndOpen(JSON.stringify(withSiUnits(withDefaultLabels(buildWorkout())), null, 2));
     } catch (e: any) {
       Alert.alert(t.error, e?.message ?? String(e));
     }
+  }
+
+  // Shows the source, puts it on the clipboard (the button says "Copy"), then the steps - and
+  // the site opens on OK: raised after the browser opened, the message never showed.
+  async function showSourceAndOpen(json: string) {
+    setGeneratedJson(json);
+    const copied = await copyText(json);
+    setSourceCopied(copied);
+    Alert.alert(t.experimentalWorkoutCalendar, copied ? t.intervalsSourceCopiedMsg : t.intervalsSourceShownMsg,
+      [{ text: 'OK', onPress: () => { Linking.openURL(COMPILE_SITE_URL); } }]);
   }
 
   // Pull the athlete's planned workouts from intervals.icu for the date range and drop them into
@@ -288,29 +298,33 @@ export default function WorkoutCalendarScreen() {
   function handleCompileEntry(i: number) {
     const e = plan[i];
     if (!e.workout) return;
-    setGeneratedJson(JSON.stringify(withSiUnits(withDefaultLabels(e.workout)), null, 2));
     setCompileTarget(i);
-    Linking.openURL(COMPILE_SITE_URL);
-    Alert.alert(t.experimentalWorkoutCalendar, t.intervalsSourceCopiedMsg);
+    showSourceAndOpen(JSON.stringify(withSiUnits(withDefaultLabels(e.workout)), null, 2));
   }
+
+  const compiledForName = compileTarget != null && plan[compileTarget]
+    ? plan[compileTarget].workoutName : (name.trim() || 'Workout');
 
   async function handleImportCompiled() {
     try {
       const picked = await pickFile();
-      const forName = compileTarget != null ? plan[compileTarget].workoutName : (name.trim() || 'Workout');
-      const compiled = parseCompiledApp(picked.base64, forName);
-      if (compiled.binary.length === 0) { Alert.alert(t.error, 'Empty compiled app.'); return; }
-      if (compileTarget != null) {
-        // Attach to the imported plan row being compiled, rather than the manual add flow.
-        setPlan(p => p.map((e, idx) => (idx === compileTarget ? { ...e, compiled } : e)));
-        setCompileTarget(null);
-        setGeneratedJson(null);
-        Alert.alert(t.experimentalWorkoutCalendar, t.workoutCalendarAddedMsg);
-      } else {
-        setCompiledPending(compiled);
-      }
+      acceptCompiled(parseCompiledApp(picked.base64, compiledForName));
     } catch (e: any) {
       if (e?.message !== 'CANCELLED' && e?.code !== 'CANCELLED') Alert.alert(t.error, e?.message ?? String(e));
+    }
+  }
+
+  // A compiled result, from a picked file or pasted into the box.
+  function acceptCompiled(compiled: CompiledApp) {
+    if (compiled.binary.length === 0) { Alert.alert(t.error, 'Empty compiled app.'); return; }
+    if (compileTarget != null) {
+      // Attach to the imported plan row being compiled, rather than the manual add flow.
+      setPlan(p => p.map((e, idx) => (idx === compileTarget ? { ...e, compiled } : e)));
+      setCompileTarget(null);
+      setGeneratedJson(null);
+      Alert.alert(t.experimentalWorkoutCalendar, t.workoutCalendarAddedMsg);
+    } else {
+      setCompiledPending(compiled);
     }
   }
 
@@ -458,7 +472,7 @@ export default function WorkoutCalendarScreen() {
             </TouchableOpacity>
             {generatedJson != null && (
               <View style={{ marginTop: 10 }}>
-                <Text style={s.fieldLabel}>{t.intervalsSourceLabel}</Text>
+                <Text style={s.fieldLabel}>{sourceCopied ? t.intervalsSourceCopiedLabel : t.intervalsSourceLabel}</Text>
                 <TextInput
                   style={[s.input, { minHeight: 120, fontFamily: 'monospace', fontSize: 11 }]}
                   value={generatedJson}
@@ -471,6 +485,7 @@ export default function WorkoutCalendarScreen() {
             <TouchableOpacity style={[s.btn, { marginTop: 8 }]} onPress={handleImportCompiled}>
               <Text style={s.btnText}>{t.intervalsImportBtn}</Text>
             </TouchableOpacity>
+            <CompiledPasteBox fallbackName={compiledForName} onCompiled={acceptCompiled} />
             {compiledPending != null && (
               <Text style={[s.desc, { color: theme.primary, marginTop: 6 }]}>
                 {compiledPending.binary.length} B - {t.workoutCalendarAddBtn.toLowerCase()}?

@@ -12,7 +12,8 @@ import {
   buildWorkoutRequest, parseCompiledApp, installCompiledInterval, writePlannedMoves,
   PlannedMoveState, CompiledApp, COMPILE_SITE_URL,
 } from '../services/IntervalsService';
-import { pickFile } from '../services/CatalogService';
+import { pickFile, copyText } from '../services/CatalogService';
+import { CompiledPasteBox } from '../components/CompiledPasteBox';
 import { InstallState } from '../services/AppInstall';
 import { readCustomModes } from '../services/CustomModesService';
 import { ExerciseMode } from '../services/CustomModesReader';
@@ -47,6 +48,7 @@ export default function IntervalsScreen() {
   const [compiledApp, setCompiledApp] = useState<CompiledApp | null>(null);
   // The generated App-Zone source, shown for the user to select+copy into the compiler site.
   const [generatedSource, setGeneratedSource] = useState<string | null>(null);
+  const [sourceCopied, setSourceCopied] = useState(false);
 
   // Install picker (shared shape with App-Zone: read modes -> pick mode -> screen -> field).
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -74,11 +76,15 @@ export default function IntervalsScreen() {
   // Step 1: generate the App-Zone source, copy it, and open the PUBLIC compiler site in the
   // browser. No key, no API call - the user compiles there and downloads the result. (The
   // compiler is run by a Suunto employee and is legally sensitive; this app never automates it.)
-  function handleGenerateAndOpen() {
+  async function handleGenerateAndOpen() {
     try {
-      setGeneratedSource(buildWorkoutRequest(buildWorkout(), appName.trim() || 'Intervals'));
-      Linking.openURL(COMPILE_SITE_URL);
-      Alert.alert(t.experimentalIntervals, t.intervalsSourceCopiedMsg);
+      const source = buildWorkoutRequest(buildWorkout(), appName.trim() || 'Intervals');
+      setGeneratedSource(source);
+      const copied = await copyText(source);
+      setSourceCopied(copied);
+      // The site opens on OK: raised after the browser opened, the message never showed.
+      Alert.alert(t.experimentalIntervals, copied ? t.intervalsSourceCopiedMsg : t.intervalsSourceShownMsg,
+        [{ text: 'OK', onPress: () => { Linking.openURL(COMPILE_SITE_URL); } }]);
     } catch (e: any) {
       Alert.alert(t.error, e?.message ?? String(e));
     }
@@ -88,13 +94,17 @@ export default function IntervalsScreen() {
   async function handleImportCompiled() {
     try {
       const picked = await pickFile();
-      const compiled = parseCompiledApp(picked.base64, appName.trim() || 'Intervals');
-      if (compiled.binary.length === 0) { Alert.alert(t.error, 'Empty compiled app.'); return; }
-      setCompiledApp(compiled);
-      await openPicker();
+      await acceptCompiled(parseCompiledApp(picked.base64, appName.trim() || 'Intervals'));
     } catch (e: any) {
       if (e?.message !== 'CANCELLED' && e?.code !== 'CANCELLED') Alert.alert(t.error, e?.message ?? String(e));
     }
+  }
+
+  // A compiled result, from a picked file or pasted into the box.
+  async function acceptCompiled(compiled: CompiledApp) {
+    if (compiled.binary.length === 0) { Alert.alert(t.error, 'Empty compiled app.'); return; }
+    setCompiledApp(compiled);
+    await openPicker();
   }
 
   async function openPicker() {
@@ -149,7 +159,7 @@ export default function IntervalsScreen() {
         </TouchableOpacity>
         {generatedSource != null && (
           <View style={{ marginTop: 10 }}>
-            <Text style={s.fieldLabel}>{t.intervalsSourceLabel}</Text>
+            <Text style={s.fieldLabel}>{sourceCopied ? t.intervalsSourceCopiedLabel : t.intervalsSourceLabel}</Text>
             <TextInput
               style={[s.input, { minHeight: 120, fontFamily: 'monospace', fontSize: 11 }]}
               value={generatedSource}
@@ -162,6 +172,7 @@ export default function IntervalsScreen() {
         <TouchableOpacity style={[s.btn, { marginTop: 8 }]} onPress={handleImportCompiled}>
           <Text style={s.btnText}>{t.intervalsImportBtn}</Text>
         </TouchableOpacity>
+        <CompiledPasteBox fallbackName={appName.trim() || 'Intervals'} onCompiled={c => { acceptCompiled(c); }} />
       </Card>
 
       {/* ── Native planned move ── */}

@@ -16,8 +16,15 @@ const Native = (NativeModules as any).AmbitCatalog as
       binPath(): Promise<string>;
       importIndex(): Promise<{ count: number; bytes: number }>;
       pickFile(): Promise<{ base64: string; name: string }>;
+      copyText(text: string): Promise<boolean>;
     }
   | undefined;
+
+/** Put `text` on the clipboard. False when it couldn't (no native module, or it refused) -
+ * the caller then tells the user to select and copy it by hand. */
+export async function copyText(text: string): Promise<boolean> {
+  try { return !!Native && await Native.copyText(text); } catch { return false; }
+}
 
 /** Pick any small file and return its raw contents (base64) + filename. Used to import a
  * compiled interval app the user downloaded from the compiler site. */

@@ -1,6 +1,9 @@
 package com.ambitsyncmodern.catalog
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.JsonReader
@@ -92,6 +95,19 @@ class AmbitCatalogModule(private val reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
             pendingFilePromise = null
             promise.reject("PICK_FAILED", e.message ?: "Could not open the file picker")
+        }
+    }
+
+    // "Copy source & open compiler" (André, 2026-10-24): the button said copy but nothing was
+    // copied - the user had to select the source by hand on a phone.
+    @ReactMethod
+    fun copyText(text: String, promise: Promise) {
+        try {
+            val cm = reactContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("Sommet", text))
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("COPY_FAILED", e.message ?: "Could not copy")
         }
     }
 

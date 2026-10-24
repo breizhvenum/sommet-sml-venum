@@ -78,6 +78,23 @@ export function parseCompiledApp(fileBase64: string, fallbackName: string): Comp
   return { binary: raw, activityId: 0, name: fallbackName };
 }
 
+/** A compiled result PASTED from the compiler site's lower box. Only a JSON object (or a
+ * one-element array) carrying a non-empty `binary` of bytes counts; anything else is null.
+ * Unlike a picked file, pasted text is never taken as raw bytecode - a stray paste must not
+ * end up on the watch. */
+export function parseCompiledText(text: string, fallbackName: string): CompiledApp | null {
+  try {
+    const obj: any = JSON.parse(text.trim());
+    const entry = Array.isArray(obj) ? obj[0] : obj;
+    const bin = entry?.binary;
+    if (!Array.isArray(bin) || bin.length === 0
+        || !bin.every((b: any) => Number.isInteger(b) && b >= 0 && b <= 255)) return null;
+    return { binary: Uint8Array.from(bin), activityId: (entry.activityId ?? 0) & 0xff, name: entry.name ?? fallbackName };
+  } catch {
+    return null;
+  }
+}
+
 /** Install an already-compiled interval app (from parseCompiledApp) onto a sport-mode screen,
  * via the proven App-Zone install path. */
 export async function installCompiledInterval(
