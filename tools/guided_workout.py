@@ -128,10 +128,10 @@ def read_watch_language(link):
     """Read the watch's Units.Language so default step labels match its language. Returns a code
     like 'en'/'pt' (or None if it can't be read - callers fall back to English)."""
     try:
-        import settings_write as SW, sbem_schema
-        from write_nav import descriptor_for_product_id
+        import settings_write as SW
+        from write_nav import schema_for_link
         pid = getattr(link, "opened_product_id", None)
-        descriptor = descriptor_for_product_id(pid) or sbem_schema.default_descriptor()
+        descriptor = schema_for_link(link)
         r = SW.read_all(link.command(SW.CMD_SETTINGS_READ, b"\0\0\0\0"), descriptor, pid)
         value = r.get("settings", {}).get("language", {}).get("value")
         return UNITS_LANGUAGE_CODES.get(value)   # int enum -> "en"/"pt"/... (None if unknown)

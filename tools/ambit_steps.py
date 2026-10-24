@@ -64,10 +64,10 @@ def request(query_id, cursor=0):
     return struct.pack("<IHH", cursor, 1, 10) + sbem_schema.MAGIC + struct.pack("<H", query_id)
 
 
-def resolve_ids(serial=None, fw=None):
+def resolve_ids(serial=None, fw=None, path=None):
     """(ids, source) for this watch: its own descriptor when one is found, else the 2.4.17
     table. `source` says which, for the JSON output."""
-    path = sbem_schema.default_descriptor(serial, fw)
+    path = path or sbem_schema.default_descriptor(serial, fw)
     if path.is_file():
         try:
             schema = sbem_schema.load(path)
@@ -152,8 +152,22 @@ def decode(entries, ids):
     }
 
 
+def _own_schema(link):
+    """The watch's own schema over the cable (sbem_schema.for_link: our cache, SuuntoLink's
+    folder, assets/, else read off the watch), so a machine without SuuntoLink still names the
+    ids of a firmware other than 2.4.17. None over Bluetooth (the schema read is untried there)
+    or when the read fails: then the stored lookup and the 2.4.17 table, as before."""
+    from write_nav import Link
+    if type(link) is not Link or getattr(link, "dry_run", False):
+        return None
+    try:
+        return sbem_schema.for_link(link)
+    except Exception:  # hid backends and short replies each raise their own type
+        return None
+
+
 def read_steps(link, serial=None, fw=None):
-    ids, source = resolve_ids(serial, fw)
+    ids, source = resolve_ids(serial, fw, _own_schema(link))
     result = decode(read_raw(link, ids["query"]), ids)
     return {"ok": True, "ids_from": source, "query": ids["query"], **result}
 

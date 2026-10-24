@@ -188,10 +188,9 @@ def read_watch_hr(link=None):
             close = True
         try:
             import settings_write as SW
-            import sbem_schema
-            from write_nav import descriptor_for_product_id
+            from write_nav import schema_for_link
             pid = getattr(link, "opened_product_id", None)
-            descriptor = descriptor_for_product_id(pid) or sbem_schema.default_descriptor()
+            descriptor = schema_for_link(link)
             r = SW.read_all(link.command(SW.CMD_SETTINGS_READ, b"\0\0\0\0"), descriptor, pid)
             settings = r.get("settings", {})   # read_all nests the decoded values under "settings"
             max_hr = (settings.get("max_hr") or {}).get("value")

@@ -51,7 +51,7 @@ import struct
 import sys
 
 import sbem_schema
-from write_nav import CMD_DEVICE_INFO, CMD_SETTINGS_READ, Link, descriptor_for_product_id
+from write_nav import CMD_DEVICE_INFO, CMD_SETTINGS_READ, Link, descriptor_for_product_id, schema_for_link
 
 CMD_SETTINGS_WRITE = 0x1101
 KAILASH_PRODUCT_ID = 0x002A
@@ -1476,7 +1476,7 @@ def main():
     if product_id is None and link.opened_product_id is not None:
         product_id = link.opened_product_id
 
-    descriptor = descriptor_for_product_id(product_id) or sbem_schema.default_descriptor()
+    descriptor = schema_for_link(link)
     if not descriptor.exists():
         msg = f"missing schema descriptor: {descriptor}"
         print(json.dumps({"ok": False, "error": msg})) if args.json else print(msg)

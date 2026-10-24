@@ -113,6 +113,21 @@ def _find_kailash_descriptor():
 KAILASH_DESCRIPTOR = _find_kailash_descriptor()
 
 
+def _descriptor_for(link):
+    """The connected Kailash's own schema, read from the watch when no stored copy matches
+    (sbem_schema.for_link) - KAILASH_DESCRIPTOR above is one specific watch's file from a
+    private assets/ folder, so on anyone else's machine it was simply missing. Cable only: a
+    Bluetooth link keeps the stored file, the watch drives that session and the schema read
+    has not been tried over it."""
+    from write_nav import Link
+    if type(link) is Link and not link.dry_run:
+        try:
+            return sbem_schema.for_link(link)
+        except Exception:  # hid backends and short replies each raise their own type
+            pass
+    return KAILASH_DESCRIPTOR
+
+
 def read_history(link, warn=print):
     """Queries and decodes the real sml.DeviceHistory object. Returns a plain dict (JSON-
     serializable as-is) with `ok`, and on success `name`/`serial`/`cities_visited`/
@@ -127,7 +142,7 @@ def read_history(link, warn=print):
     if head < 0:
         return {"ok": False, "error": "no SBEM0102 payload in the reply"}
 
-    descriptor = KAILASH_DESCRIPTOR
+    descriptor = _descriptor_for(link)
     if not descriptor.exists():
         return {"ok": False, "error": f"the real Kailash descriptor is missing - expected it "
                 f"at {descriptor} (a real file from a real 7R app container extraction; see "
@@ -243,7 +258,7 @@ def read_device_log(link, warn=print):
     if head < 0:
         return {"ok": False, "error": "no SBEM0102 payload in the reply"}
 
-    descriptor = KAILASH_DESCRIPTOR
+    descriptor = _descriptor_for(link)
     if not descriptor.exists():
         return {"ok": False, "error": f"the real Kailash descriptor is missing - expected it "
                 f"at {descriptor}"}

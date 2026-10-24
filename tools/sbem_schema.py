@@ -79,6 +79,100 @@ def default_descriptor(serial=None, fw=None):
     return suuntolink_dirs()[0] / f"descr+{serial or '<SERIAL>'}+{fw}"
 
 
+# --- The watch's own copy --------------------------------------------------------------------
+# The `descr+SERIAL+FW` file is not something SuuntoLink invents: on a first connection it asks
+# the watch for it (its own log: "NSP::PathDescriptorGet failed ... NOT_SUPPORTED", then
+# "setDeviceDescriptors: saving descriptors to library cache" a second later, no network in
+# between). On the wire that is command 0x1104, a cursor-paged read: the request is a u32 cursor
+# (0 to start), the reply is the next cursor (u32), a "last chunk" byte, one more byte, then the
+# data. Concatenated, the chunks ARE the file - byte-identical in every case we hold both sides
+# of: Ambit3 Run 2.4.17 and Traverse 1.0.4 + 2.0.22 from SuuntoLink captures, Ambit3 Peak 2.4.17
+# read live (26 chunks, 0.8 s, 2026-10-05). So nobody needs SuuntoLink installed, and no table
+# has to be hardcoded per model or firmware: every watch brings its own.
+CMD_DESCRIPTOR_READ = 0x1104
+_CMD_DEVICE_INFO = 0x0000
+_MAX_CHUNKS = 400          # 26 on an Ambit3, 21 on a Traverse; a bound, not an expectation
+CACHE_DIR = pathlib.Path.home() / "AmbitAppBackups" / "schema"
+
+
+def is_complete(blob):
+    """True when `blob` is a whole SBEM0102 dictionary: the magic, then entries that end
+    exactly on the last byte. entries() itself slices past the end without complaining."""
+    if blob[:8] != MAGIC:
+        return False
+    off = 8
+    while off + 2 <= len(blob):
+        length = blob[off + 1]
+        off += 2
+        if length == 0xFF:
+            if off + 4 > len(blob):
+                return False
+            length, = struct.unpack_from("<I", blob, off)
+            off += 4
+        off += length
+    return off == len(blob) and len(blob) > 8
+
+
+def read_from_watch(link):
+    """The schema, straight off the connected watch (read-only, 0x1104). Raises RuntimeError
+    when the reply is not a complete SBEM0102 dictionary - a half-read schema must never be
+    cached, it would mis-name fields on every later run."""
+    cursor, blob = 0, b""
+    for _ in range(_MAX_CHUNKS):
+        reply = link.command(CMD_DESCRIPTOR_READ, struct.pack("<I", cursor), quiet=True)
+        if len(reply) < 6:
+            raise RuntimeError(f"schema read: short reply ({len(reply)} B) at cursor {cursor}")
+        cursor, = struct.unpack("<I", reply[:4])
+        blob += reply[6:]
+        if reply[4]:
+            break
+    else:
+        raise RuntimeError("schema read: the watch never marked a last chunk")
+    if not is_complete(blob):
+        raise RuntimeError(f"schema read: {len(blob)} B that are not a whole SBEM0102 dictionary")
+    return blob
+
+
+def watch_identity(link):
+    """(serial, firmware) of the open watch, e.g. ("8A15...", "2.4.17") - the two halves of
+    the descriptor's file name. Same 0x0000 request and layout as device_info.py."""
+    reply = link.command(_CMD_DEVICE_INFO, b"\x02\x48\x03\x00", quiet=True)
+    if len(reply) < 36:
+        raise RuntimeError(f"device_info reply too short: {len(reply)} bytes")
+    serial = reply[16:32].split(b"\0")[0].decode("ascii", "replace")
+    fw = reply[32:36]
+    return serial, f"{fw[0]}.{fw[1]}.{fw[2] | (fw[3] << 8)}"
+
+
+def for_link(link):
+    """The schema descriptor of the watch `link` is open on. Looks for this exact serial +
+    firmware in our own cache, then SuuntoLink's folder, then assets/; failing all three it
+    reads the schema from the watch itself and caches it. Never a different firmware's file,
+    never another model's - which also retires the per-model lookups that only worked on a
+    machine holding a private assets/ folder."""
+    serial, fw = watch_identity(link)
+    name = f"descr+{serial}+{fw}"
+    for folder in [CACHE_DIR, *suuntolink_dirs(), ASSETS]:
+        path = folder / name
+        if path.is_file() and is_complete(path.read_bytes()):
+            return path
+    blob = read_from_watch(link)
+    path = CACHE_DIR / name
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".part")
+        tmp.write_bytes(blob)
+        os.replace(tmp, path)
+    except OSError:
+        # Read-only home, full disk: still answer this run, from a temp file.
+        import tempfile
+        handle, tmp_name = tempfile.mkstemp(prefix="descr+", suffix=f"+{fw}")
+        with os.fdopen(handle, "wb") as out:
+            out.write(blob)
+        return pathlib.Path(tmp_name)
+    return path
+
+
 # Types of the <FRM> tag. utf8 is NUL-terminated, the rest is little-endian.
 STRUCT_FMT = {"uint8": "<B", "int8": "<b", "bool": "<B",
               "uint16": "<H", "int16": "<h",

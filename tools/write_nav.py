@@ -736,6 +736,24 @@ def descriptor_for_product_id(product_id):
     return None
 
 
+def schema_for_link(link):
+    """The schema descriptor of the watch `link` is open on - its own, read from the watch
+    itself when no stored copy matches its serial and firmware (sbem_schema.for_link). This is
+    what every live read should use: descriptor_for_product_id() and default_descriptor() only
+    find files on a machine that has SuuntoLink's data folder or a private assets/, which left
+    Settings and POIs dead for everyone else (reported 2026-10-05 by a user who never installed
+    SuuntoLink). Those two stay as the fallback if the watch refuses the read, so nothing that
+    worked before stops working."""
+    import sbem_schema
+    try:
+        return sbem_schema.for_link(link)
+    except Exception as exc:  # hid backends and short replies each raise their own type
+        print(f"  note: schema not readable from the watch ({exc}); using a stored descriptor",
+              file=sys.stderr)
+        return (descriptor_for_product_id(getattr(link, "opened_product_id", None))
+                or sbem_schema.default_descriptor())
+
+
 def settings_from_capture(capture):
     """The 0x1100 reply of a capture, for exercising the decoding without a watch."""
     for m in messages(capture):
@@ -1282,7 +1300,7 @@ def run_query(args):
         payload = link.command(command, request)
         print(f"  reply {len(payload)} B")
 
-    descriptor = descriptor_for_product_id(args.product_id) if not args.from_capture else None
+    descriptor = schema_for_link(link) if not args.from_capture else None
     if args.action == "settings":
         return 0 if show_settings(payload, args.all, args.redact, descriptor) is not None else 1
     # For POIs, a reply with no SBEM0102 payload is not an error - it means the watch has zero
