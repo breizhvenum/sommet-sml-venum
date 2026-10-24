@@ -249,7 +249,19 @@ void DeviceService::fetchDeviceInfo()
                 ? QStringLiteral("%1").arg(backendErrorText(reply))
                 : QStringLiteral("%1")
                     .arg(obj.value(QStringLiteral("stderr")).toString());
-            setLastError(QStringLiteral("Watch not connected"), technical);
+            // Nothing on the USB bus at all: Home's card already says "No watch connected -
+            // plug it in", so a red "Watch not connected" under it read as a fault on a first
+            // start (fresh-clone test, 2026-10-24). A watch that is there but won't answer
+            // still shows the error.
+            // (The backend answers 502 here, so `technical` is the HTTP error; its own words
+            // are in the body.)
+            const bool nothingPlugged = obj.value(QStringLiteral("noWatch")).toBool()
+                && obj.value(QStringLiteral("stderr")).toString()
+                       .contains(QStringLiteral("no supported Suunto watch on the USB bus"));
+            if (nothingPlugged)
+                setLastError(QString(), QString());
+            else
+                setLastError(QStringLiteral("Watch not connected"), technical);
             // Disconnected: the next connection is a new one and syncs again.
             m_autoSyncedThisConnection = false;
             // Not connected - real request 2026-08-08 ("if not connected, refresh with a 1
