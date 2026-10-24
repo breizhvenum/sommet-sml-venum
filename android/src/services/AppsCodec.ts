@@ -14,7 +14,7 @@
 
 export const APPS_BASE = 0x0927c0;
 export const APPS_REGION_SIZE = 200000;
-const MAGIC = Uint8Array.from([0x49, 0x41, 0x4d, 0x52, 0x55, 0x4c, 0x45, 0x00]); // "IAMRULE\0"
+export const MAGIC = Uint8Array.from([0x49, 0x41, 0x4d, 0x52, 0x55, 0x4c, 0x45, 0x00]); // "IAMRULE\0"
 export const NAME_LEN = 29;
 const ENTRY_HEADER_LEN = 3;
 const ENTRY_BLOCK_LEN = ENTRY_HEADER_LEN + NAME_LEN; // 32: entry_offset -> magic

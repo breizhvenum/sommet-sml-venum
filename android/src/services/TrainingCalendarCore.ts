@@ -1,5 +1,6 @@
 import { AppEntry, NAME_LEN } from './AppsCodec';
 import { GUIDANCE_ENTRY_TYPE, WORKOUT_MENU_MAX } from './GuidedWorkoutCore';
+import { programKey } from './WorkoutRuleIds';
 
 // Pure (native-free) core of the Calendar feature - André's locked design (2026-08-21):
 // dated native guided workouts named "Www dd/mm name" in the WORKOUT menu, sidestepping the
@@ -79,18 +80,19 @@ export function planDiff(existing: AppEntry[], planEntries: CalendarEntry[], tod
   return { keptRawBlocks, toAdd, waiting };
 }
 
-/** The kept managed entries whose bytes on the watch differ from what the plan now installs
+/** The kept managed entries whose program on the watch differs from what the plan now installs
  * under that label: a workout edited but left on the same date with the same name. planDiff goes
  * by name, so before this an edit never reached the watch (André's 10 s test, 2026-10-24).
- * `blockFor(label)` is the block the sync would install for that label, or null when it has
- * nothing to install (not compiled yet) - those stay as they are. */
+ * `programFor(label)` is the binary the sync would install for that label, or null when it has
+ * nothing to install (not compiled yet) - those stay as they are. Rule ids are ignored (handed
+ * out per install) and so is the sport byte (every native workout gets the same one). */
 export function staleKept(existing: AppEntry[], keptRawBlocks: Uint8Array[],
-                          blockFor: (label: string) => Uint8Array | null): AppEntry[] {
+                          programFor: (label: string) => Uint8Array | null): AppEntry[] {
   const kept = new Set(keptRawBlocks);
   return existing.filter((e) => {
     if (!isManaged(e.name) || !kept.has(e.rawBlock)) return false;
-    const want = blockFor(e.name);
-    return want != null && !sameBytes(want, e.rawBlock);
+    const want = programFor(e.name);
+    return want != null && !sameBytes(programKey(want), programKey(e.binary));
   });
 }
 

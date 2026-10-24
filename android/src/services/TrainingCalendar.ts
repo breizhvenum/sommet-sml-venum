@@ -5,6 +5,7 @@ import { decodeApps, buildAppsRegion, CompiledApp, AppEntry } from './AppsCodec'
 import { resolveRegion } from './MemoryMap';
 import { findModeIndex, ensureGuidanceDisplay, GUIDANCE_ENTRY_TYPE, modeActivityId, withLights } from './GuidedWorkoutCore';
 import { entryLabel, isManaged, planDiff, rebuildAppsRegion, staleKept, CalendarEntry } from './TrainingCalendarCore';
+import { ANY_MODE_ACTIVITY, freeRuleId, restampRuleIds, ruleIdOf, withRuleId } from './WorkoutRuleIds';
 
 // Orchestration for the Calendar feature (native I/O) - the Android counterpart to
 // tools/training_calendar.py's sync(), reusing the same read/write/verify shape as
@@ -117,12 +118,14 @@ export async function syncCalendar(
     let cmDecoded = decodeCM(base64ToBytes(await readCustomModesRaw()));
 
     // What the sync installs for an entry: its compiled workout under its label, with the
-    // step backlight flashes (the compiler emits only beeps) and the ActivityID of its mode
-    // (a ride must not keep the converter's default Running id, or it lists under Running).
+    // step backlight flashes (the compiler emits only beeps) and the any-mode sport byte - the
+    // watch runs a pick by its slot, so a per-sport byte ran another sport's workout once two
+    // sports were installed (WorkoutRuleIds). The mode is still looked up: an unknown one
+    // fails here rather than on the watch. Its rule id is handed out at install.
     const installable = (e: CalendarPlanEntry): CompiledApp => {
+      modeActivityId(cmDecoded, e.mode);
       const [binary] = e.workout ? withLights(e.compiled!.binary, e.workout) : [e.compiled!.binary];
-      return { ...e.compiled!, binary, name: entryLabel(e.date, e.workoutName),
-               activityId: modeActivityId(cmDecoded, e.mode) };
+      return { ...e.compiled!, binary, name: entryLabel(e.date, e.workoutName), activityId: ANY_MODE_ACTIVITY };
     };
     // An entry edited under the same date and name keeps its label, so planDiff keeps the old
     // workout; replace every kept one whose bytes differ from what the plan now holds.
@@ -133,7 +136,7 @@ export async function syncCalendar(
     }
     const stale = staleKept(existing, keptRawBlocks, (label) => {
       const e = byLabel.get(label);
-      return e?.compiled ? decodeApps(buildAppsRegion([], installable(e), GUIDANCE_ENTRY_TYPE))[0].rawBlock : null;
+      return e?.compiled ? installable(e).binary : null;
     });
     if (stale.length) {
       const goes = new Set(stale.map((e) => e.rawBlock));
@@ -149,16 +152,23 @@ export async function syncCalendar(
     const pendingCompile = toAdd.filter((e) => !(e as CalendarPlanEntry).compiled)
       .map((e) => entryLabel(e.date, e.workoutName));
 
-    let currentList = keptRawBlocks.map((b) => ({ rawBlock: b }));
+    // Workouts installed before the any-mode byte and per-install rule ids get both now, as the
+    // region is rewritten anyway (desktop guided_workout.restamp_rule_ids).
+    let currentList = restampRuleIds(existing.filter((e) => kept.has(e.rawBlock))).entries;
     let newAppsBytes: Uint8Array | null = null;
     const added: string[] = [];
     for (const e of ready as CalendarPlanEntry[]) {
       const compiled = installable(e);
+      const ruleId = freeRuleId(currentList.map((x) => ruleIdOf(x.binary)));
+      if (ruleId == null) {
+        onState({ phase: 'error', error: 'No free workout id (1-9) left on the watch.' }); return null;
+      }
+      compiled.binary = withRuleId(compiled.binary, ruleId);
       newAppsBytes = buildAppsRegion(currentList.map((x) => x.rawBlock), compiled, GUIDANCE_ENTRY_TYPE);
-      currentList = decodeApps(newAppsBytes).map((x) => ({ rawBlock: x.rawBlock }));
+      currentList = decodeApps(newAppsBytes);
       added.push(compiled.name!);
     }
-    if (newAppsBytes === null) newAppsBytes = rebuildAppsRegion(keptRawBlocks);
+    if (newAppsBytes === null) newAppsBytes = rebuildAppsRegion(currentList.map((x) => x.rawBlock));
     if (newAppsBytes.length > apps.size) {
       onState({ phase: 'error', error: 'The Apps region would overflow - the plan has too much installed at once.' });
       return null;

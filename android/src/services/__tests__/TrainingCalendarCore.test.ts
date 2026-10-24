@@ -105,21 +105,17 @@ describe('TrainingCalendarCore', () => {
   });
 
   test('staleKept: an entry edited under the same date and name is reinstalled', () => {
-    const block = (name: string, bytes: number[], activityId = 3) => decodeApps(buildAppsRegion([],
-      { binary: new Uint8Array(bytes), activityId, name }, 1))[0].rawBlock;
     const today = new Date(2026, 9, 24);
     const label = lbl('2026-10-24', 'Test');
     const existing = decodeApps(fakeAppsRegion([label, 'Couch-to-5K Week1']));
     const { keptRawBlocks } = planDiff(existing, [{ date: '2026-10-24', mode: 'Running', workoutName: 'Test' }], today);
-    // fakeAppsRegion wrote [1, 2, 3]; the plan now holds other steps -> stale.
-    expect(staleKept(existing, keptRawBlocks, () => block(label, [9, 9])).map((e) => e.name)).toEqual([label]);
-    // Same bytes -> left alone; nothing to install yet -> left alone.
-    expect(staleKept(existing, keptRawBlocks, () => block(label, [1, 2, 3]))).toEqual([]);
+    // fakeAppsRegion wrote [1, 2, 3]; the plan now holds another program -> stale.
+    expect(staleKept(existing, keptRawBlocks, () => new Uint8Array([9, 9])).map((e) => e.name)).toEqual([label]);
+    // Same program -> left alone (whatever the sport byte); nothing to install yet -> left alone.
+    expect(staleKept(existing, keptRawBlocks, () => new Uint8Array([1, 2, 3]))).toEqual([]);
     expect(staleKept(existing, keptRawBlocks, () => null)).toEqual([]);
-    // Another sport mode is another block too.
-    expect(staleKept(existing, keptRawBlocks, () => block(label, [1, 2, 3], 1)).length).toBe(1);
     // A workout installed by hand (not managed) is never touched.
-    expect(staleKept(existing, existing.map((e) => e.rawBlock), (l) => (l === label ? null : block(l, [7]))))
+    expect(staleKept(existing, existing.map((e) => e.rawBlock), (l) => (l === label ? null : new Uint8Array([7]))))
       .toEqual([]);
   });
 });
