@@ -1303,7 +1303,9 @@ export default function HomeScreen() {
           </View>
         </Card>
       )}
-      {deviceType === 'ambit' && ambitInfo && (
+      {/* Only while connected: after the watch closed a Bluetooth link the card stayed with
+          "Connected · via USB" (bleConnected false -> USB) under the "disconnected" message. */}
+      {deviceType === 'ambit' && ambitInfo && connected && (
         <Card style={[roomy ? styles.deviceCardRoomy : styles.deviceCardCol, styles.deviceCardInner]}>
           <Text style={[styles.deviceName, v3TextStyle]}>{ambitInfo.name}</Text>
           {/* Multi-watch switcher: shown with more than one watch to choose between, across both

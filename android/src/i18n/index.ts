@@ -110,7 +110,7 @@ const fr = {
   // Real bug, 2026-08-21: a live BLE link can drop on its own (watch-driven, short-lived
   // session) with no user action — this message + the existing connect-error retry UI is
   // what the user now sees instead of a silently stale "Connected" label.
-  homeBleDisconnectedError: 'La montre s\'est déconnectée. Réessayez « Associer en Bluetooth ».',
+  homeBleDisconnectedError: 'La montre a fermé la liaison Bluetooth. Sur la montre, choisissez « Sync now », puis touchez « Connecter … en Bluetooth ».',
   homePairWatchPill: 'Associer',
   homeBleReadyTitle: 'Prêt à associer',
   homeBleReadyMsg:
@@ -968,7 +968,7 @@ const en: typeof fr = {
   homeConnectRetryBtn: 'Retry',
   homeBleConnectBtn: 'Pair via Bluetooth',
   homeBleConnectWatchBtn: (name: string) => `Connect ${name} via Bluetooth`,
-  homeBleDisconnectedError: 'The watch disconnected. Tap "Pair via Bluetooth" to reconnect.',
+  homeBleDisconnectedError: 'The watch closed the Bluetooth link. Choose "Sync now" on the watch, then tap "Connect … via Bluetooth".',
   homePairWatchPill: 'Pair',
   homeBleReadyTitle: 'Ready to pair',
   homeBleReadyMsg:
