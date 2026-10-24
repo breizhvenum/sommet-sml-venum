@@ -72,6 +72,8 @@ export function eventBody(e: MirrorEntry) {
     name: e.workout.name || 'Workout',
     type: sportType(e),
     external_id: `sommet:${e.uid}`,
+    // Wahoo refuses a plan without one - see tools/intervals_events.py's event_body.
+    description: 'Made in Sommet.',
     workout_doc: workoutDoc(e.workout),
   };
 }

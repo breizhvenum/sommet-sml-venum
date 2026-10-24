@@ -92,6 +92,9 @@ def sport_type(entry):
     return "Ride"
 
 
+DESCRIPTION = "Made in Sommet."
+
+
 def event_body(entry):
     workout = entry["workout"]
     return {
@@ -100,6 +103,11 @@ def event_body(entry):
         "name": workout.get("name") or "Workout",
         "type": sport_type(entry),
         "external_id": f"sommet:{entry['uid']}",
+        # Wahoo refuses a plan without a description ("Plan validation error: field 'description'
+        # is missing"), so intervals.icu could never pass a Sommet workout on to an ELEMNT. Plain
+        # words, not steps: with workout_doc present intervals.icu keeps our steps as sent
+        # (checked on André's calendar 2026-10-24, event 147701306 - Wahoo then took it).
+        "description": DESCRIPTION,
         "workout_doc": workout_doc(workout),
     }
 
