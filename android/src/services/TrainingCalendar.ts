@@ -4,7 +4,7 @@ import { decode as decodeCM, encodeRegion } from './SportModeCodec';
 import { decodeApps, buildAppsRegion, CompiledApp, AppEntry } from './AppsCodec';
 import { resolveRegion } from './MemoryMap';
 import { findModeIndex, ensureGuidanceDisplay, GUIDANCE_ENTRY_TYPE, modeActivityId, withLights } from './GuidedWorkoutCore';
-import { entryLabel, isManaged, planDiff, rebuildAppsRegion, CalendarEntry } from './TrainingCalendarCore';
+import { entryLabel, isManaged, planDiff, rebuildAppsRegion, staleKept, CalendarEntry } from './TrainingCalendarCore';
 
 // Orchestration for the Calendar feature (native I/O) - the Android counterpart to
 // tools/training_calendar.py's sync(), reusing the same read/write/verify shape as
@@ -110,7 +110,36 @@ export async function syncCalendar(
     // anything else that fails to decode is suspect, so re-read before believing it.
     const existing = await readExistingAppsStable(apps.base);
 
-    const { keptRawBlocks, toAdd, waiting } = planDiff(existing, plan, today);
+    const diff = planDiff(existing, plan, today);
+    const { waiting } = diff;
+    let { keptRawBlocks } = diff;
+    const toAdd = [...diff.toAdd];
+    let cmDecoded = decodeCM(base64ToBytes(await readCustomModesRaw()));
+
+    // What the sync installs for an entry: its compiled workout under its label, with the
+    // step backlight flashes (the compiler emits only beeps) and the ActivityID of its mode
+    // (a ride must not keep the converter's default Running id, or it lists under Running).
+    const installable = (e: CalendarPlanEntry): CompiledApp => {
+      const [binary] = e.workout ? withLights(e.compiled!.binary, e.workout) : [e.compiled!.binary];
+      return { ...e.compiled!, binary, name: entryLabel(e.date, e.workoutName),
+               activityId: modeActivityId(cmDecoded, e.mode) };
+    };
+    // An entry edited under the same date and name keeps its label, so planDiff keeps the old
+    // workout; replace every kept one whose bytes differ from what the plan now holds.
+    const byLabel = new Map<string, CalendarPlanEntry>();
+    for (const e of [...plan].sort((a, b) => a.date.localeCompare(b.date))) {
+      const label = entryLabel(e.date, e.workoutName);
+      if (!byLabel.has(label)) byLabel.set(label, e);
+    }
+    const stale = staleKept(existing, keptRawBlocks, (label) => {
+      const e = byLabel.get(label);
+      return e?.compiled ? decodeApps(buildAppsRegion([], installable(e), GUIDANCE_ENTRY_TYPE))[0].rawBlock : null;
+    });
+    if (stale.length) {
+      const goes = new Set(stale.map((e) => e.rawBlock));
+      keptRawBlocks = keptRawBlocks.filter((b) => !goes.has(b));
+      for (const e of stale) toAdd.push(byLabel.get(e.name)!);
+    }
     const kept = new Set(keptRawBlocks);
     // Expired or removed from the plan; one moved back to waiting is reported under `waiting`.
     const removed = existing.filter((e) => isManaged(e.name) && !kept.has(e.rawBlock)
@@ -120,21 +149,14 @@ export async function syncCalendar(
     const pendingCompile = toAdd.filter((e) => !(e as CalendarPlanEntry).compiled)
       .map((e) => entryLabel(e.date, e.workoutName));
 
-    let cmDecoded = decodeCM(base64ToBytes(await readCustomModesRaw()));
     let currentList = keptRawBlocks.map((b) => ({ rawBlock: b }));
     let newAppsBytes: Uint8Array | null = null;
     const added: string[] = [];
     for (const e of ready as CalendarPlanEntry[]) {
-      const label = entryLabel(e.date, e.workoutName);
-      // Backlight flashes from the workout's per-step ticks - the compiler emits only beeps.
-      const [binary] = e.workout ? withLights(e.compiled!.binary, e.workout) : [e.compiled!.binary];
-      // Listed under this sport's WORKOUT menu only with its ActivityID (a ride must not keep
-      // the converter's default Running id).
-      const compiled: CompiledApp = { ...e.compiled!, binary, name: label,
-                                      activityId: modeActivityId(cmDecoded, e.mode) };
+      const compiled = installable(e);
       newAppsBytes = buildAppsRegion(currentList.map((x) => x.rawBlock), compiled, GUIDANCE_ENTRY_TYPE);
       currentList = decodeApps(newAppsBytes).map((x) => ({ rawBlock: x.rawBlock }));
-      added.push(label);
+      added.push(compiled.name!);
     }
     if (newAppsBytes === null) newAppsBytes = rebuildAppsRegion(keptRawBlocks);
     if (newAppsBytes.length > apps.size) {

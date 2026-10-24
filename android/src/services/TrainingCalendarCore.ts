@@ -79,6 +79,27 @@ export function planDiff(existing: AppEntry[], planEntries: CalendarEntry[], tod
   return { keptRawBlocks, toAdd, waiting };
 }
 
+/** The kept managed entries whose bytes on the watch differ from what the plan now installs
+ * under that label: a workout edited but left on the same date with the same name. planDiff goes
+ * by name, so before this an edit never reached the watch (André's 10 s test, 2026-10-24).
+ * `blockFor(label)` is the block the sync would install for that label, or null when it has
+ * nothing to install (not compiled yet) - those stay as they are. */
+export function staleKept(existing: AppEntry[], keptRawBlocks: Uint8Array[],
+                          blockFor: (label: string) => Uint8Array | null): AppEntry[] {
+  const kept = new Set(keptRawBlocks);
+  return existing.filter((e) => {
+    if (!isManaged(e.name) || !kept.has(e.rawBlock)) return false;
+    const want = blockFor(e.name);
+    return want != null && !sameBytes(want, e.rawBlock);
+  });
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 function writeU32(b: Uint8Array, o: number, v: number) {
   b[o] = v & 0xff; b[o + 1] = (v >> 8) & 0xff; b[o + 2] = (v >> 16) & 0xff; b[o + 3] = (v >>> 24) & 0xff;
 }
