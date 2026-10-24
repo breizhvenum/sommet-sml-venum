@@ -59,6 +59,11 @@ class GarminModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "GarminModule"
 
+    // Required by NativeEventEmitter on the JS side (without them React Native logs a warning at
+    // every start). Events are sent through RCTDeviceEventEmitter, so there's nothing to track.
+    @ReactMethod fun addListener(eventName: String) {}
+    @ReactMethod fun removeListeners(count: Int) {}
+
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ACTION_GARMIN_USB_PERMISSION) return

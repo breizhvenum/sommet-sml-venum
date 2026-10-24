@@ -42,12 +42,32 @@ export interface ActivityRecord {
 
 // ─── Singleton DB ─────────────────────────────────────────────────────────────
 
-let _db: SQLiteDatabase | null = null;
+let _db: Promise<SQLiteDatabase> | null = null;
 
-export async function getDb(): Promise<SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await SQLite.openDatabase({ name: 'ambitsync.db', location: 'default' });
-  await _db.executeSql(`
+// One open + setup, shared by every caller. It used to keep the database as soon as the file
+// opened, so the screens asking for it at start-up each ran the whole setup at the same time
+// (every ADD COLUMN twice in the tablet's log, 2026-10-23), and a caller arriving mid-setup got
+// the database before its new columns existed. A failed open isn't kept: the next call retries.
+export function getDb(): Promise<SQLiteDatabase> {
+  if (!_db) _db = openAndMigrate().catch(e => { _db = null; throw e; });
+  return _db;
+}
+
+// Adds the columns a table created by an earlier build is missing. Asks first: a plain ADD COLUMN
+// on a column that's there fails, and although that failure was swallowed, SQLite logged it with
+// a stack trace, 21 of them on every start.
+async function addMissingColumns(db: SQLiteDatabase, table: string, columns: [string, string][]) {
+  const [res] = await db.executeSql(`PRAGMA table_info(${table})`);
+  const have = new Set<string>();
+  for (let i = 0; i < res.rows.length; i++) have.add(res.rows.item(i).name);
+  for (const [name, decl] of columns) {
+    if (!have.has(name)) await db.executeSql(`ALTER TABLE ${table} ADD COLUMN ${name} ${decl}`).catch(() => {});
+  }
+}
+
+async function openAndMigrate(): Promise<SQLiteDatabase> {
+  const db = await SQLite.openDatabase({ name: 'ambitsync.db', location: 'default' });
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS activities (
       id            TEXT    PRIMARY KEY,
       synced_at     INTEGER NOT NULL,
@@ -60,7 +80,7 @@ export async function getDb(): Promise<SQLiteDatabase> {
     )
   `);
   // Table liste noire : activités supprimées volontairement, ne jamais re-importer
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS deleted_activities (
       id         TEXT    PRIMARY KEY,
       deleted_at INTEGER NOT NULL
@@ -70,30 +90,24 @@ export async function getDb(): Promise<SQLiteDatabase> {
   // same identity the desktop uses. Separate from deleted_activities (keyed by the local id): the
   // shared store identifies a record by uid, so a delete pushes/pulls by uid. Rows whose uid is
   // here are never re-created by a pull, and are deleted locally when a remote tombstone arrives.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS sommet_deleted (
       uid TEXT PRIMARY KEY
     )
   `);
   // Migrations
-  await _db.executeSql(
-    `ALTER TABLE activities ADD COLUMN activity_type TEXT NOT NULL DEFAULT ''`
-  ).catch(() => {});
-  await _db.executeSql(
-    `ALTER TABLE activities ADD COLUMN device TEXT NOT NULL DEFAULT ''`
-  ).catch(() => {});
-  await _db.executeSql(
-    `ALTER TABLE activities ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`
-  ).catch(() => {});
-  await _db.executeSql(
-    `ALTER TABLE activities ADD COLUMN energy_kcal INTEGER NOT NULL DEFAULT 0`
-  ).catch(() => {});
-  await tidyImportedActivities(_db).catch(() => {});
+  await addMissingColumns(db, 'activities', [
+    ['activity_type', `TEXT NOT NULL DEFAULT ''`],
+    ['device', `TEXT NOT NULL DEFAULT ''`],
+    ['updated_at', 'INTEGER NOT NULL DEFAULT 0'],
+    ['energy_kcal', 'INTEGER NOT NULL DEFAULT 0'],
+  ]);
+  await tidyImportedActivities(db).catch(() => {});
   // ── Gear tracker (v3) — see gearDb.ts. Local-first, mirrored to intervals.icu. ──
   // A component (part) is a gear row with parent_id set. remote_id is the intervals.icu id
   // once mirrored (null for local-only, not-yet-pushed rows). last_synced_at + a stored
   // snapshot of the remote state let the mirror tell a one-sided edit from a real conflict.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS gear (
       id            TEXT    PRIMARY KEY,           -- local id (uuid or the remote id)
       remote_id     TEXT,                          -- intervals.icu id, null until pushed
@@ -112,7 +126,7 @@ export async function getDb(): Promise<SQLiteDatabase> {
   `);
   // Reminder intervals mirror intervals.icu exactly (a reminder can combine several units):
   // distance (m), time (s), days, activities. percent_used (>=100 => due) comes from the server.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS gear_reminder (
       id            TEXT    PRIMARY KEY,
       remote_id     TEXT,
@@ -136,28 +150,32 @@ export async function getDb(): Promise<SQLiteDatabase> {
   // Idempotent migrations for tables created by an EARLIER gear build (CREATE TABLE IF NOT
   // EXISTS won't add columns to a table that already exists). A DB that predates any of these
   // columns is missing them -> "table gear_reminder has no column named distance_m" on insert.
-  // Each ADD COLUMN throws (and is swallowed) when the column is already present, so running
-  // them every launch is safe. The reset-baseline set was already here; the core interval +
-  // sync columns (distance_m/time_s/days/activities/percent_used/snoozed_until/remote_id) were
-  // missing, which is the real bug the gear import hit (André's tablet, 2026-08-18).
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN distance_m REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN time_s REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN days INTEGER NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN activities INTEGER NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN percent_used REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN snoozed_until INTEGER`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN remote_id TEXT`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN starting_distance_m REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN starting_time_s REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN starting_activities INTEGER NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear_reminder ADD COLUMN last_reset INTEGER`).catch(() => {});
+  // Each column is only added when it's missing, so running them every launch is safe. The
+  // reset-baseline set was already here; the core interval + sync columns (distance_m/time_s/
+  // days/activities/percent_used/snoozed_until/remote_id) were missing, which is the real bug
+  // the gear import hit (André's tablet, 2026-08-18).
+  await addMissingColumns(db, 'gear_reminder', [
+    ['distance_m', 'REAL NOT NULL DEFAULT 0'],
+    ['time_s', 'REAL NOT NULL DEFAULT 0'],
+    ['days', 'INTEGER NOT NULL DEFAULT 0'],
+    ['activities', 'INTEGER NOT NULL DEFAULT 0'],
+    ['percent_used', 'REAL NOT NULL DEFAULT 0'],
+    ['snoozed_until', 'INTEGER'],
+    ['remote_id', 'TEXT'],
+    ['starting_distance_m', 'REAL NOT NULL DEFAULT 0'],
+    ['starting_time_s', 'REAL NOT NULL DEFAULT 0'],
+    ['starting_activities', 'INTEGER NOT NULL DEFAULT 0'],
+    ['last_reset', 'INTEGER'],
+  ]);
   // Sommet Sync (#SYNC-4): manually-entered mileage baseline on a gear + the moment it was set,
   // parity with desktop so a baseline typed on the computer reaches the phone. Additive no-ops.
-  await _db.executeSql(`ALTER TABLE gear ADD COLUMN starting_distance_m REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear ADD COLUMN starting_time_s REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE gear ADD COLUMN baseline_at INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+  await addMissingColumns(db, 'gear', [
+    ['starting_distance_m', 'REAL NOT NULL DEFAULT 0'],
+    ['starting_time_s', 'REAL NOT NULL DEFAULT 0'],
+    ['baseline_at', 'INTEGER NOT NULL DEFAULT 0'],
+  ]);
   // Default gear per Ambit sport type (e.g. "Cycling" -> a bike's local id). Auto-assign source.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS gear_assignment (
       activity_type TEXT    PRIMARY KEY,
       gear_id       TEXT    NOT NULL
@@ -168,7 +186,7 @@ export async function getDb(): Promise<SQLiteDatabase> {
   // aim is to ditch it). Displayed gear distance = imported baseline (gear.distance_m at last
   // import) + sum of ledger entries recorded AFTER that import (assigned_at > gear.last_synced_at),
   // which avoids double-counting anything intervals already had in its total.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS activity_gear (
       activity_id   TEXT    PRIMARY KEY,
       gear_id       TEXT    NOT NULL,
@@ -178,15 +196,17 @@ export async function getDb(): Promise<SQLiteDatabase> {
       assigned_at   INTEGER NOT NULL DEFAULT 0
     )
   `);
-  await _db.executeSql(`ALTER TABLE activity_gear ADD COLUMN distance_m REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE activity_gear ADD COLUMN time_s REAL NOT NULL DEFAULT 0`).catch(() => {});
-  await _db.executeSql(`ALTER TABLE activity_gear ADD COLUMN activity_date TEXT NOT NULL DEFAULT ''`).catch(() => {});
+  await addMissingColumns(db, 'activity_gear', [
+    ['distance_m', 'REAL NOT NULL DEFAULT 0'],
+    ['time_s', 'REAL NOT NULL DEFAULT 0'],
+    ['activity_date', `TEXT NOT NULL DEFAULT ''`],
+  ]);
   // Per-activity metrics read from its GPX (HR, calories, cadence...), cached so the Activities
   // list parses each GPX once ever instead of on every visit (André, 2026-09-29: the list parsed
   // every GPX before showing anything, ~110 s on the tablet). One column per sortable metric so a
   // sort by any column runs in SQL; `json` keeps the whole GpxMetadata for the cards. Rows are
   // keyed to the activity's synced_at: a re-import makes the cached row stale.
-  await _db.executeSql(`
+  await db.executeSql(`
     CREATE TABLE IF NOT EXISTS activity_metrics (
       id           TEXT    PRIMARY KEY,
       synced_at    INTEGER NOT NULL,
@@ -196,7 +216,7 @@ export async function getDb(): Promise<SQLiteDatabase> {
       poolLengths  REAL, pace REAL
     )
   `);
-  return _db;
+  return db;
 }
 
 // ─── Activities list, paged (André, 2026-09-29) ───────────────────────────────

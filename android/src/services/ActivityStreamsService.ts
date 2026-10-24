@@ -1,7 +1,7 @@
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityRecord } from '../database/db';
-import { fitPathForGpx, writeFitFile } from './GpxService';
+import { activityFileStem, fitPathForGpx, writeFitFile } from './GpxService';
 import { getIntervalsIcuCredentials } from './ApiIntervalsIcu';
 import { base64ToBytes, bytesToBase64 } from './Base64';
 // The FIT decoder and the activity-screen maths are SHARED with the desktop (edit shared/, then
@@ -34,7 +34,7 @@ async function fitBytes(activity: ActivityRecord): Promise<Uint8Array | null> {
     const p = await fitPathForGpx(activity.gpx_path);
     if (p) return base64ToBytes(await RNFS.readFile(p, 'base64'));
   }
-  const kept = `${RNFS.DocumentDirectoryPath}/activities/${activity.id.replace(/[^\w.-]/g, '_')}.fit`;
+  const kept = `${RNFS.DocumentDirectoryPath}/activities/${activityFileStem(activity.id)}.fit`;
   if (await RNFS.exists(kept)) return base64ToBytes(await RNFS.readFile(kept, 'base64'));
   if (!activity.id.startsWith('icu:')) return null;
   const creds = await getIntervalsIcuCredentials();
@@ -45,7 +45,7 @@ async function fitBytes(activity: ActivityRecord): Promise<Uint8Array | null> {
     if (!res.ok) continue;
     const b = new Uint8Array(await res.arrayBuffer());
     if (isFit(b)) {
-      await writeFitFile(activity.id.replace(/[^\w.-]/g, '_'), bytesToBase64(b), true);
+      await writeFitFile(activityFileStem(activity.id), bytesToBase64(b), true);
       return b;
     }
   }

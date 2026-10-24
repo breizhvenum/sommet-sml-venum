@@ -244,6 +244,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "AmbitUsbModule"
 
+    // Required by NativeEventEmitter on the JS side (without them React Native logs a warning at
+    // every start). Events are sent through RCTDeviceEventEmitter, so there's nothing to track.
+    @ReactMethod fun addListener(eventName: String) {}
+    @ReactMethod fun removeListeners(count: Int) {}
+
     // ─── connect() ────────────────────────────────────────────────────────────
     // Détecte l'Ambit, demande la permission USB, initialise la connexion JNI.
     @ReactMethod

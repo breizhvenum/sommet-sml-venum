@@ -129,6 +129,11 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "AmbitBleModule"
 
+    // Required by NativeEventEmitter on the JS side (without them React Native logs a warning at
+    // every start). Events are sent through RCTDeviceEventEmitter, so there's nothing to track.
+    @ReactMethod fun addListener(eventName: String) {}
+    @ReactMethod fun removeListeners(count: Int) {}
+
     // ─── scanAndConnect() ──────────────────────────────────────────────────────
     // Scans for the watch advertising (soliciting) the NSP service UUID, then —
     // because the phone is the GATT SERVER, not a client — opens a GATT server
