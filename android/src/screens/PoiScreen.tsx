@@ -79,7 +79,9 @@ export default function PoiScreen() {
     try {
       setOnWatch(await readOnWatchPois());
     } catch (e: any) {
-      if (!cached) setOnWatchError(e?.message ?? t.unknownError);
+      // Say so even with a cached list on screen: it used to stay up silently, so a
+      // watch whose POIs were gone kept showing them (Peak, 2026-10-24).
+      setOnWatchError(e?.message ?? t.unknownError);
     } finally {
       setOnWatchLoading(false);
     }
@@ -253,6 +255,9 @@ export default function PoiScreen() {
         {onWatchLoading && <Text style={styles.itemStats}>{t.poiOnWatchReading}</Text>}
         {!onWatchLoading && onWatchError && (
           <Text style={[styles.itemStats, { color: theme.error }]}>{t.poiOnWatchError(onWatchError)}</Text>
+        )}
+        {!onWatchLoading && onWatchError && onWatch && onWatch.length > 0 && (
+          <Text style={styles.itemStats}>{t.poiOnWatchStale}</Text>
         )}
         {!onWatchLoading && !onWatchError && onWatch && onWatch.length === 0 && (
           <Text style={styles.itemStats}>{t.poiOnWatchEmpty}</Text>

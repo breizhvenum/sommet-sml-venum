@@ -20,7 +20,7 @@ import io
 import sys
 
 from write_nav import (
-    CMD_POI_WRITE, POI_ENTRY, build_poi_record, poi_write_payload_add, read_pois,
+    CMD_POI_WRITE, POI_ENTRY, build_poi_record, poi_count, poi_write_payload_add, read_pois,
     show_entries,
 )
 
@@ -38,15 +38,19 @@ def read_pois_summary(link):
 
 
 def add_poi(link, name, lat, lon):
-    """The BLE path for POST /api/pois - same algorithm as `write_nav.run_addpoi()`: read
-    the whole list (0x0b24), rewrite it with the new record first (0x0b25). Never touches
-    Waypoints/Routes flash and needs no commit. The read-before-write is load-bearing, same
-    as the USB path - skipping it is what erased the POI store on 2026-08-04."""
-    pois = read_pois(link)
+    """The BLE path for POST /api/pois - same algorithm as `write_nav.run_addpoi()`: send
+    only the new record (0x0b25 appends) and check the count (0x0b02) went up by one.
+    Never touches Waypoints/Routes flash and needs no commit."""
+    before = poi_count(link)
     record = build_poi_record(name, lat, lon)
-    payload = poi_write_payload_add(pois, record)
-    link.command(CMD_POI_WRITE, payload)
-    return {"ok": True, "dry_run": link.dry_run}
+    # Only the new record: 0x0b25 appends (see write_nav.poi_write_payload_add), and acks
+    # even when it stored nothing, so the count decides.
+    link.command(CMD_POI_WRITE, poi_write_payload_add(b"", record))
+    after = poi_count(link)
+    if before is not None and after != before + 1:
+        return {"ok": False, "dry_run": link.dry_run,
+                "error": f"the watch did not keep the POI ({before} -> {after} POIs)"}
+    return {"ok": True, "dry_run": link.dry_run, "count": after}
 
 
 def main():

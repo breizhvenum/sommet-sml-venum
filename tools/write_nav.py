@@ -131,6 +131,7 @@ CMD_DATA_TAIL = 0x0B18
 CMD_NAV_COMMIT = 0x0B04
 CMD_POI_READ = 0x0B24
 CMD_POI_WRITE = 0x0B25
+CMD_POI_COUNT = 0x0B02   # "waypoint_count": on the Ambit3 it counts the POI store
 CMD_LOG_HEADERS = 0x1200
 CMD_FLASH_READ = 0x0B17
 FLASH_CHUNK = 1024
@@ -837,12 +838,42 @@ def read_pois(link, capture=None):
     """
     reply = link.command(CMD_POI_READ, b"\0\0\0\0")
     if not link.dry_run:
-        return reply
+        return _rest_of_poi_pages(link, reply)
     if capture:
         for m in messages(capture):
             if m.command == CMD_POI_READ and m.incoming and m.payload:
                 return m.payload
     return b""
+
+
+def _rest_of_poi_pages(link, first):
+    """0x0b24 is paged: [u16 nextCursor][u16 0][u16 isLast][data], the SBEM header on the
+    first page only, the request [u16 cursor][u16 0] (Ambit3 firmware, MSP430X Emu 2.4.17,
+    0x0b24 case at 0x1a632; SuuntoLink's 4-POI capture is one page with isLast = 1). One
+    request used to be all we sent, so a long list came back cut, and a route write then
+    put back only that part. Returns every page as one buffer shaped like a single reply.
+    An empty store answers with an error and no data; over USB that is simply b"" here."""
+    out = bytearray(first)
+    page = first
+    for _ in range(32):
+        if len(page) < 6 or int.from_bytes(page[4:6], "little"):
+            return bytes(out)
+        cursor = int.from_bytes(page[0:2], "little")
+        page = link.command(CMD_POI_READ, cursor.to_bytes(2, "little") + b"\0\0")
+        if len(page) < 6:
+            raise RuntimeError(f"the POI list page at cursor {cursor} came back short")
+        out += page[6:]
+    raise RuntimeError("the POI list is longer than 32 pages")
+
+
+def poi_count(link):
+    """How many POIs the watch holds (0x0b02, u32 LE): in the Ambit3 firmware it counts the
+    same two lists 0x0b24 walks, and SuuntoLink's own POI import opens with it. None in a
+    dry-run or on a short reply."""
+    reply = link.command(CMD_POI_COUNT, b"")
+    if link.dry_run or len(reply) < 4:
+        return None
+    return int.from_bytes(reply[:4], "little")
 
 
 def poi_write_payload(reply):
@@ -874,13 +905,11 @@ def poi_write_payload(reply):
 
 
 def poi_write_payload_add(reply, new_record):
-    """Like `poi_write_payload`, but for adding a POI rather than merely preserving the
-    list: per its own docstring, `poiimport` puts the new record first and the rest in
-    the order they were read - not reversed, unlike a plain preserve.
-
-    A reply with no SBEM0102 payload just means the watch currently has zero POIs
-    (confirmed a real, reachable state on hardware 2026-08-04, not an error) - the new
-    record is then the entire list, same as `poiimport` would look on an empty watch."""
+    """The 0x0b25 for `new_record` followed by the POIs in `reply`, new record first as in
+    `poiimport`. For ADDING one POI pass reply=b"": 0x0b25 appends what it is given to the
+    store (Ambit3 firmware FUN_0004da50, no implicit clear), so sending "new + existing"
+    doubled every POI on each add. `poiimport` sends the whole list only because SuuntoLink
+    empties the store with 0x0b04 first (assets/pcap/ambit3poiimport)."""
     records = ([data for entry_id, data in F.sbem_entries(reply)
                 if entry_id == POI_ENTRY]
                if reply and F.SBEM_MAGIC in reply else [])
@@ -956,15 +985,13 @@ def build_set_pois_payload(pois):
 
 
 def run_addpoi(args):
-    """Adds ONE POI, preserving every POI already on the watch. Unlike a route write this
-    never touches the Waypoints/Routes flash regions and needs no commit - it is only the
-    0x0b24 read followed by the 0x0b25 rewrite of the full list, new record first (the
-    same order poiimport's own capture shows). The same read-before-write rule as route
-    writes applies: skipping the read is what erased the POI store on 2026-08-04.
-
-    Confirmed working on the real watch 2026-08-11 (André, first live write through the
-    desktop app: POI added, existing POIs intact) - this port is now hardware-proven in
-    its own right, not just by inheritance from the Android implementation."""
+    """Adds ONE POI, keeping every POI already on the watch. Unlike a route write this
+    never touches the Waypoints/Routes flash regions and needs no commit: it sends only
+    the new record through 0x0b25, which appends it, and checks the count (0x0b02) went
+    up by one. Sending "new + the list already there", as this used to (2026-08-11), kept
+    the old POIs but doubled them on every add - the duplicates seen on the Peak and in
+    set_pois.py's own note of 2026-08-30. The Android twin of this exact flow was
+    confirmed on the Peak over Bluetooth on 2026-10-24 (0 -> 1 -> 2 POIs, no duplicates)."""
     if not args.name or not args.name.strip():
         raise SystemExit("addpoi: --name must not be empty (the watch shows POIs by name)")
     if args.lat is None or args.lon is None:
@@ -985,17 +1012,19 @@ def run_addpoi(args):
         print("dry-run mode: not a byte will be emitted")
 
     link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
-    pois = read_pois(link, args.compare)
-    existing = ([data for entry_id, data in F.sbem_entries(pois)
-                 if entry_id == POI_ENTRY]
-                if pois and F.SBEM_MAGIC in pois else [])
+    before = poi_count(link)
     record = build_poi_record(args.name.strip(), args.lat, args.lon, type_=poi_type)
-    payload = poi_write_payload_add(pois, record)
-    link.command(CMD_POI_WRITE, payload)
+    # Only the new record: 0x0b25 appends (see poi_write_payload_add). It also acks when it
+    # stored nothing, so the count is what says the POI is there.
+    link.command(CMD_POI_WRITE, poi_write_payload_add(b"", record))
+    after = poi_count(link)
+    if before is not None and after != before + 1:
+        print(f"!! the watch did not keep the POI ({before} -> {after} POIs)")
+        return 1
     print(f"POI {args.name.strip()!r} ({args.lat:.6f}, {args.lon:.6f}) "
           f"type={F.waypoint_type_name(poi_type)} "
-          f"{'written' if args.write else 'would be written'}, "
-          f"{len(existing)} existing preserved")
+          f"{'written' if args.write else 'would be written'}"
+          + (f", {before} -> {after} POIs" if before is not None else ""))
     return 0
 
 
