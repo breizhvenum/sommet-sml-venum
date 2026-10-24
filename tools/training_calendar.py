@@ -53,7 +53,9 @@ Plan JSON (dates are ISO YYYY-MM-DD; `workout` is workout.py's own schema unchan
 """
 import argparse
 import datetime
+import hashlib
 import json
+import pathlib
 import re
 import struct
 import sys
@@ -192,6 +194,67 @@ def rebuild_apps_region(raw_blocks):
     return header + b"".join(raw_blocks)
 
 
+# What the sync installed under each label, per watch: a workout edited but left on the same
+# date with the same name keeps its label, so plan_diff keeps the old one on the watch (André,
+# 2026-10-24: a 33-minute test changed to 10 s steps stayed 33 minutes). The binary is compiled
+# at sync, so there is nothing on the watch to compare with; the sync remembers a fingerprint of
+# what it installed and reinstalls a kept label whose plan workout no longer matches it.
+INSTALLED_DIR = pathlib.Path.home() / "AmbitAppBackups" / "calendar"
+
+
+def workout_fingerprint(workout, lang):
+    """Everything the installed program is built from here: the workout and the watch language
+    (the default step words). Rule id, sport byte and date gate are handled by the sync itself."""
+    blob = json.dumps({"workout": workout, "lang": lang}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def installed_path(serial):
+    return INSTALLED_DIR / f"installed-{re.sub(r'[^A-Za-z0-9]', '_', serial)}.json"
+
+
+def load_installed(serial):
+    """{label: fingerprint} for this watch, {} when unknown or unreadable."""
+    if not serial:
+        return {}
+    try:
+        data = json.loads(installed_path(serial).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_installed(serial, fingerprints):
+    if not serial:
+        return
+    path = installed_path(serial)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(fingerprints, indent=1, sort_keys=True), encoding="utf-8")
+
+
+def edited_labels(existing, kept_block_set, by_label, installed, lang):
+    """Labels of kept managed entries whose plan workout differs from what was installed.
+    A label with no remembered fingerprint (installed before this, or by another computer) is
+    taken as matching - the first sync records it."""
+    out = []
+    for e in existing:
+        name = e["name"]
+        if not (is_managed(name) and e["_raw_block"] in kept_block_set and name in by_label):
+            continue
+        known = installed.get(name)
+        if known is not None and known != workout_fingerprint(by_label[name]["workout"], lang):
+            out.append(name)
+    return out
+
+
+def watch_serial(link):
+    try:
+        import sbem_schema
+        return sbem_schema.watch_identity(link)[0]
+    except Exception:
+        return None
+
+
 def plan_diff(current_apps_bytes, plan_entries, today, menu_max=GW.WORKOUT_MENU_MAX):
     """Returns (kept_raw_blocks, to_add, waiting).
 
@@ -305,6 +368,15 @@ def sync(link, plan, today, write, json_out, auto_start=None):
     decoded = cm.decode(current_cm)
     lang = GW.read_watch_language(link)
     by_label = {entry_label(e["date"], e["workout"]["name"]): e for e in plan["entries"]}
+    serial = watch_serial(link)
+    installed = load_installed(serial)
+    edited = edited_labels(existing, kept_block_set, by_label, installed, lang)
+    edited_blocks = {}   # label -> its block on the watch, kept if the new version fails to compile
+    for e in existing:
+        if e["name"] in edited and e["_raw_block"] in kept_block_set:
+            kept_block_set.discard(e["_raw_block"])
+            edited_blocks[e["name"]] = e["_raw_block"]
+            to_add.append(by_label[e["name"]])
     for e in existing:
         if not (is_managed(e["name"]) and e["_raw_block"] in kept_block_set
                 and e["name"] in by_label):
@@ -341,6 +413,10 @@ def sync(link, plan, today, write, json_out, auto_start=None):
             compiled = GW.compile_workout(e["workout"], lang)
         except SystemExit as err:
             failed.append((label, str(err)))
+            if label in edited_blocks:   # an edit that won't compile keeps the old version
+                new_apps_bytes = rebuild_apps_region(
+                    [x["_raw_block"] for x in current_list] + [edited_blocks.pop(label)])
+                current_list = WI.apps_entries_with_raw_blocks(new_apps_bytes)
             continue
         compiled["name"] = label
         compiled["activityId"] = GW.ANY_MODE_ACTIVITY  # row == slot in every mode, see guided_workout
@@ -393,7 +469,7 @@ def sync(link, plan, today, write, json_out, auto_start=None):
               "waiting": waiting, "menuMax": GW.WORKOUT_MENU_MAX,
               "displaysAdded": modes_touched, "appsBytes": len(new_apps_bytes),
               "repaired": [n for n, _ in restamped], "autoStart": auto,
-              "dateGated": gated}
+              "dateGated": gated, "edited": [n for n in edited if n in added_names]}
 
     if not json_out:
         print(f"sync as of {today}:")
@@ -413,6 +489,8 @@ def sync(link, plan, today, write, json_out, auto_start=None):
             print(f"  date-gated (run only on their day): {gated}")
         if restamped:
             print(f"  repaired (any-mode sport byte / rule id): {[n for n, _ in restamped]}")
+        if result["edited"]:
+            print(f"  reinstalled after an edit: {result['edited']}")
         if not removed and not added_names and not modes_touched and not failed and not restamped:
             print("  nothing to do — watch already matches the plan")
 
@@ -430,7 +508,7 @@ def sync(link, plan, today, write, json_out, auto_start=None):
     backup = str(pathlib.Path(__file__).resolve().parent / "backups"
                  / f"CustomModes_pre_calendar_{int(time.time())}.bin")
     pathlib.Path(backup).parent.mkdir(parents=True, exist_ok=True)
-    open(backup, "wb").write(current_cm)
+    pathlib.Path(backup).write_bytes(current_cm)
     writes = [("Apps", apps_base, new_apps_bytes)]
     if new_cm_bytes is not None:
         writes.append(("CustomModes", cm_base, new_cm_bytes))
@@ -452,6 +530,16 @@ def sync(link, plan, today, write, json_out, auto_start=None):
             print(json.dumps(result) if json_out else f"  !! {result['error']}")
             return result
     result["written"] = True
+    # Remember what is on the watch now: new installs get their workout's fingerprint, the
+    # rest keep theirs (one never recorded gets the plan's - see edited_labels).
+    on_watch = {e["name"] for e in apps.decode(new_apps_bytes) if is_managed(e["name"])}
+    fresh = {}
+    for name in on_watch:
+        if name in by_label and (name in added_names or name not in installed):
+            fresh[name] = workout_fingerprint(by_label[name]["workout"], lang)
+        elif name in installed:
+            fresh[name] = installed[name]
+    save_installed(serial, fresh)
     result["customModesWritten"] = new_cm_bytes is not None
     result["backup"] = backup
     if json_out:

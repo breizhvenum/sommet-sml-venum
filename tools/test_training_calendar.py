@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """training_calendar.remove_native_entry: only native workouts go, and never one that would shift
 a generic Suunto App's position (sport-mode App displays point at apps by position)."""
+import contextlib
+import datetime
+import io
+import json
 import os
+import pathlib
+import shutil
+import struct
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -206,6 +214,90 @@ class DateGate(unittest.TestCase):
         self.assertTrue(TC.is_gated(decoded[0]["binary"]))
         self.assertEqual(TC.gate_managed(out, {"10/10_W10": "2026-10-10"})[1], [])
 
+
+
+class SyncReinstallsEdits(unittest.TestCase):
+    """A workout edited under the same date and name reaches the watch (2026-10-24: a 33-minute
+    test changed to 10 s steps stayed 33 minutes - plan_diff keeps a label it already sees)."""
+    TODAY = datetime.date(2026, 10, 24)
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.apps = bytes([0, 0, 2, 0, 8, 0, 0, 0]) + b"\xff" * 64   # an empty Apps directory
+        self.compiled = []
+        self.fail_compile = False
+
+        def send(link, fi, parts, commit=False):
+            for name, base, blob in parts:
+                if name == "Apps" and blob is not None:
+                    self.apps = bytes(blob)
+
+        def compile_workout(workout, lang=None):
+            if self.fail_compile:
+                raise SystemExit("compiler unreachable")
+            self.compiled.append(workout["steps"])
+            body = json.dumps(workout["steps"]).encode()
+            return {"name": workout["name"], "activityId": 1,
+                    "binary": struct.pack("<IIII", 8, 1, 1, 0) + body + b"rule0\0"}
+
+        decoded = {"format_type": 2, "exercise_modes": [{
+            "Settings": {"Name": "Running", "ActivityID": 3}, "Rules": [],
+            "Displays": [{"Template": TC.GW.GUIDANCE_TEMPLATE}]}]}
+        patches = [
+            (TC, "read_memory_map", lambda link: {"CustomModes": (0x1000, 12288), "Apps": (0x2000, 200000)}),
+            (TC, "read_flash", lambda link, base, size, label=None: self.apps if base == 0x2000 else b"\0" * 64),
+            (TC, "send_plan", send),
+            (TC, "watch_serial", lambda link: "8A15TEST"),
+            (TC, "INSTALLED_DIR", pathlib.Path(self.tmp)),
+            (TC, "needs_hr_fix", lambda b: False), (TC, "needs_regate", lambda b: False),
+            (TC, "is_gated", lambda b: False),
+            (TC, "__file__", os.path.join(self.tmp, "training_calendar.py")),  # backups go to tmp
+            (TC.GW, "read_watch_language", lambda link: "en"),
+            (TC.GW, "compile_workout", compile_workout),
+            (TC.cm, "decode", lambda blob: json.loads(json.dumps(decoded))),
+        ]
+        for mod, name, value in patches:
+            self.addCleanup(setattr, mod, name, getattr(mod, name))
+            setattr(mod, name, value)
+
+    def sync(self, steps):
+        plan = {"entries": [{"date": "2026-10-24", "mode": "Running",
+                             "workout": {"name": "Test", "steps": steps}}]}
+        with contextlib.redirect_stdout(io.StringIO()):
+            return TC.sync(None, plan, self.TODAY, write=True, json_out=True)
+
+    def on_watch(self):
+        return [(e["name"], e["binary"]) for e in apps.decode(self.apps)]
+
+    def test_edit_is_reinstalled_and_unchanged_is_not(self):
+        label = TC.entry_label("2026-10-24", "Test")
+        self.assertEqual(self.sync([{"s": 600}])["added"], [label])
+        again = self.sync([{"s": 600}])
+        self.assertEqual((again["added"], again["edited"], len(self.compiled)), ([], [], 1))
+        edited = self.sync([{"s": 10}])
+        self.assertEqual((edited["added"], edited["edited"]), ([label], [label]))
+        [(name, binary)] = self.on_watch()
+        self.assertEqual(name, label)
+        self.assertIn(b'"s": 10', binary)
+
+    def test_an_edit_that_fails_to_compile_keeps_the_old_version(self):
+        label = TC.entry_label("2026-10-24", "Test")
+        self.sync([{"s": 600}])
+        self.fail_compile = True
+        r = self.sync([{"s": 10}])
+        self.assertEqual([f["name"] for f in r["failed"]], [label])
+        [(name, binary)] = self.on_watch()
+        self.assertIn(b'"s": 600', binary)          # still there, not erased
+        self.fail_compile = False
+        self.assertEqual(self.sync([{"s": 10}])["edited"], [label])   # retried next time
+
+    def test_first_sync_without_a_record_trusts_the_watch(self):
+        self.sync([{"s": 600}])
+        TC.installed_path("8A15TEST").unlink()
+        r = self.sync([{"s": 10}])                  # installed by an older version: no record
+        self.assertEqual((r["added"], r["edited"]), ([], []))
+        self.assertEqual(self.sync([{"s": 20}])["edited"], [TC.entry_label("2026-10-24", "Test")])
 
 if __name__ == "__main__":
     unittest.main()
