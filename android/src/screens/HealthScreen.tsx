@@ -7,7 +7,9 @@ import { useV3Theme, v3Radius, v3Spacing, v3Type } from '../theme/v3';
 import { MetricChart } from '../components/MetricChart';
 import { fmtDate } from '../i18n';
 import { fetchWellness, WellnessDay } from '../services/WellnessService';
-import { loadWatchSteps } from '../services/AmbitSteps';
+import {
+  loadWatchActivity, loadWatchRecovery, loadWatchSteps, type WatchRecovery,
+} from '../services/AmbitSteps';
 import { isHrStrapAvailable, measureHrv, type HrStrapReading } from '../services/HrStrapService';
 import { isStrapHrvEnabled } from '../services/StrapHrvPref';
 
@@ -22,8 +24,11 @@ import { isStrapHrvEnabled } from '../services/StrapHrvPref';
 // Everything shown here is real data verified present in this athlete's own intervals.icu
 // history (2026-08-26: restingHR 664 values, sleep 388, vo2max 63, steps 101, hrv 51).
 
+// A wellness day plus the Ambit3's own daily activity kcal (its "Activity" display).
+type HealthDay = WellnessDay & { watchKcal?: number };
+
 interface Metric {
-  key: keyof WellnessDay;
+  key: keyof HealthDay;
   label: string;
   unit: string;
   decimals: number;
@@ -38,26 +43,39 @@ const METRICS: Metric[] = [
   // Train Libre's sleep health score (SleepScore.ts) - from duration alone here, see WellnessService.
   { key: 'sleepScore', label: 'Sleep score',       unit: '',     decimals: 0 },
   { key: 'steps',     label: 'Steps',              unit: '',     decimals: 0 },
+  { key: 'watchKcal', label: 'Activity (watch)',   unit: ' kcal', decimals: 0 },
   { key: 'vo2max',    label: 'VO₂max',             unit: '',     decimals: 0 },
 ];
 
 // The watch's own step counts over intervals.icu's on the same day; days only the watch has are
 // added. Same priority as the desktop (intervals < garmin < watch).
-function withWatchSteps(list: WellnessDay[], watch: Array<{ date: string; steps: number }>): WellnessDay[] {
-  if (watch.length === 0) return list;
-  const byDate = new Map(list.map(d => [d.date, { ...d }]));
+function withWatchSteps(list: WellnessDay[], watch: Array<{ date: string; steps: number }>,
+                        kcal: Array<{ date: string; kcal: number }> = []): HealthDay[] {
+  if (watch.length === 0 && kcal.length === 0) return list;
+  const byDate = new Map<string, HealthDay>(list.map(d => [d.date, { ...d }]));
   for (const w of watch) {
     const d = byDate.get(w.date) ?? { date: w.date };
     d.steps = w.steps;
     byDate.set(w.date, d);
   }
+  for (const k of kcal) {
+    const d = byDate.get(k.date) ?? { date: k.date };
+    d.watchKcal = k.kcal;
+    byDate.set(k.date, d);
+  }
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function recoveryText(h: number): string {
+  const m = Math.round(h * 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
 export default function HealthScreen() {
   const t = useV3Theme();
   const navigation = useNavigation<any>();
-  const [days, setDays] = useState<WellnessDay[]>([]);
+  const [days, setDays] = useState<HealthDay[]>([]);
+  const [recovery, setRecovery] = useState<WatchRecovery | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -71,7 +89,8 @@ export default function HealthScreen() {
       setError(String(e?.message ?? e));
     }
     try {
-      setDays(withWatchSteps(list, await loadWatchSteps()));
+      setDays(withWatchSteps(list, await loadWatchSteps(), await loadWatchActivity()));
+      setRecovery(await loadWatchRecovery());
     } finally {
       setLoading(false);
     }
@@ -198,8 +217,8 @@ export default function HealthScreen() {
         <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
           <Text style={{ color: t.mutedText, fontSize: v3Type.body }}>
             No health data yet. Connect intervals.icu — resting HR, HRV, sleep and
-            steps sync from whatever device feeds it. An Ambit3 adds its own daily steps
-            at each sync.
+            steps sync from whatever device feeds it. An Ambit3 adds its own daily steps,
+            activity calories and recovery time at each sync.
           </Text>
           {/* #9 (André, 2026-09-02): one-tap route to the shared connection settings. */}
           <TouchableOpacity
@@ -213,7 +232,7 @@ export default function HealthScreen() {
       )}
 
       {/* Current values first, then the trends - the summary before the detail. */}
-      {present.length > 0 && (
+      {(present.length > 0 || recovery) && (
         <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
           <View style={styles.tiles}>
             {present.map(m => {
@@ -229,6 +248,18 @@ export default function HealthScreen() {
                 </View>
               );
             })}
+            {/* The watch's "Recovery time" at the last watch read, and its peak over the
+                watch's last 24 h of quarter-hour samples. */}
+            {recovery && (
+              <View style={styles.tile}>
+                <Text style={[styles.label, { color: t.mutedText }]}>Recovery time (watch)</Text>
+                <Text style={[styles.big, { color: t.text }]}>{recoveryText(recovery.hours)}</Text>
+                <Text style={[styles.caption, { color: t.mutedText }]}>
+                  {(fmtDate(recovery.time.slice(0, 10)) || recovery.time.slice(0, 10))} {recovery.time.slice(11, 16)}
+                  {' · peak '}{recoveryText(recovery.peak)}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       )}

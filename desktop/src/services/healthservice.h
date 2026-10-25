@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QQmlEngine>
 #include <QVariantList>
+#include <QVariantMap>
 
 // Daily health metrics for the Health page (André, 2026-08-24). MERGES intervals.icu and Garmin
 // Connect (plus the Ambit3's own resting-HRV tests and manual entries) per metric, de-duplicated
@@ -49,6 +50,13 @@ class HealthService : public QObject
     Q_PROPERTY(bool coospoHrvEnabled READ coospoHrvEnabled WRITE setCoospoHrvEnabled NOTIFY changed)
     Q_PROPERTY(double latestRhr READ latestRhr NOTIFY changed)
     Q_PROPERTY(double latestSteps READ latestSteps NOTIFY changed)
+    // The Ambit3's own "Activity" display, read with the steps (tools/ambit_steps.py):
+    // watchActivity = daily activity kcal [{date,value}]; watchRecovery = the last read's
+    // {time, hours, peak, spanHours} (recovery time now and its peak over the read's window),
+    // empty when no Ambit3 has been read.
+    Q_PROPERTY(QVariantList watchActivity READ watchActivity NOTIFY changed)
+    Q_PROPERTY(double latestWatchActivity READ latestWatchActivity NOTIFY changed)
+    Q_PROPERTY(QVariantMap watchRecovery READ watchRecovery NOTIFY changed)
     Q_PROPERTY(double latestHrv READ latestHrv NOTIFY changed)
     Q_PROPERTY(double latestBodyBattery READ latestBodyBattery NOTIFY changed)
     Q_PROPERTY(double latestSleep READ latestSleep NOTIFY changed)
@@ -96,6 +104,9 @@ public:
     void setCoospoHrvEnabled(bool on);
     double latestRhr() const { return lastValue(m_rhr); }
     double latestSteps() const { return lastValue(m_steps); }
+    QVariantList watchActivity() const { return m_watchActivity; }
+    double latestWatchActivity() const { return lastValue(m_watchActivity); }
+    QVariantMap watchRecovery() const { return m_watchRecovery; }
     double latestHrv() const { return lastValue(m_hrv); }
     double latestBodyBattery() const { return lastValue(m_bodyBattery); }
     double latestSleep() const { return lastValue(m_sleep); }
@@ -133,6 +144,8 @@ private:
     QString m_lastError;
     QVariantList m_rhr, m_steps, m_hrv, m_bodyBattery, m_sleep;   // merged / selected results
     QVariantList m_sleepScore;
+    QVariantList m_watchActivity;                                 // Ambit3 daily activity kcal
+    QVariantMap m_watchRecovery;                                  // Ambit3 recovery snapshot
     static QVariantList buildSleepScores(const QVariantList &nights);
     QVariantList m_hrvAmbit;                                      // Ambit3 morning-HRV (own line)
     bool m_hrvInstalling = false;

@@ -5,7 +5,10 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 }));
 jest.mock('../../native/AmbitUsbModule', () => ({ getDeviceInfo: jest.fn(), readObjectRaw: jest.fn() }));
 import { bytesToBase64 } from '../Base64';
-import { decodeWatchSteps, loadWatchSteps, mergeWatchSteps } from '../AmbitSteps';
+import {
+  decodeWatchSteps, loadWatchActivity, loadWatchRecovery, loadWatchSteps, mergeWatchActivity,
+  mergeWatchSteps,
+} from '../AmbitSteps';
 
 // Same shape as tools/test_ambit_steps.py: a DeviceHistory reply as a real Ambit3 Peak sends it
 // (fw 2.4.17, 2026-10-18) - short-id ActivityTracking entries, then the 30-day steps record and
@@ -22,6 +25,7 @@ function reply(steps: number[], stamp = '2026-10-18T13:06:02+03:00', cursor = 0)
   const bytes = [
     ...u32s([cursor]), 1, 0, ...magic,
     ...entry(0x92, [77, 0, 76, 0]),
+    ...entry(0x94, [0x75, 0x0b, 0xa8, 0x02]),            // 2933, 680 kcal
     ...entry(0x12e, u32s(steps)),
     ...entry(0x130, [...Array.from(stamp).map(c => c.charCodeAt(0)), 0]),
   ];
@@ -49,6 +53,24 @@ describe('decodeWatchSteps', () => {
     expect(decodeWatchSteps(reply(counts.slice(0, 16)))).toBeNull();
     expect(decodeWatchSteps(reply(counts, 'not a date'))).toBeNull();
     expect(decodeWatchSteps(reply(counts, undefined, 0x18))).toBeNull();
+  });
+});
+
+describe('activity and recovery', () => {
+  it('dates the weekly kcal back from today and puts recovery on the last quarter hour', () => {
+    const r = decodeWatchSteps(reply(counts))!;
+    expect(r.activity).toEqual([
+      { date: '2026-10-17', kcal: 2933, today: false },
+      { date: '2026-10-18', kcal: 680, today: true },
+    ]);
+    // 76 and 77 units of 22.5 min; 13:06 -> the 13:00 sample
+    expect(r.recovery).toEqual({ time: '2026-10-18T13:00', hours: 28.5, peak: 28.88, spanHours: 0.5 });
+  });
+  it('stores the days and the latest recovery', async () => {
+    await mergeWatchActivity(decodeWatchSteps(reply(counts))!);
+    expect(await loadWatchActivity()).toEqual([
+      { date: '2026-10-17', kcal: 2933 }, { date: '2026-10-18', kcal: 680 }]);
+    expect((await loadWatchRecovery())!.hours).toBe(28.5);
   });
 });
 

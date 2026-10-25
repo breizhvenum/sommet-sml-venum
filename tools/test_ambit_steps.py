@@ -60,6 +60,16 @@ def main():
     check("raw activity", out["activity_tracking"]["recovery"] == [77, 76, 75]
           and out["activity_tracking"]["weekly_activity"] == [2933, 680])
 
+    # 3b. activity and recovery: quarter-hour samples ending at the last quarter hour before
+    #     the timestamp (13:06 -> 13:00), weekly days ending today, recovery in 22.5-min units
+    act, rec = out["activity"], out["recovery"]
+    check("recovery now", rec["hours"] == 28.12 and [s["time"] for s in rec["samples"]] == [
+        "2026-10-18T12:30", "2026-10-18T12:45", "2026-10-18T13:00"])
+    check("week days", act["week"] == [
+        {"date": "2026-10-17", "kcal": 2933, "today": False},
+        {"date": "2026-10-18", "kcal": 680, "today": True}] and act["today_kcal"] == 680)
+    check("no daily samples", act["samples"] == [])
+
     # 4. paging: a first page with a cursor is followed by a second request at that cursor
     link = FakeLink([struct.pack("<IH", 0x18, 0) + sbem_schema.MAGIC + entry(0x92, b"\1\0"),
                      reply(counts)])

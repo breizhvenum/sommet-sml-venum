@@ -214,8 +214,27 @@ static QVariantList watchStepsSeries()
     return out;
 }
 
+// The Ambit3's daily activity kcal, stored at health/watchActivity as [{date,value}] by
+// ActivityService with the steps.
+static QVariantList watchActivitySeries()
+{
+    const QString raw = QSettings().value(QStringLiteral("health/watchActivity")).toString();
+    QVariantList out;
+    for (const auto &v : QJsonDocument::fromJson(raw.toUtf8()).array()) {
+        const auto o = v.toObject();
+        if (o.value(QStringLiteral("value")).isDouble())
+            out.append(QVariantMap{{QStringLiteral("date"), o.value(QStringLiteral("date")).toString()},
+                                   {QStringLiteral("value"), o.value(QStringLiteral("value")).toDouble()}});
+    }
+    return out;
+}
+
 void HealthService::rebuild()
 {
+    m_watchActivity = watchActivitySeries();
+    m_watchRecovery = QJsonDocument::fromJson(
+        QSettings().value(QStringLiteral("health/watchRecovery")).toString().toUtf8())
+        .object().toVariantMap();
     m_rhr = mergeByDate({m_iRhr, m_gRhr, manualSeries(QStringLiteral("rhr"))});
     m_steps = mergeByDate({m_iSteps, m_gSteps, watchStepsSeries()});
     // HRV is TWO SEPARATE tracks, never blended (they are different measurements - see the

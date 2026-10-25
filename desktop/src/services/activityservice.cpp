@@ -378,6 +378,47 @@ void ActivityService::readWatchSteps(int productId, const QString &serial)
                                    {QStringLiteral("value"), it.value()}});
         s.setValue(QStringLiteral("health/watchSteps"),
                    QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)));
+
+        // The same read carries the watch's "Activity" display (tools/ambit_steps.py):
+        // health/watchActivity = [{date, value kcal}], one per day, kept like the steps (the
+        // watch keeps 7 days); health/watchRecovery = the latest recovery snapshot
+        // {time, hours, peak} (time = the watch's newest quarter-hour sample).
+        const auto activity = root.value(QStringLiteral("activity")).toObject();
+        QMap<QString, double> kcalByDate;
+        for (const auto &v : QJsonDocument::fromJson(
+                 s.value(QStringLiteral("health/watchActivity")).toString().toUtf8()).array()) {
+            const auto o = v.toObject();
+            kcalByDate.insert(o.value(QStringLiteral("date")).toString(),
+                              o.value(QStringLiteral("value")).toDouble());
+        }
+        for (const auto &v : activity.value(QStringLiteral("week")).toArray()) {
+            const auto o = v.toObject();
+            const QString d = o.value(QStringLiteral("date")).toString();
+            if (!d.isEmpty() && o.value(QStringLiteral("kcal")).isDouble())
+                kcalByDate.insert(d, o.value(QStringLiteral("kcal")).toDouble());
+        }
+        QJsonArray kcalOut;
+        for (auto it = kcalByDate.constBegin(); it != kcalByDate.constEnd(); ++it)
+            kcalOut.append(QJsonObject{{QStringLiteral("date"), it.key()},
+                                       {QStringLiteral("value"), it.value()}});
+        s.setValue(QStringLiteral("health/watchActivity"),
+                   QString::fromUtf8(QJsonDocument(kcalOut).toJson(QJsonDocument::Compact)));
+
+        const auto recovery = root.value(QStringLiteral("recovery")).toObject();
+        const auto samples = recovery.value(QStringLiteral("samples")).toArray();
+        if (recovery.value(QStringLiteral("hours")).isDouble() && !samples.isEmpty()) {
+            double peak = 0;
+            for (const auto &v : samples)
+                peak = qMax(peak, v.toObject().value(QStringLiteral("hours")).toDouble());
+            const QJsonObject snap{
+                {QStringLiteral("time"),
+                 samples.last().toObject().value(QStringLiteral("time")).toString()},
+                {QStringLiteral("hours"), recovery.value(QStringLiteral("hours")).toDouble()},
+                {QStringLiteral("peak"), peak},
+                {QStringLiteral("spanHours"), samples.size() * 0.25}};
+            s.setValue(QStringLiteral("health/watchRecovery"),
+                       QString::fromUtf8(QJsonDocument(snap).toJson(QJsonDocument::Compact)));
+        }
     });
 }
 

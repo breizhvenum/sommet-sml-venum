@@ -28,8 +28,20 @@ Where this comes from:
     Ambit3 before a firmware update and writes it back after it. No capture in assets/ shows
     a DeviceHistory read on the wire.
 
-The same reply also carries `ActivityTracking` (daily recovery, daily and weekly activity);
-those are returned raw under "activity_tracking", their units not yet checked on a watch.
+The same reply also carries `ActivityTracking`, the data behind the watch's own "Activity"
+display in TIME mode (Activity today / Week activity / Recovery time). Layout from the
+firmware (ring descriptors at 0x706d4.., getters FUN_00030384, setters FUN_000397e6) and two
+reads of André's Peak 8 minutes apart on 2026-10-20 (one new sample appeared at 19:30):
+
+    0x92  DailyRecovery        ring of 96 x u16, one per 15 min = the last 24 h, oldest first;
+                               unit 22.5 min (schema x*60*22.5 s); the last one = recovery now
+    0x93  DailyActivity        ring of 96 x u16 kcal, one per 15 min since midnight, cumulative
+    0x94  WeeklyActivity       ring of 7 x u16 kcal, one per day, the last one = today so far
+    0x95  TotalWeeklyActivity  ring of 6 x u16 kcal - meaning not checked, returned raw only
+
+Samples fall on the quarter hours: the newest is the last quarter hour at or before the
+timestamp. They are returned decoded under "activity" and "recovery", and raw under
+"activity_tracking".
 
 The query id differs between firmware versions (the logbook is 0x8c on older Ambit3
 firmware, 0x8d on 2.4.17), so the id is looked up in the watch's own schema descriptor when
@@ -141,14 +153,46 @@ def decode(entries, ids):
         data = b"".join(by_id.get(eid, [])) if eid is not None else b""
         return list(struct.unpack(f"<{len(data) // 2}H", data[:len(data) // 2 * 2]))
 
+    raw = {k: u16s(k) for k in ("recovery", "daily_activity", "weekly_activity",
+                                    "total_weekly_activity")}
     return {
         "timestamp": stamp,
         "days": days,
-        # Raw values, units not checked on a watch yet (schema <MOD>: recovery x*60*22.5,
-        # activity 4184*x). Kept so a later change can show them without another read.
-        "activity_tracking": {k: u16s(k) for k in
-                              ("recovery", "daily_activity", "weekly_activity",
-                               "total_weekly_activity")},
+        **decode_activity(raw, when),
+        "activity_tracking": raw,
+    }
+
+
+SAMPLE_MINUTES = 15          # DailyRecovery / DailyActivity: one sample per quarter hour
+RECOVERY_UNIT_H = 22.5 / 60  # DailyRecovery unit, hours
+
+
+def decode_activity(raw, when):
+    """{"activity": {...}, "recovery": {...}} from the raw ActivityTracking rings (oldest
+    first) and the watch time `when`. Times are the watch's local clock, "YYYY-MM-DDTHH:MM"."""
+    newest = when.replace(minute=when.minute // SAMPLE_MINUTES * SAMPLE_MINUTES,
+                          second=0, microsecond=0, tzinfo=None)
+
+    def times(n):
+        return [(newest - datetime.timedelta(minutes=SAMPLE_MINUTES * (n - 1 - i)))
+                .isoformat(timespec="minutes") for i in range(n)]
+
+    rec, act, week = raw["recovery"], raw["daily_activity"], raw["weekly_activity"]
+    today = when.date()
+    return {
+        "activity": {
+            # The watch's "Activity today": the last WeeklyActivity slot, which tracks the
+            # newest DailyActivity sample (both 292 kcal on 2026-10-20 19:32).
+            "today_kcal": week[-1] if week else (act[-1] if act else None),
+            "week": [{"date": (today - datetime.timedelta(days=len(week) - 1 - i)).isoformat(),
+                      "kcal": v, "today": i == len(week) - 1} for i, v in enumerate(week)],
+            "samples": [{"time": t, "kcal": v} for t, v in zip(times(len(act)), act)],
+        },
+        "recovery": {
+            "hours": round(rec[-1] * RECOVERY_UNIT_H, 2) if rec else None,
+            "samples": [{"time": t, "hours": round(v * RECOVERY_UNIT_H, 2)}
+                        for t, v in zip(times(len(rec)), rec)],
+        },
     }
 
 
@@ -222,6 +266,13 @@ def main():
         print("no daily step counts on the watch")
     for d in result["days"]:
         print(f"  {d['date']}  {d['steps']:7d}{'  (today, so far)' if d['today'] else ''}")
+    act, rec = result["activity"], result["recovery"]
+    if act["week"]:
+        print("activity (kcal):  " + "  ".join(f"{d['date'][5:]} {d['kcal']}" for d in act["week"]))
+    if rec["hours"] is not None:
+        print(f"recovery time now: {rec['hours']:.1f} h "
+              f"(peak {max(s['hours'] for s in rec['samples']):.1f} h in the last "
+              f"{len(rec['samples']) * SAMPLE_MINUTES / 60:.1f} h)")
     return 0
 
 

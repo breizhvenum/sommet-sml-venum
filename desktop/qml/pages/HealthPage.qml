@@ -14,6 +14,12 @@ Item {
     function lastDate(series) {
         return series && series.length > 0 ? DateFormat.date(series[series.length - 1].date) : ""
     }
+    // The Ambit3's recovery snapshot from the last watch read: {time, hours, peak, spanHours}.
+    readonly property bool hasRecovery: HealthService.watchRecovery.hours !== undefined
+    function recoveryText(h) {
+        var m = Math.round(h * 60)
+        return m < 60 ? m + qsTr(" min") : Math.floor(m / 60) + qsTr(" h ") + (m % 60) + qsTr(" min")
+    }
     Connections {
         target: HealthService
         function onChanged() { /* charts repaint on their own series bindings */ }
@@ -63,6 +69,7 @@ Item {
             Card {
                 width: parent.width
                 visible: HealthService.rhr.length > 0 || HealthService.steps.length > 0
+                         || HealthService.watchActivity.length > 0 || root.hasRecovery
                 Row {
                     width: parent.width
                     spacing: Theme.spacingLarge * 2
@@ -91,6 +98,34 @@ Item {
                                color: Theme.text; font.pixelSize: Theme.fontSizeDisplay; font.bold: true }
                         Text { text: root.lastDate(HealthService.steps); color: Theme.mutedText
                                font.pixelSize: Theme.fontSizeCaption }
+                    }
+                    Column {
+                        spacing: 2
+                        // The watch's "Activity today" (kcal), read with the steps.
+                        visible: HealthService.watchActivity.length > 0
+                        Text { text: qsTr("Activity (watch)"); color: Theme.mutedText
+                               font.pixelSize: Theme.fontSizeLabel }
+                        Text { text: Math.round(HealthService.latestWatchActivity) + qsTr(" kcal")
+                               color: Theme.text; font.pixelSize: Theme.fontSizeDisplay; font.bold: true }
+                        Text { text: root.lastDate(HealthService.watchActivity); color: Theme.mutedText
+                               font.pixelSize: Theme.fontSizeCaption }
+                    }
+                    Column {
+                        spacing: 2
+                        // The watch's "Recovery time" at the last watch read, and its peak over
+                        // the watch's last 24 h of quarter-hour samples.
+                        visible: root.hasRecovery
+                        Text { text: qsTr("Recovery time (watch)"); color: Theme.mutedText
+                               font.pixelSize: Theme.fontSizeLabel }
+                        Text { text: root.hasRecovery ? root.recoveryText(HealthService.watchRecovery.hours) : ""
+                               color: Theme.text; font.pixelSize: Theme.fontSizeDisplay; font.bold: true }
+                        Text {
+                            color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
+                            text: !root.hasRecovery ? "" :
+                                  DateFormat.date(String(HealthService.watchRecovery.time).slice(0, 10))
+                                  + " " + String(HealthService.watchRecovery.time).slice(11, 16)
+                                  + qsTr(" · peak ") + root.recoveryText(HealthService.watchRecovery.peak)
+                        }
                     }
                     Column {
                         spacing: 2
@@ -214,6 +249,19 @@ Item {
             }
             Card {
                 width: parent.width
+                visible: HealthService.watchActivity.length > 1
+                variant: "flat"   // trend chart
+                height: 220
+                MetricChart {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingSmall
+                    label: qsTr("Activity (watch)")
+                    unit: qsTr(" kcal")
+                    series: HealthService.watchActivity
+                }
+            }
+            Card {
+                width: parent.width
                 visible: HealthService.hrv.length > 1
                 variant: "flat"   // trend chart
                 height: 220
@@ -301,7 +349,7 @@ Item {
                 text: qsTr("Resting HR, HRV and steps are merged from intervals.icu and Garmin " +
                            "Connect (plus your Ambit3's own steps and HRV, and manual entries), " +
                            "de-duplicated by day. The Ambit3 keeps 30 days of steps; Sommet keeps " +
-                           "every day it reads at each sync. Body battery comes from Garmin. Sleep " +
+                           "every day it reads at each sync, with its activity calories and recovery time. Body battery comes from Garmin. Sleep " +
                            "uses the single source you pick in Settings.")
             }
         }

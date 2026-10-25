@@ -12,7 +12,21 @@ import { getDeviceInfo, readObjectRaw } from '../native/AmbitUsbModule';
 // The timestamp's date is the date of the last slot. Its "+03:00" is not the watch's real zone
 // (André's Peak sent 14:19+03:00 at 14:19 CEST), so only the date is used.
 
+//
+// The same reply carries the watch's "Activity" display (ActivityTracking; layout from the
+// firmware, ring descriptors 0x706d4.., checked on André's Peak 2026-10-20 - see
+// tools/ambit_steps.py):
+//   0x92  DailyRecovery   96 x u16, one per 15 min (last 24 h), oldest first, unit 22.5 min
+//   0x93  DailyActivity   96 x u16 kcal, one per 15 min since midnight, cumulative
+//   0x94  WeeklyActivity   7 x u16 kcal, one per day, the last one = today so far
+// Samples fall on the quarter hours; the newest is the last one at or before the timestamp.
+
 export const DEVICE_HISTORY_QUERY = 0x97;
+const RECOVERY_ID = 0x92;
+const WEEKLY_ACTIVITY_ID = 0x94;
+const RECOVERY_UNIT_H = 22.5 / 60;
+const ACTIVITY_KEY = 'health.watchActivity';
+const RECOVERY_KEY = 'health.watchRecovery';
 const STEPS_ID = 0x12e;
 const TIMESTAMP_ID = 0x130;
 const DAYS = 30;
@@ -23,7 +37,16 @@ const STORE_KEY = 'health.watchSteps';
 const AMBIT3_MODELS = ['emu', 'finch', 'ibisbill', 'kaka'];
 
 export interface StepsDay { date: string; steps: number; today: boolean }
-export interface WatchSteps { timestamp: string; days: StepsDay[] }
+export interface ActivityDay { date: string; kcal: number; today: boolean }
+/** Recovery time at the watch's newest quarter-hour sample (`time`, watch local clock,
+ *  "YYYY-MM-DDTHH:MM"), and its peak over the `spanHours` the watch kept. */
+export interface WatchRecovery { time: string; hours: number; peak: number; spanHours: number }
+export interface WatchSteps {
+  timestamp: string;
+  days: StepsDay[];
+  activity: ActivityDay[];
+  recovery: WatchRecovery | null;
+}
 
 const MAGIC = [0x53, 0x42, 0x45, 0x4d, 0x30, 0x31, 0x30, 0x32]; // "SBEM0102"
 
@@ -80,7 +103,9 @@ export function decodeWatchSteps(b64: string): WatchSteps | null {
   if (u32(b, at - 6) !== 0) return null;
   let steps: [number, number] | null = null;
   let stamp = '';
+  const u16s: Record<number, number[]> = { [RECOVERY_ID]: [], [WEEKLY_ACTIVITY_ID]: [] };
   for (const [id, s, e] of sbemEntries(b, at)) {
+    if (u16s[id]) for (let o = s; o + 2 <= e; o += 2) u16s[id].push(b[o] | (b[o + 1] << 8));
     if (id === STEPS_ID && steps === null) steps = [s, e];
     if (id === TIMESTAMP_ID && !stamp) {
       let end = s;
@@ -89,7 +114,7 @@ export function decodeWatchSteps(b64: string): WatchSteps | null {
     }
   }
   if (!steps || steps[1] - steps[0] !== DAYS * 4) return null;
-  const m = /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}/.exec(stamp);
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(stamp);
   if (!m) return null;
   const today = m[1];
   const days: StepsDay[] = [];
@@ -98,7 +123,23 @@ export function decodeWatchSteps(b64: string): WatchSteps | null {
     if (n === NO_COUNT) continue;
     days.push({ date: addDays(today, i - (DAYS - 1)), steps: n, today: i === DAYS - 1 });
   }
-  return { timestamp: stamp, days };
+  const week = u16s[WEEKLY_ACTIVITY_ID];
+  const activity = week.map((kcal, i) => ({
+    date: addDays(today, i - (week.length - 1)), kcal, today: i === week.length - 1,
+  }));
+  const rec = u16s[RECOVERY_ID];
+  let recovery: WatchRecovery | null = null;
+  if (rec.length > 0) {
+    const quarter = Math.floor(Number(m[3]) / 15) * 15;
+    const hours = (v: number) => Math.round(v * RECOVERY_UNIT_H * 100) / 100;
+    recovery = {
+      time: `${today}T${m[2]}:${String(quarter).padStart(2, '0')}`,
+      hours: hours(rec[rec.length - 1]),
+      peak: hours(Math.max(...rec)),
+      spanHours: rec.length / 4,
+    };
+  }
+  return { timestamp: stamp, days, activity, recovery };
 }
 
 /** Every day Sommet has read from the watch, oldest first: [{date, steps}]. Kept beyond the
@@ -125,6 +166,41 @@ export async function mergeWatchSteps(days: StepsDay[]): Promise<void> {
   await AsyncStorage.setItem(STORE_KEY, JSON.stringify(list));
 }
 
+/** Every day of watch activity Sommet has read, oldest first: [{date, kcal}]. */
+export async function loadWatchActivity(): Promise<Array<{ date: string; kcal: number }>> {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVITY_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return [];
+    return list.filter((e: any) => e && typeof e.date === 'string' && typeof e.kcal === 'number');
+  } catch {
+    return [];
+  }
+}
+
+/** The recovery time at the last watch read, or null. */
+export async function loadWatchRecovery(): Promise<WatchRecovery | null> {
+  try {
+    const raw = await AsyncStorage.getItem(RECOVERY_KEY);
+    const r = raw ? JSON.parse(raw) : null;
+    return r && typeof r.hours === 'number' && typeof r.time === 'string' ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stores a read's activity days (a newer read of a day replaces the older one) and its
+ *  recovery snapshot. */
+export async function mergeWatchActivity(decoded: WatchSteps): Promise<void> {
+  const byDate = new Map<string, number>();
+  for (const e of await loadWatchActivity()) byDate.set(e.date, e.kcal);
+  for (const d of decoded.activity) byDate.set(d.date, d.kcal);
+  const list = Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, kcal]) => ({ date, kcal }));
+  await AsyncStorage.setItem(ACTIVITY_KEY, JSON.stringify(list));
+  if (decoded.recovery) await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify(decoded.recovery));
+}
+
 /** Reads the connected watch's daily steps and stores them. Returns how many days were read,
  *  0 for a watch without them. Best-effort: never throws, so a sync never fails because of it. */
 export async function syncWatchSteps(): Promise<number> {
@@ -135,6 +211,7 @@ export async function syncWatchSteps(): Promise<number> {
     const decoded = decodeWatchSteps(await readObjectRaw(DEVICE_HISTORY_QUERY));
     if (!decoded) return 0;
     await mergeWatchSteps(decoded.days);
+    await mergeWatchActivity(decoded);
     return decoded.days.length;
   } catch (e: any) {
     console.log('[steps] daily steps read failed:', e?.message ?? e);
