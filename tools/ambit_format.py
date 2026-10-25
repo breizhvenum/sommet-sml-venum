@@ -220,6 +220,17 @@ def decode_name(raw):
     return raw.split(b"\0")[0].decode("utf-8", "replace")
 
 
+def poi_name_bytes(name):
+    """A POI name as the watch keeps it: UTF-8, at most MAX_NAME_BYTES bytes, cut on a
+    character boundary. A longer name is stored (the POI count goes up) but the watch then
+    lists it as an empty 0x55 entry, so it vanishes from every read: seen on André's Peak
+    2026-10-25 with "114 Av. André M", 15 letters but 16 bytes because of the é."""
+    raw = name.encode("utf-8")
+    if len(raw) <= MAX_NAME_BYTES:
+        return raw
+    return raw[:MAX_NAME_BYTES].decode("utf-8", "ignore").rstrip().encode("utf-8")
+
+
 class RouteHeader:
     def __init__(self, route_count, point_count, checksum, magic=ROUTE_HEADER_MAGIC):
         self.route_count = route_count

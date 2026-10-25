@@ -1390,6 +1390,23 @@ static uint8_t *ambit3_build_poi_write_payload(
 /* The watch holds two lists of 250 POIs (MSP430X Emu 2.4.17, flash 0x27100/0x2B100). */
 #define AMBIT3_POI_MAX_EXISTING 500
 
+/* The watch keeps 15 bytes of a POI name. A longer one is stored (the count goes up) but the
+ * watch then lists it as an empty 0x55 entry, so it vanishes from every read: seen on André's
+ * Peak 2026-10-25 with "114 Av. André M", 15 letters but 16 bytes because of the é. Same rule
+ * as tools/ambit_format.py poi_name_bytes(): cut on a UTF-8 character boundary, and drop the
+ * spaces the cut leaves at the end. */
+#define AMBIT3_POI_NAME_MAX 15
+
+static size_t ambit3_poi_name_len(const char *name)
+{
+    size_t n = strlen(name);
+    if (n <= AMBIT3_POI_NAME_MAX) return n;
+    n = AMBIT3_POI_NAME_MAX;
+    while (n > 0 && ((unsigned char)name[n] & 0xC0) == 0x80) n--;   /* inside a character */
+    while (n > 0 && name[n - 1] == ' ') n--;
+    return n;
+}
+
 /*
  * Adds one POI to the watch. 0x0b25 APPENDS each 0x55 entry it is given to the POI
  * store (firmware FUN_0004da50 -> FUN_000397e6, no implicit clear), and it acks even
@@ -1444,7 +1461,7 @@ int ambit3_add_poi_to_watch(ambit_object_t *object, const char *name, double lat
      * itself writes for a POI it creates (SuuntoLink instead leaves those at
      * 0 for an imported one) -- picked so this looks the same as a
      * watch-made POI rather than an imported one. */
-    size_t name_len = strlen(name);
+    size_t name_len = ambit3_poi_name_len(name);
     size_t stamp_len = strlen(stamp);
     size_t record_len = name_len + 1 + 1 /* empty route_name + its NUL */ + stamp_len + 1 + 5 + 8;
     uint8_t *record = (uint8_t*)malloc(record_len);

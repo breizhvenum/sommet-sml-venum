@@ -51,7 +51,9 @@ class FakeWatch:
         if command == W.CMD_POI_READ:
             if not self.records:
                 return b""                       # an empty store: error, no data (USB: b"")
-            stream = MAGIC + b"".join(bytes([W.POI_ENTRY, len(r)]) + r for r in self.records)
+            # A name over 15 bytes is kept but listed as an empty entry (André's Peak 2026-10-25).
+            shown = [b"" if len(r.split(b"\0")[0]) > 15 else r for r in self.records]
+            stream = MAGIC + b"".join(bytes([W.POI_ENTRY, len(r)]) + r for r in shown)
             cursor = int.from_bytes(payload[:2], "little")
             chunk = stream[cursor:cursor + self.page_data]
             nxt = cursor + len(chunk)
@@ -79,6 +81,11 @@ class PoiStore(unittest.TestCase):
         result = ble_pois.add_poi(watch, "A", 50.6, 3.0)
         self.assertFalse(result["ok"])
         self.assertIn("0 -> 0", result["error"])
+
+    def test_a_long_accented_name_is_cut_to_what_the_watch_keeps(self):
+        watch = FakeWatch()
+        self.assertTrue(ble_pois.add_poi(watch, "114 Av. André Malraux", 48.84, 2.23)["ok"])
+        self.assertEqual(names(W.read_pois(watch)), ["114 Av. André"])
 
     def test_empty_store_reads_as_nothing(self):
         self.assertEqual(W.read_pois(FakeWatch()), b"")

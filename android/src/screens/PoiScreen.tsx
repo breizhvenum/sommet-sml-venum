@@ -140,7 +140,17 @@ export default function PoiScreen() {
     if (addingIndex !== null) return;
     setAddingIndex(index);
     try {
-      await addPoiToWatch(wp.name, wp.latitude, wp.longitude, () => {});
+      // addPoiToWatch reports a failure through its state callback, it does not throw. This
+      // used to pass a no-op, so a POI the watch never got still left the list as if added
+      // (8 of them on 2026-10-24, after the watch had closed Bluetooth).
+      let failure: string | undefined;
+      await addPoiToWatch(wp.name, wp.latitude, wp.longitude, st => {
+        if (st.phase === 'error') failure = st.error ?? t.unknownError;
+      });
+      if (failure) {
+        Alert.alert(t.error, failure);
+        return;
+      }
       setImported(prev => prev?.filter((_, i) => i !== index) ?? null);
       loadOnWatch();
     } catch (e: any) {

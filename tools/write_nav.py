@@ -946,7 +946,7 @@ def build_poi_record(name, lat, lon, stamp=None, type_=F.WAYPOINT_TYPE_DEFAULT):
     import time
     if stamp is None:
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime())
-    record = name.encode() + b"\0"
+    record = F.poi_name_bytes(name) + b"\0"   # 15 bytes at most, see poi_name_bytes
     record += b"\0"                       # empty route_name
     record += stamp.encode() + b"\0"
     record += bytes([0, type_, 0, 0, 1])
