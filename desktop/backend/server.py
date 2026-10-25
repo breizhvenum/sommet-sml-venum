@@ -1948,9 +1948,10 @@ class Handler(BaseHTTPRequestHandler):
             master_path = tmp / "master.json"
             total_entries = (json.loads(master_path.read_text())["total_entries"]
                               if master_path.exists() else len(activities))
+            clock_set = self._sync_clock_usb(device_pid, device_serial)
             self._send_json(200, {"ok": True, "activities": activities,
                                    "total_entries": total_entries, "device": response_device,
-                                   "raw_output": out})
+                                   "raw_output": out, "clock_set": clock_set})
 
     def _handle_mtp_devices(self):
         """GET /api/mtp/devices - bike computers reachable over USB right now (Garmin Edge and
@@ -3124,9 +3125,11 @@ class Handler(BaseHTTPRequestHandler):
                     "gpx": self._enrich_legacy_gpx(gpx, entry),
                     "fit_base64": None,
                 })
+            clock_set = self._sync_clock_usb()
             self._send_json(200, {"ok": True, "activities": activities,
                                    "total_entries": info.get("total_entries", len(activities)),
-                                   "device": device_key(), "raw_output": out})
+                                   "device": device_key(), "raw_output": out,
+                                   "clock_set": clock_set})
 
     @staticmethod
     def _enrich_legacy_gpx(gpx, entry):
@@ -3448,12 +3451,15 @@ class Handler(BaseHTTPRequestHandler):
             except (RuntimeError, TimeoutError) as exc:
                 self._send_json(502, {"ok": False, "error": str(exc)})
                 return
-            self._send_activities_ble(ble_activities, master, entries, known_count, mark_synced)
+            clock_set = self._sync_clock_ble()
+            self._send_activities_ble(ble_activities, master, entries, known_count, mark_synced,
+                                      clock_set)
         finally:
             if locked:
                 ble_activities.sync_lock(ble_bridge.bridge, False)
 
-    def _send_activities_ble(self, ble_activities, master, entries, known_count, mark_synced):
+    def _send_activities_ble(self, ble_activities, master, entries, known_count, mark_synced,
+                             clock_set=False):
         """The rest of GET /api/activities over Bluetooth: decode, mark synced, reply."""
         activities = []
         count = known_count
@@ -3480,7 +3486,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:                          # noqa: BLE001
                 print(f"mark-synced (BLE) failed, activities still returned: {exc}")
         self._send_json(200, {"ok": True, "transport": "ble", "activities": activities,
-                               "total_entries": master["entries"], "device": device_key()})
+                               "total_entries": master["entries"], "device": device_key(),
+                               "clock_set": clock_set})
 
     def _handle_pois_read(self):
         """POIs currently on the watch. Raw output, deliberately - unlike routes'
@@ -5850,6 +5857,31 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
         self._send_json(200 if info.get("ok") else 502, {"transport": "ble", **info})
+
+    def _sync_clock_usb(self, product_id=None, serial=None):
+        """Every sync sets the watch's clock to this computer's time (🟣35), after the
+        activities, as the Android app does (🟣26). set_time.py picks the command for the
+        watch (the date + time pair, or the Kailash/Traverse 0x1201 push). Best-effort: a
+        clock the watch refuses never fails the sync. True when it was set."""
+        code, out, err = run_tool("set_time.py", ["--write", "--json"],
+                                  product_id=product_id, serial=serial)
+        info = self._parse_last_json_line(out) or {}
+        if not info.get("ok"):
+            print(f"clock not set, the sync goes on: {info.get('error') or err.strip()[-200:]}")
+        return bool(info.get("ok"))
+
+    def _sync_clock_ble(self):
+        """_sync_clock_usb() over Bluetooth, through the bridge: the watch's model comes from
+        its hello. Called inside the sync lock, as the Suunto app does."""
+        sys.path.insert(0, str(TOOLS_DIR))
+        import set_time                                      # noqa: PLC0415
+        model = (ble_bridge.bridge.status().get("device_info") or {}).get("model")
+        try:
+            set_time.set_clock(ble_bridge.bridge, set_time.clock_family(model))
+            return True
+        except Exception as exc:                             # noqa: BLE001 - never fails the sync
+            print(f"clock not set over Bluetooth, the sync goes on: {exc}")
+            return False
 
     def _handle_time_sync(self, body):
         """POST /api/time/sync. Body: {} (this device's own local time) or

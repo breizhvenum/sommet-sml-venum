@@ -106,6 +106,37 @@ def build_sbem_time_push(dt, entry_id):
     return bytes([0, 0, 0, 0, 1, 0]) + SBEM0102_MAGIC + bytes([entry_id, len(encoded)]) + encoded
 
 
+def clock_family(name):
+    """Which clock command a watch takes, from its USB product name ("Kailash (Hoopoe)") or a
+    Bluetooth hello's model codename ("Hoopoe"): "kailash" or "traverse" (the 0x1201 push,
+    each with its own entry id), else None (the date + time pair, every Ambit)."""
+    name = name or ""
+    if "Kailash" in name or name == "Hoopoe":
+        return "kailash"
+    if "Traverse" in name or name in ("Jabiru", "Loon"):
+        return "traverse"
+    return None
+
+
+def set_clock(link, family, now=None, quiet=True):
+    """Sets the watch's clock to `now` (this computer's local time by default) through `link`,
+    a USB Link or the Bluetooth bridge. Returns the time set, as ISO 8601. Every sync calls it
+    (🟣35, as the Android app does, 🟣26), and so does POST /api/time/sync."""
+    if now is None:
+        # .astimezone() attaches the local offset, which the 0x1201 push's %z needs.
+        now = datetime.now().astimezone()
+    if family == "kailash":
+        link.command(CMD_KAILASH_TIME_PUSH, build_sbem_time_push(now, KAILASH_TIME_ENTRY_ID),
+                     quiet=quiet)
+    elif family == "traverse":
+        link.command(CMD_KAILASH_TIME_PUSH, build_sbem_time_push(now, TRAVERSE_TIME_ENTRY_ID),
+                     quiet=quiet)
+    else:
+        link.command(CMD_DATE, build_date_payload(now), quiet=quiet)
+        link.command(CMD_TIME, build_time_payload(now), quiet=quiet)
+    return now.isoformat(timespec="seconds")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--write", action="store_true", help="actually send it (default: dry-run)")
@@ -145,16 +176,9 @@ def main():
         print(f"setting watch clock to {now.isoformat(timespec='seconds')}")
     try:
         label = link.open()
-        is_kailash = link.device is not None and "Kailash" in (label or "")
-        is_traverse = link.device is not None and "Traverse" in (label or "")
-        if is_kailash:
-            link.command(CMD_KAILASH_TIME_PUSH, build_sbem_time_push(now, KAILASH_TIME_ENTRY_ID), quiet=args.json)
-        elif is_traverse:
-            # Traverse ignores 0x0300/0x0302 too - same 0x1201 SBEM push, its own entry id.
-            link.command(CMD_KAILASH_TIME_PUSH, build_sbem_time_push(now, TRAVERSE_TIME_ENTRY_ID), quiet=args.json)
-        else:
-            link.command(CMD_DATE, date_payload, quiet=args.json)
-            link.command(CMD_TIME, time_payload, quiet=args.json)
+        # Kailash and Traverse ignore 0x0300/0x0302: they take the 0x1201 push (clock_family).
+        set_clock(link, clock_family(label) if link.device is not None else None, now,
+                  quiet=args.json)
     except Exception as exc:
         if args.json:
             print(json.dumps({"ok": False, "error": str(exc)}))
