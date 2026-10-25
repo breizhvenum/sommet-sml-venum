@@ -3,7 +3,7 @@
 
 Own file, this project's own "one file per format" convention. Reuses `write_nav.py`'s
 own route-building/write pipeline unchanged (`build_routes`, `send_plan`, `read_pois`,
-`read_memory_map`, `check_memory_map`, `poi_write_payload`) against any Link-compatible
+`read_memory_map`, `check_memory_map`, `put_pois_back`) against any Link-compatible
 object (`desktop/backend/ble_bridge.BleBridge`) - none of that logic is re-derived here,
 only assembled. The one thing skipped is `write_nav.py main()`'s own USB-specific 0x0000
 warm-up ping before the real work starts: no real BLE capture this project has (see
@@ -36,8 +36,8 @@ import sys
 import tempfile
 
 from write_nav import (
-    CMD_POI_WRITE, build_routes, check_memory_map, existing_routes_as_gpx, nav_summary_json,
-    poi_write_payload, read_memory_map, read_nav_flash, read_pois, send_plan, waypoint_size,
+    build_routes, check_memory_map, existing_routes_as_gpx, nav_summary_json, put_pois_back,
+    read_memory_map, read_nav_flash, read_pois, send_plan, waypoint_size,
 )
 
 
@@ -82,9 +82,9 @@ def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
         flash, layout = build_routes([pathlib.Path(p) for p in all_gpx_paths], meta_capture,
                                      waypoint_size(link))      # 54-byte records on a Traverse
         send_plan(link, flash, layout)
-        restored = poi_write_payload(pois)
-        if restored:
-            link.command(CMD_POI_WRITE, restored)
+        # Several 0x0b25 of at most 254 bytes each, never the extended header that corrupted
+        # the POI store (write_nav.poi_entry_payloads), then the count is checked.
+        put_pois_back(link, pois)
     finally:
         for p in temp_paths:
             pathlib.Path(p).unlink(missing_ok=True)

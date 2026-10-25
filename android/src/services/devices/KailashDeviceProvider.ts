@@ -72,6 +72,11 @@ export class KailashDeviceProvider implements DeviceProvider {
     // them if an event actually fires).
     return () => {};
   }
+
+  // libambit sends the Kailash its own clock push (0x1201 ISO 8601), see date_time_set().
+  setClock(): Promise<boolean> {
+    return AmbitUsbModule.setDateTime();
+  }
 }
 
 export const kailashDeviceProvider = new KailashDeviceProvider();

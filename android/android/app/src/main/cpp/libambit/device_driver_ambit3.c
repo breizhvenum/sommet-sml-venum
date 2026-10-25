@@ -1402,7 +1402,7 @@ static uint8_t *ambit3_build_poi_write_payload(
 /*
  * Appends POI records to the store: packed into 0x55 entries of at most 254 bytes, the
  * SuuntoLink poiimport shape (one entry, single-byte length) and the desktop's
- * build_set_pois_payload(), one 0x0b25 per entry. 0x0b25 appends what it is given
+ * poi_entry_payloads() (tools/write_nav.py), one 0x0b25 per entry. 0x0b25 appends what it is given
  * (firmware FUN_0004da50), so several in a row add up, as several Add POI do. Empty bodies
  * are skipped. Returns 0, or -1 if a write failed (the ones before it are stored).
  */

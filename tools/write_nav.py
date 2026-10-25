@@ -150,6 +150,9 @@ QUERIES = {
 }
 
 POI_ENTRY = 0x55
+# Most bytes in one 0x55 entry written to the watch: its length stays one byte, since 0xFF
+# announces the extended header, which corrupted the POI store when written (2026-08-30).
+POI_ENTRY_MAX = 0xFE
 # Prefix of an SBEM payload sent to the watch, as against 0x...0100 on a reply.
 SBEM_WRITE_PREFIX = bytes.fromhex("000000000101")
 
@@ -876,32 +879,84 @@ def poi_count(link):
     return int.from_bytes(reply[:4], "little")
 
 
-def poi_write_payload(reply):
-    """Turns a 0x0b24 reply into the 0x0b25 that puts the same POIs back, or None when
+def check_poi_count(link, expected):
+    """After POIs were put back: says so when the watch holds a different number. 0x0b25 acks
+    even what it did not store, so the count is the only proof. True when it matches or there
+    is no watch to ask (dry-run)."""
+    held = poi_count(link)
+    if held is None or held == expected:
+        return True
+    print(f"!! the watch holds {held} POIs, {expected} were put back")
+    return False
+
+
+def poi_entry_payloads(records):
+    """POI record bodies as the 0x0b25 payloads that append them: packed in order into 0x55
+    entries of at most POI_ENTRY_MAX bytes, one 0x0b25 each. SuuntoLink's poiimport writes one
+    such entry (single-byte length, its 5 POIs in 249 bytes) and never the extended header
+    (0x55 0xFF + u32); that form is only what the watch sends on a read, and writing it
+    corrupted the POI store (2026-08-30). 0x0b25 appends (Ambit3 firmware FUN_0004da50), so
+    several in a row add up. The Android twin, ambit3_write_poi_bodies(), put 9 POIs back on
+    André's Peak this way (2026-10-25). Empty records are skipped: a POI the watch lists as an
+    empty entry (a name over 15 bytes) has no data to put back."""
+    payloads, chunk = [], b""
+
+    def flush():
+        nonlocal chunk
+        if chunk:
+            payloads.append(SBEM_WRITE_PREFIX + F.SBEM_MAGIC
+                            + bytes([POI_ENTRY, len(chunk)]) + chunk)
+            chunk = b""
+
+    for rec in records:
+        if not rec:
+            continue
+        if len(rec) > POI_ENTRY_MAX:
+            raise ValueError(f"a {len(rec)}-byte POI record does not fit one 0x55 entry")
+        if len(chunk) + len(rec) > POI_ENTRY_MAX:
+            flush()
+        chunk += rec
+    flush()
+    return payloads
+
+
+def poi_restore_payloads(reply):
+    """Turns a 0x0b24 reply into the 0x0b25 payloads that put the same POIs back, [] when
     there are none.
 
-    The watch reports one SBEM entry per POI; the write concatenates them into a single
-    entry, in the reverse of the order read. On `routedelete` that reversal is also the
-    order SuuntoLink uses, most recently modified first, which is the same rule it applies
-    to routes, and the result is byte-for-byte the payload in the capture. Reversing needs
-    neither the schema nor any decoding of a POI's insides, so nothing here can mangle a
-    POI it does not understand.
-
-    `poiimport` puts a newly added POI first and the rest in that same order, which is how
-    to add one rather than merely preserve them.
+    The watch reports one SBEM entry per POI; the write packs them in the reverse of the order
+    read. On `routedelete` that reversal is also the order SuuntoLink uses, most recently
+    modified first, which is the same rule it applies to routes, and for its small list the
+    result is byte-for-byte the payload in the capture. Reversing needs neither the schema nor
+    any decoding of a POI's insides, so nothing here can mangle a POI it does not understand.
+    A longer list goes back as several entries (poi_entry_payloads); it used to go back as one
+    entry with the extended header, the form that corrupted the store.
     """
     if not reply or F.SBEM_MAGIC not in reply:
-        return None  # no watch to ask and no capture to borrow from, as in a bare dry-run
+        return []  # no watch to ask and no capture to borrow from, as in a bare dry-run
     records = [data for entry_id, data in F.sbem_entries(reply)
                if entry_id == POI_ENTRY]
-    body = b"".join(reversed(records))
-    if not body:
-        return None
-    if len(body) < 0xFF:
-        header = bytes([POI_ENTRY, len(body)])
-    else:
-        header = bytes([POI_ENTRY, 0xFF]) + len(body).to_bytes(4, "little")
-    return SBEM_WRITE_PREFIX + F.SBEM_MAGIC + header + body
+    return poi_entry_payloads(list(reversed(records)))
+
+
+def poi_restore_count(reply):
+    """How many POIs poi_restore_payloads(reply) puts back (empty entries have no data)."""
+    if not reply or F.SBEM_MAGIC not in reply:
+        return 0
+    return sum(1 for entry_id, data in F.sbem_entries(reply) if entry_id == POI_ENTRY and data)
+
+
+def put_pois_back(link, reply):
+    """After a route write's 0x0b04 commit emptied the POI store: writes back the POIs read
+    before it (`reply`, a read_pois() result) and checks the count. Returns how many went
+    back, or None when the watch holds a different number."""
+    payloads = poi_restore_payloads(reply)
+    for payload in payloads:
+        link.command(CMD_POI_WRITE, payload)
+    if not payloads:
+        return 0
+    expected = poi_restore_count(reply)
+    return expected if check_poi_count(link, expected) else None
 
 
 def poi_write_payload_add(reply, new_record):
@@ -914,11 +969,10 @@ def poi_write_payload_add(reply, new_record):
                 if entry_id == POI_ENTRY]
                if reply and F.SBEM_MAGIC in reply else [])
     body = new_record + b"".join(records)
-    if len(body) < 0xFF:
-        header = bytes([POI_ENTRY, len(body)])
-    else:
-        header = bytes([POI_ENTRY, 0xFF]) + len(body).to_bytes(4, "little")
-    return SBEM_WRITE_PREFIX + F.SBEM_MAGIC + header + body
+    if len(body) > POI_ENTRY_MAX:
+        # Never the extended header (see poi_entry_payloads); an add sends one record anyway.
+        raise ValueError(f"{len(body)} bytes of POIs do not fit one 0x55 entry")
+    return SBEM_WRITE_PREFIX + F.SBEM_MAGIC + bytes([POI_ENTRY, len(body)]) + body
 
 
 def build_poi_record(name, lat, lon, stamp=None, type_=F.WAYPOINT_TYPE_DEFAULT):
@@ -955,33 +1009,18 @@ def build_poi_record(name, lat, lon, stamp=None, type_=F.WAYPOINT_TYPE_DEFAULT):
     return record
 
 
-def build_set_pois_payload(pois):
-    """The 0x0b25 payload that SETS the watch's POI list to exactly `pois` (each
+def build_set_pois_payloads(pois):
+    """The 0x0b25 payloads that SET the watch's POI list to exactly `pois` (each
     {name,lat,lon,type?}), for the clear-then-set flow (a preceding nav 0x0b04 commit clears the
-    region). Returns None for an empty list, so the caller sends no 0x0b25 and the commit's
-    clear stands (all POIs removed).
-
-    POIs are packed into combined 0x55 entries of <= 254 bytes each - the SuuntoLink poiimport
-    shape (one 0x55 entry, single-byte length) - split across several entries when the list is
-    bigger, so the extended-length header (0x55 0xFF + u32) is never used: that form is only ever
-    emitted BY the watch on read, never written to it, and writing it corrupted the region
-    (2026-08-30)."""
+    region). [] for an empty list, so the caller sends no 0x0b25 and the commit's clear stands
+    (all POIs removed). Packed by poi_entry_payloads(): entries of at most 254 bytes, one
+    0x0b25 each, never the extended header."""
     records = []
     for p in pois:
         t = p.get("type")
         t = F.WAYPOINT_TYPE_DEFAULT if t in (None, "") else int(t)
         records.append(build_poi_record(p["name"], float(p["lat"]), float(p["lon"]), type_=t))
-    if not records:
-        return None
-    payload = SBEM_WRITE_PREFIX + F.SBEM_MAGIC
-    chunk = b""
-    for rec in records:
-        if chunk and len(chunk) + len(rec) > 0xFE:
-            payload += bytes([POI_ENTRY, len(chunk)]) + chunk
-            chunk = b""
-        chunk += rec
-    payload += bytes([POI_ENTRY, len(chunk)]) + chunk
-    return payload
+    return poi_entry_payloads(records)
 
 
 def run_addpoi(args):
@@ -1491,16 +1530,18 @@ def main():
     # --set-pois-json we set a caller-supplied list instead of restoring what was read.
     if args.set_pois_json is not None:
         set_list = json.loads(pathlib.Path(args.set_pois_json).read_text())
-        payload = build_set_pois_payload(set_list)   # None for an empty list -> POIs cleared
-        if payload:
+        payloads = build_set_pois_payloads(set_list)   # [] for an empty list -> POIs cleared
+        for payload in payloads:
             link.command(CMD_POI_WRITE, payload)
+        if payloads:
             print(f"  set POIs: {len(set_list)} written into the cleared region")
+            check_poi_count(link, len(set_list))
         else:
             print(f"  set POIs: empty list -> all POIs cleared")
     else:
-        restored = poi_write_payload(pois)
+        restored = poi_restore_payloads(pois)
         if restored:
-            link.command(CMD_POI_WRITE, restored)
+            put_pois_back(link, pois)
         elif link.dry_run and not (args.compare or args.meta):
             # A dry-run has no watch to ask, so it cannot show the 0x0b25 a live run will
             # send. Saying "no POI" here once made a rehearsal announce one message fewer than

@@ -99,5 +99,57 @@ class PoiStore(unittest.TestCase):
         self.assertGreater(watch.sent.count(W.CMD_POI_READ), 1)
 
 
+    # A route write erases the POIs (its 0x0b04 commit) and puts back what it read. Past 254
+    # bytes that used to go back as one entry with the extended header (0x55 0xFF + u32), the
+    # form that corrupted the POI store (2026-08-30). André's 8 POIs are about 400 bytes.
+    def test_a_long_list_goes_back_in_entries_of_at_most_254_bytes(self):
+        watch = FakeWatch()
+        for i in range(9):
+            ble_pois.add_poi(watch, f"Point number {i}", 50.6 + i / 100, 3.0)
+        reply = W.read_pois(watch)
+        payloads = W.poi_restore_payloads(reply)
+        self.assertGreater(len(payloads), 1)
+        for payload in payloads:
+            body = payload[len(W.SBEM_WRITE_PREFIX) + len(MAGIC):]
+            self.assertEqual(body[0], W.POI_ENTRY)
+            self.assertLessEqual(body[1], W.POI_ENTRY_MAX)
+            self.assertEqual(len(body), 2 + body[1])     # one entry, single-byte length
+
+        cleared = FakeWatch()                            # the store after the 0x0b04 commit
+        for payload in payloads:
+            cleared.command(W.CMD_POI_WRITE, payload)
+        # Most recently modified first, as SuuntoLink puts them back on `routedelete`.
+        self.assertEqual(names(W.read_pois(cleared)), [f"Point number {i}" for i in reversed(range(9))])
+        self.assertEqual(W.poi_restore_count(reply), 9)
+        self.assertTrue(W.check_poi_count(cleared, 9))
+
+    def test_an_empty_entry_has_nothing_to_put_back(self):
+        watch = FakeWatch()
+        ble_pois.add_poi(watch, "A", 50.6, 3.0)
+        watch.records.append(b"N" * 16 + b"\0\0" + b"2026-10-25T09:00:00\0" + bytes(13))   # name too long
+        reply = W.read_pois(watch)
+        self.assertEqual(W.poi_restore_count(reply), 1)
+        self.assertEqual(len(W.poi_restore_payloads(reply)), 1)
+
+    def test_no_poi_means_no_write(self):
+        self.assertEqual(W.poi_restore_payloads(b""), [])
+        self.assertEqual(W.build_set_pois_payloads([]), [])
+
+    def test_a_set_list_never_uses_the_extended_header(self):
+        pois = [{"name": f"Point number {i}", "lat": 50.6, "lon": 3.0} for i in range(12)]
+        payloads = W.build_set_pois_payloads(pois)
+        watch = FakeWatch()
+        for payload in payloads:
+            body = payload[len(W.SBEM_WRITE_PREFIX) + len(MAGIC):]
+            self.assertNotEqual(body[1], 0xFF)
+            watch.command(W.CMD_POI_WRITE, payload)
+        self.assertEqual(len(watch.records), 12)
+
+    def test_a_count_that_does_not_match_is_reported(self):
+        watch = FakeWatch()
+        ble_pois.add_poi(watch, "A", 50.6, 3.0)
+        self.assertFalse(W.check_poi_count(watch, 2))
+
+
 if __name__ == "__main__":
     unittest.main()

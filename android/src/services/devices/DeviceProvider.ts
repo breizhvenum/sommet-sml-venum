@@ -46,6 +46,10 @@ export interface DeviceProvider {
    *  screen. Optional, best-effort, never throws; returns how many days were read. */
   syncDailySteps?(): Promise<number>;
 
+  /** Sets the watch clock to the phone's local time, as the Suunto app does on every sync (so a
+   *  daylight-saving change reaches the watch). Optional; resolves true once the watch took it. */
+  setClock?(): Promise<boolean>;
+
   /** When true, a sync REFRESHES already-synced activities (overwrites their GPX + row)
    *  instead of skipping them. For a live re-read device like the Kailash, getLogs() rebuilds
    *  every activity from a fresh read of the TrackLog + DeviceHistory each time, so re-syncing

@@ -41,6 +41,10 @@ export class AmbitDeviceProvider implements DeviceProvider {
   syncDailySteps(): Promise<number> {
     return syncWatchSteps();
   }
+
+  setClock(): Promise<boolean> {
+    return AmbitUsbModule.setDateTime();
+  }
 }
 
 export const ambitDeviceProvider = new AmbitDeviceProvider();

@@ -23,7 +23,7 @@ type SyncListener = (state: SyncState) => void;
 
 /**
  * Orchestre une synchronisation complète :
- *   connect → getLogs → (pour chaque log nouveau) writeGpx → markSynced → disconnect
+ *   connect → getLogs → clock → (pour chaque log nouveau) writeGpx → markSynced → disconnect
  *
  * @param onState  Callback appelé à chaque changement d'état
  * @param provider DeviceProvider à utiliser (par défaut : Suunto Ambit)
@@ -120,7 +120,21 @@ export async function runSync(
     }
   }
 
-  // ── 2c. Daily steps (Ambit3) ─────────────────────────────────────────────────
+  // ── 2c. Watch clock ──────────────────────────────────────────────────────────
+  // Set to the phone's local time on every sync, as the Suunto app does, so a daylight-saving
+  // change reaches the watch without a tap on Home's "Sync time" (André, 🟣26, 2026-10-25: the
+  // Peak stayed on summer time after 25/10). Before the step read, so its read time is right.
+  // Best-effort: a clock the watch refused never fails the sync.
+  if (provider.setClock) {
+    try {
+      await provider.setClock();
+      console.log('[clock] watch clock set to the phone\'s time');
+    } catch (e: any) {
+      console.log('[clock] watch clock not set, sync goes on:', e?.message ?? e);
+    }
+  }
+
+  // ── 2d. Daily steps (Ambit3) ─────────────────────────────────────────────────
   // The watch keeps only 30 days of step counts; each sync stores what it has, for the Health
   // screen. Best-effort and silent: it never fails the sync.
   if (provider.syncDailySteps) {
