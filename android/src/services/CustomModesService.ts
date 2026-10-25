@@ -61,7 +61,7 @@ function legacyToExerciseMode(m: LegacyMode): ExerciseMode {
 /** Real, read-only (0x0b17 flash read) - safe any time the watch is connected. Over BLE
  * (overBle) runs on the already-open link; over USB opens its own short-lived connection. */
 export async function readCustomModes(
-  onState: (s: ReadCustomModesState) => void, overBle = false, maxUserDisplays = 8,
+  onState: (s: ReadCustomModesState) => void, overBle = false,
 ): Promise<void> {
   onState({ phase: overBle ? 'reading' : 'connecting' });
   if (!overBle) {
@@ -88,7 +88,7 @@ export async function readCustomModes(
     }
     const bytes = base64ToBytes(await readCustomModesRaw());
     setCustomModesCache(bytes);   // seed the cache so edits don't re-read the 12KB region
-    const decoded = decode(bytes, maxUserDisplays);
+    const decoded = decode(bytes);
     onState({ phase: 'done', modes: decoded.exerciseModes });
   } catch (e: any) {
     onState({ phase: 'error', error: e?.message ?? 'Failed to read CustomModes' });

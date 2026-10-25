@@ -137,7 +137,7 @@ export default function SportModesScreen() {
       setError(s.error);
       if (s.modes) applyModes(s.modes);
       if (s.legacy) legacy = true;
-    }, overBle, maxDisplays);
+    }, overBle);
     setIsLegacy(legacy);
     // Ambit1/2 have no Ambit3 structural view, and readSportModes() reads the same CustomModes
     // region that crashes on this family - skip it entirely for legacy (the read-only list is

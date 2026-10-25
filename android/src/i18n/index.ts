@@ -114,6 +114,7 @@ const fr = {
   homeBleAdapterOffError: 'Le Bluetooth de cet appareil a été coupé. Rallumez-le, choisissez « Sync now » sur la montre, puis touchez « Connecter … en Bluetooth ».',
   homeBleSessionEnded: 'La montre a terminé la session Bluetooth. Choisissez « Sync now » sur la montre : Sommet se reconnecte tout seul.',
   watchBleClosedError: 'La montre a fermé la liaison Bluetooth. Sur la montre, choisissez « Sync now », puis touchez « Connecter … en Bluetooth » dans Accueil, et réessayez.',
+  sportModesBackupFailed: 'Impossible d’enregistrer une copie des modes sport de la montre, rien n’a été écrit',
   homePairWatchPill: 'Associer',
   homeBleReadyTitle: 'Prêt à associer',
   homeBleReadyMsg:
@@ -976,6 +977,7 @@ const en: typeof fr = {
   homeBleAdapterOffError: 'Bluetooth was turned off on this device. Turn it back on, choose "Sync now" on the watch, then tap "Connect … via Bluetooth".',
   homeBleSessionEnded: 'The watch ended the Bluetooth session. Choose "Sync now" on the watch and Sommet reconnects by itself.',
   watchBleClosedError: 'The watch closed the Bluetooth link. Choose "Sync now" on the watch, tap "Connect … via Bluetooth" on Home, then try again.',
+  sportModesBackupFailed: 'Could not save a copy of the watch’s sport modes, so nothing was written',
   homePairWatchPill: 'Pair',
   homeBleReadyTitle: 'Ready to pair',
   homeBleReadyMsg:

@@ -382,6 +382,10 @@ export interface Display {
   // Real, 2026-08-09 - human-readable label (fieldTypeLabel(templateName)), same real fix
   // desktop's SportModesPage.qml already has.
   templateLabel: string;
+  // The display's own Type, the second u16 of its DISP_SETTING ([u16 Template][u16 Type],
+  // custom_modes.py decode_display). 10 = a screen the user set up; anything else is one of
+  // the watch's built-in views.
+  type: number;
   fields: DisplayField[];
   // Filled in by numberDisplays() after all of a mode's displays are collected - a single
   // display can't know its own screenNumber/isBuiltIn in isolation (the classification looks
@@ -395,7 +399,7 @@ function decodeDisplay(bytes: Uint8Array, offset: number, length: number): Displ
   let cursor = offset;
   const display: Display = {
     template: 0, templateName: fieldTypeName(0), templateLabel: fieldTypeLabel(fieldTypeName(0)),
-    fields: [], screenNumber: null, isBuiltIn: false,
+    type: 0, fields: [], screenNumber: null, isBuiltIn: false,
   };
   while (cursor < end) {
     const tag = readTag(bytes, cursor);
@@ -406,6 +410,7 @@ function decodeDisplay(bytes: Uint8Array, offset: number, length: number): Displ
       display.template = tpl;
       display.templateName = fieldTypeName(tpl);
       display.templateLabel = fieldTypeLabel(display.templateName);
+      if (tag.length >= 4) display.type = bytes[content + 2] | (bytes[content + 3] << 8);
     } else if (tag.tagId === EXERCISE_MODES_DISP_FIELD) {
       display.fields.push(decodeDispField(bytes, content, tag.length));
     }
@@ -414,59 +419,20 @@ function decodeDisplay(bytes: Uint8Array, offset: number, length: number): Displ
   return display;
 }
 
-// Real, hardware-confirmed fixed "system tail" every real sport mode's own Displays array
-// ends with - direct TS port of tools/custom_modes.py's own _GPS_SYSTEM_TAIL/
-// _NON_GPS_SYSTEM_TAIL/system_tail_length() (see that module's own comment for the full
-// derivation: 6/6 tested GPS-capable activities get this exact 7-entry tail, Pool swimming -
-// the only non-GPS activity tested - gets this 3-entry one; the very last entry is always
-// 0x0127 across all 7 modes tested). Android's own CustomModesReader.ts never had this fix
-// applied (it's an independent decoder from the Python one desktop uses) until now - real,
-// 2026-08-09 ("replicate the desktop version feature wise").
-const GPS_SYSTEM_TAIL = [
-  'PID_RUNNER_GPS_TEMPLATE_11_COMPASS_NAVIGATE',
-  'PID_RUNNER_GPS_TEMPLATE_11_MILS_COMPASS_NAVIGATE',
-  'PID_RUNNER_GPS_TEMPLATE_22_NAVIGATION',
-  'PID_RUNNER_GPS_TEMPLATE_1G_GRAPH',
-  'PID_RUNNER_GPS_TEMPLATE_50_MAP_DRAW',
-  'PID_RUNNER_GPS_TEMPLATE_4',
-  '0x0127',
-];
-const NON_GPS_SYSTEM_TAIL = ['PID_RUNNER_GPS_TEMPLATE_4', '0x0124', '0x0127'];
+// Which displays are the user's own screens: the ones whose Type is 10, as the desktop has
+// counted them since 2026-08-12 (tools/custom_modes.py user_display_count). Across 1329 modes in
+// assets/pcap the Type-10 displays are always a contiguous prefix. This replaced matching the
+// end of the list against two known built-in "tails": a mode whose list ended any other way
+// (one without the guidance display, for example) had all its built-in views counted as
+// screens, and showed "8/8" where the watch has 5.
+export const USER_DISPLAY_TYPE = 10;
 
-function systemTailLength(templateNames: string[]): number {
-  const gpsLen = GPS_SYSTEM_TAIL.length;
-  if (templateNames.length >= gpsLen
-      && templateNames.slice(-gpsLen).every((n, i) => n === GPS_SYSTEM_TAIL[i])) {
-    return gpsLen;
-  }
-  const nonGpsLen = NON_GPS_SYSTEM_TAIL.length;
-  if (templateNames.length >= nonGpsLen
-      && templateNames.slice(-nonGpsLen).every((n, i) => n === NON_GPS_SYSTEM_TAIL[i])) {
-    return nonGpsLen;
-  }
-  return 0;
-}
-
-/** Mutates each display in place with its real screenNumber (1-based, null for a built-in
- * system-tail screen) and isBuiltIn flag - same real invariant as custom_modes.py's own
- * _displays_to_json(): index (this array's own position) never changes, only these two new
- * fields get added. */
-// SuuntoLink's own getMaxDisplays() ceiling for the Ambit3 family this screen is gated to.
-// The cap is the safety net custom_modes.py already has (real_count = min(len - tail,
-// max_displays_for_variant)): when a mode's system tail doesn't exactly match the known
-// signature above, systemTailLength() returns 0 and every screen counts as "real" - which is
-// how a mode showed "11/8" (more than the watch can hold). Capping here treats the overflow as
-// built-in, matching the desktop. André, 2026-08-17 ("we already fixed this on desktop").
-// Default ceiling (Ambit3 family = 8). Callers pass the connected variant's own max
-// (Traverse / Traverse Alpha = 4) so the cap is per-device, matching custom_modes.py's
-// max_displays_for_variant. André, 2026-08-17.
-const DEFAULT_MAX_USER_DISPLAYS = 8;
-
-function numberDisplays(displays: Display[], maxUserDisplays: number = DEFAULT_MAX_USER_DISPLAYS): void {
-  const tailLen = systemTailLength(displays.map(d => d.templateName));
-  const realCount = Math.min(displays.length - tailLen, maxUserDisplays);
+/** Mutates each display in place with its screenNumber (1-based, null for a built-in view)
+ * and isBuiltIn flag - same as custom_modes.py's _displays_to_json(). The array's own order
+ * (the index the writers address) never changes. */
+function numberDisplays(displays: Display[]): void {
   displays.forEach((d, i) => {
-    d.isBuiltIn = i >= realCount;
+    d.isBuiltIn = d.type !== USER_DISPLAY_TYPE;
     d.screenNumber = d.isBuiltIn ? null : i + 1;
   });
 }
@@ -476,7 +442,7 @@ export interface ExerciseMode {
   displays: Display[];
 }
 
-function decodeExerciseMode(bytes: Uint8Array, offset: number, length: number, maxUserDisplays: number = DEFAULT_MAX_USER_DISPLAYS): ExerciseMode {
+function decodeExerciseMode(bytes: Uint8Array, offset: number, length: number): ExerciseMode {
   const end = offset + length;
   let cursor = offset;
   const mode: ExerciseMode = {
@@ -505,7 +471,7 @@ function decodeExerciseMode(bytes: Uint8Array, offset: number, length: number, m
     }
     cursor = content + tag.length;
   }
-  numberDisplays(mode.displays, maxUserDisplays);
+  numberDisplays(mode.displays);
   return mode;
 }
 
@@ -542,7 +508,7 @@ export interface DecodedCustomModes {
 
 /** Decodes a raw CustomModes flash dump (12288 bytes, from readCustomModesRaw()). Mirrors
  * custom_modes.py's own decode() exactly - same tag walk, same field names. */
-export function decode(bytes: Uint8Array, maxUserDisplays: number = DEFAULT_MAX_USER_DISPLAYS): DecodedCustomModes {
+export function decode(bytes: Uint8Array): DecodedCustomModes {
   const root = readTag(bytes, 0);
   if (!root || root.tagId !== DEVICE_CUSTOM) {
     throw new Error(`expected DEVICE_CUSTOM at offset 0, got ${root ? `0x${root.tagId.toString(16)}` : 'nothing'}`);
@@ -564,7 +530,7 @@ export function decode(bytes: Uint8Array, maxUserDisplays: number = DEFAULT_MAX_
         if (!subTag) break;
         const subContent = subCursor + 4;
         if (subTag.tagId === EXERCISE_MODES_MODE) {
-          result.exerciseModes.push(decodeExerciseMode(bytes, subContent, subTag.length, maxUserDisplays));
+          result.exerciseModes.push(decodeExerciseMode(bytes, subContent, subTag.length));
         }
         subCursor = subContent + subTag.length;
       }
