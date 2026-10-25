@@ -21,6 +21,28 @@ from exercise_log import (
 )
 from write_nav import read_flash
 
+CMD_LOCK_CHECK = 0x0b19
+CMD_LOCK_SET = 0x0b1a
+
+
+def sync_lock(link, on):
+    """Takes (on) or releases (off) the watch's sync lock around a Bluetooth sync, as the
+    Suunto app does (btsnoop 2026-08-09: 0x0b19/0x0b1a 1 at the start, 0 at the end) and the
+    Android app does over Bluetooth (HomeScreen, syncDisplay). The watch shows "Syncing" while
+    it is held; without it a "Sync now" pressed on the watch ended in "Sync failed" although
+    the sync ran. Same steps as libambit_device_driver_lock_log(): set only a free lock, clear
+    only a held one, nothing when the check fails. Best-effort: False instead of raising."""
+    try:
+        reply = link.command(CMD_LOCK_CHECK, b"")
+        held = int.from_bytes(reply[:4], "little") if len(reply) >= 4 else None
+        if on and held == 0:
+            link.command(CMD_LOCK_SET, b"\x01\x00\x00\x00")
+        elif not on and held == 1:
+            link.command(CMD_LOCK_SET, b"\x00\x00\x00\x00")
+        return held is not None
+    except Exception:                                    # noqa: BLE001 - the sync goes on without it
+        return False
+
 
 def read_activities(link, known_count=0):
     """Returns (master, entries) - same shape `exercise_log.py main()`'s own watch-reading

@@ -3434,15 +3434,27 @@ class Handler(BaseHTTPRequestHandler):
         it finish than fail a real read; a caller that wants a bound should set its own."""
         sys.path.insert(0, str(TOOLS_DIR))
         import ble_activities                                # noqa: PLC0415
+        # The watch's sync lock is held for the read and the synced marks, as the Suunto app
+        # and the tablet do (ble_activities.sync_lock); released however the sync ends.
+        locked = False
         try:
-            ble_bridge.bridge.set_dry_run(False)
-            master, entries = ble_activities.read_activities(ble_bridge.bridge, known_count)
-        except ble_bridge.BleBridgeError as exc:
-            self._send_json(502, {"ok": False, "error": str(exc)})
-            return
-        except (RuntimeError, TimeoutError) as exc:
-            self._send_json(502, {"ok": False, "error": str(exc)})
-            return
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                locked = ble_activities.sync_lock(ble_bridge.bridge, True)
+                master, entries = ble_activities.read_activities(ble_bridge.bridge, known_count)
+            except ble_bridge.BleBridgeError as exc:
+                self._send_json(502, {"ok": False, "error": str(exc)})
+                return
+            except (RuntimeError, TimeoutError) as exc:
+                self._send_json(502, {"ok": False, "error": str(exc)})
+                return
+            self._send_activities_ble(ble_activities, master, entries, known_count, mark_synced)
+        finally:
+            if locked:
+                ble_activities.sync_lock(ble_bridge.bridge, False)
+
+    def _send_activities_ble(self, ble_activities, master, entries, known_count, mark_synced):
+        """The rest of GET /api/activities over Bluetooth: decode, mark synced, reply."""
         activities = []
         count = known_count
         for header, samples in entries:

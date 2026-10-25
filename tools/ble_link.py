@@ -148,6 +148,11 @@ class NspAssembler:
     def __init__(self):
         self._buf = bytearray()
 
+    def reset(self):
+        """Drops a half-received frame: a new link starts clean (ble_server.py calls it on
+        every subscribe and disconnect)."""
+        self._buf.clear()
+
     def feed(self, chunk):
         self._buf += chunk
         out = []

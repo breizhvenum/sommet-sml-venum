@@ -29,7 +29,7 @@ same two characteristics, same CCCD:
 Note the direction flip against ble_link.py: as a client it WROTE to c6339440; as the server
 we RECEIVE on it. Same wire, opposite end.
 
-STATUS: the D-Bus/BlueZ plumbing below is exercised (registers, advertises, runs), but a real
+STATUS: the D-Bus/BlueZ plumbing below is exercised (registers, scans, runs), but a real
 watch session needs André to trigger "Pair Mobile App" (fresh) or "Sync now" (already paired)
 on the watch - the advertising window is short. Nothing here writes to a watch; it is a
 transport plus a read-only smoke test, in keeping with this project's dry-run-by-default rule.
@@ -39,6 +39,7 @@ transport plus a read-only smoke test, in keeping with this project's dry-run-by
 """
 
 import argparse
+import collections
 import json
 import os
 import socket
@@ -58,12 +59,10 @@ from ambit_pcap import CMD_NAMES
 BLUEZ = "org.bluez"
 ADAPTER_IFACE = "org.bluez.Adapter1"
 GATT_MANAGER_IFACE = "org.bluez.GattManager1"
-LE_ADVERTISING_MANAGER_IFACE = "org.bluez.LEAdvertisingManager1"
 DBUS_OM_IFACE = "org.freedesktop.DBus.ObjectManager"
 DBUS_PROP_IFACE = "org.freedesktop.DBus.Properties"
 GATT_SERVICE_IFACE = "org.bluez.GattService1"
 GATT_CHRC_IFACE = "org.bluez.GattCharacteristic1"
-LE_ADVERTISEMENT_IFACE = "org.bluez.LEAdvertisement1"
 AGENT_IFACE = "org.bluez.Agent1"
 AGENT_MANAGER_IFACE = "org.bluez.AgentManager1"
 
@@ -126,10 +125,11 @@ class ControlSocketServer:
     """
 
     def __init__(self, link, rx_total, agent=None, path=SOCKET_PATH,
-                 bus=None, dbus_module=None, adapter=None, glib=None):
+                 bus=None, dbus_module=None, adapter=None, glib=None, link_state=None):
         self.link = link
         self.rx_total = rx_total
         self.agent = agent
+        self.link_state = link_state
         self.path = Path(path)
         self._cmd_lock = threading.Lock()
         self.bus = bus
@@ -145,12 +145,23 @@ class ControlSocketServer:
             # subscribed for a moment before it's pushed 0x1201/0x0002, so callers that
             # need real device identity (server.py's /api/device) should wait for
             # handshake_done, not just subscribed.
-            return {"ok": True, "subscribed": bool(self.link.notify_chrc.notifying),
-                     "handshake_done": self.link.handshake_done.is_set(),
-                     "device_info": self.link.device_info,
-                     "dry_run": self.link.dry_run, "rx_total": self.rx_total[0],
-                     "pending_passkey_device":
-                         self.agent.pending_passkey_device if self.agent else None}
+            # "sync_notices" counts the watch asking for a sync (answered by the daemon);
+            # "pairing_hint" is non-null when the watch keeps refusing this computer's key.
+            # "subscribed": the session's transport is up. A paired watch that reconnects never
+            # subscribes again, so a completed handshake counts too.
+            linked = self.link_state is None or self.link_state.path is not None
+            out = {"ok": True, "subscribed": self.link.handshake_done.is_set() or
+                   (linked and bool(self.link.notify_chrc.notifying)),
+                   "handshake_done": self.link.handshake_done.is_set(),
+                   "device_info": self.link.device_info,
+                   "dry_run": self.link.dry_run, "rx_total": self.rx_total[0],
+                   "pending_passkey_device":
+                       self.agent.pending_passkey_device if self.agent else None,
+                   "sync_notices": self.link.sync_notices,
+                   "last_sync_notice_at": self.link.last_sync_notice_at}
+            if self.link_state is not None:
+                out.update(self.link_state.status())
+            return out
         if op == "set_dry_run":
             self.link.dry_run = bool(request.get("value", True))
             return {"ok": True, "dry_run": self.link.dry_run}
@@ -361,6 +372,7 @@ def build_classes():
         @dbus_service.method(GATT_CHRC_IFACE)
         def StopNotify(self):
             self.notifying = False
+            print("  watch unsubscribed")
 
         @dbus_service.signal(DBUS_PROP_IFACE, signature="sa{sv}as")
         def PropertiesChanged(self, interface, changed, invalidated):
@@ -368,9 +380,14 @@ def build_classes():
 
         def notify(self, payload):
             """Our TX. A notification is delivered by announcing a Value change - that is how
-            BlueZ's D-Bus GATT server sends, there is no explicit send method."""
-            if not self.notifying:
-                return False
+            BlueZ's D-Bus GATT server sends, there is no explicit send method.
+
+            Sent whatever `notifying` says: BlueZ delivers it to each device whose subscription
+            it holds. A PAIRED watch keeps its subscription across links (BlueZ keeps a paired
+            device's CCC state), so on a reconnect it writes to us without subscribing again and
+            StartNotify never comes. Gating on `notifying` (cleared at every drop) left every
+            link after the first one unanswered: the watch repeated its opener, the watchdog
+            dropped it, over and over (André's Peak, 2026-10-25 17:19)."""
             self.PropertiesChanged(
                 GATT_CHRC_IFACE,
                 {"Value": dbus.Array([dbus.Byte(b) for b in payload], signature="y")},
@@ -398,44 +415,6 @@ def build_classes():
                 raise dbus.exceptions.DBusException(
                     "org.bluez.Error.InvalidArguments")
             return self.properties()[GATT_SERVICE_IFACE]
-
-    class Advertisement(dbus_service.Object):
-        """Optional, and NOT how the connection is actually established.
-
-        First attempt here advertised the service and waited to be found. That was wrong, and
-        the working Android module says so plainly: it never advertises. It SCANS for the
-        soliciting watch and then connects TO it, while hosting the server. Solicitation is
-        the watch asking "connect to me if you host NSP" - the answer is a connection, not
-        another advertisement.
-
-        Kept as a best-effort extra (some stacks connect faster when they can also see us),
-        which is why a failure here is a warning rather than fatal. The payload is also
-        trimmed: a 128-bit UUID is 18 bytes of the 31-byte budget, and adding a name plus
-        tx-power overflowed it - the real cause of the first run's
-        "Failed to register advertisement".
-        """
-
-        def __init__(self, bus, index):
-            self.path = BASE_PATH + "/advert" + str(index)
-            dbus_service.Object.__init__(self, bus, self.path)
-
-        def properties(self):
-            return {
-                "Type": "peripheral",
-                "ServiceUUIDs": dbus.Array([SERVICE_UUID], signature="s"),
-                "LocalName": "AmbitApp",
-            }
-
-        @dbus_service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
-        def GetAll(self, interface):
-            if interface != LE_ADVERTISEMENT_IFACE:
-                raise dbus.exceptions.DBusException(
-                    "org.bluez.Error.InvalidArguments")
-            return self.properties()
-
-        @dbus_service.method(LE_ADVERTISEMENT_IFACE)
-        def Release(self):
-            pass
 
     class Agent(dbus_service.Object):
         """org.bluez.Agent1, registered with "KeyboardDisplay" capability.
@@ -561,7 +540,28 @@ def build_classes():
         def Cancel(self):
             print("  pairing: cancelled")
 
-    return Application, Service, Characteristic, Advertisement, Agent, dbus, GLib
+    return Application, Service, Characteristic, Agent, dbus, GLib
+
+
+# The watch's sync notice: 0x1201 with flags 0x06 after the handshake, ending in the SBEM entry
+# f6 01 <v>. It sends one every 30 minutes while linked and when "Sync now" is picked on a
+# watch that is already linked. The Suunto app and the Android app (protocol_ble.c) answer each
+# with an empty 0x1201, flags 0x09, same pktNum; unanswered, the watch repeats it every 5 s,
+# three times. Before the handshake the same frame is the watch's opener (answered with 0x0000).
+SYNC_NOTICE = 0x1201
+SYNC_NOTICE_FL = 0x06
+SYNC_NOTICE_ACK = 0x09
+
+# A request whose reply comes back under another command number. Over Bluetooth the watch
+# answers device info (0x0000) with 0x0002, the same payload as its hello (model, serial, fw,
+# hw): André's Peak 2026-10-25, request pkt 11 answered by 0x0002 pkt 11, flags 0x0a.
+REPLY_COMMAND = {0x0000: 0x0002}
+
+
+class WatchRefused(RuntimeError):
+    """The watch answered with errFlags set: it refused the command (protocol_ble.c returns an
+    error for these too). Seen once in 1429 logged frames: the first POI write (0x0b25) right
+    after a fresh pairing, which the watch did not keep."""
 
 
 class ServerLink:
@@ -597,6 +597,16 @@ class ServerLink:
         self._reply = None
         self._reply_ready = threading.Event()
         self._expecting = None
+        self._pending_pkt = None
+        # pktNums of requests that timed out: their reply, if it still comes, is not taken as
+        # the answer to a later request (every logged reply echoes its request's pktNum).
+        self._late_pkts = collections.deque(maxlen=32)
+        # Frames waiting to go out, as 20-byte chunks. Only the GLib loop touches it, so a
+        # sync-notice answer can never land in the middle of a command's chunks.
+        self._tx = collections.deque()
+        self._tx_busy = False
+        self.sync_notices = 0
+        self.last_sync_notice_at = None
 
         # Server-side bootstrap handshake (HANDOFF.md Milestone 7 items 9-10, ported
         # byte-for-byte from protocol_ble.c's libambit_ble_handshake_device_info() - the
@@ -616,13 +626,21 @@ class ServerLink:
         handler) - without this, a stale `handshake_done`/`device_info` from the PREVIOUS
         connection would make the next one look already-identified when it isn't, and
         `command()` would try to drive requests into a connId/pktNum sequence the watch
-        has no memory of."""
+        has no memory of.
+
+        A command still waiting is woken at once and fails ("the watch disconnected"), instead
+        of waiting out its timeout. Frames not yet sent are dropped: they belong to the old
+        link. Runs on the GLib loop (the disconnect and subscribe handlers)."""
         self.handshake_done.clear()
         self.device_info = {}
         self._pkt_num = 0
+        self._conn_id = 0x0009
         self._reply = None
         self._expecting = None
-        self._reply_ready.clear()
+        self._pending_pkt = None
+        self._late_pkts.clear()
+        self._tx.clear()
+        self._reply_ready.set()
 
     def on_message(self, message):
         """Called from the D-Bus thread for every decoded inbound frame. Before the
@@ -632,9 +650,33 @@ class ServerLink:
         if not self.handshake_done.is_set():
             self._handle_handshake_frame(message)
             return
-        if self._expecting is not None and message.command == self._expecting:
-            self._reply = message
-            self._reply_ready.set()
+        if message.command == SYNC_NOTICE and message.flags == SYNC_NOTICE_FL:
+            self._answer_sync_notice(message)
+            return
+        if self._expecting is None:
+            return
+        if message.command != REPLY_COMMAND.get(self._expecting, self._expecting):
+            return
+        if message.pkt_num != self._pending_pkt:
+            if message.pkt_num in self._late_pkts:
+                print(f"  late reply 0x{message.command:04x} (packet {message.pkt_num}) to a "
+                      "request that already timed out - ignored")
+                return
+            print(f"  reply 0x{message.command:04x} carries packet {message.pkt_num}, "
+                  f"the request was {self._pending_pkt}")
+        self._reply = message
+        self._reply_ready.set()
+
+    def _answer_sync_notice(self, message):
+        """An empty 0x1201, flags 0x09, same pktNum: what the Suunto app and protocol_ble.c
+        send back. Counted in `status` so the backend can start a sync later."""
+        self.sync_notices += 1
+        self.last_sync_notice_at = time.time()
+        payload = message.payload
+        value = payload[-1] if len(payload) >= 3 and payload[-3] == 0xF6 else None
+        print(f"  watch sync notice (packet {message.pkt_num}, value {value}) - answered")
+        self._send_raw(SYNC_NOTICE, flags=SYNC_NOTICE_ACK, conn_id=self._conn_id,
+                       pkt_num=message.pkt_num, payload=b"")
 
     def _handle_handshake_frame(self, message):
         if message.command == 0x1201:
@@ -667,6 +709,10 @@ class ServerLink:
                 hw = payload[36:40]
                 info["hw_version"] = f"{hw[0]}.{hw[1]}.{hw[2] | (hw[3] << 8)}"
             self.device_info = info
+            # The watch's own connId (9 on every logged frame); protocol_ble.c learns it the
+            # same way.
+            if message.conn_id:
+                self._conn_id = message.conn_id
             # Driver-path commands (getLogs etc.) continue the pktNum sequence from here -
             # protocol_ble.c: "device_info was the watch's pkt 0 exchange... the phone's
             # first real request is pkt 1."
@@ -696,18 +742,32 @@ class ServerLink:
         `timeout_add` calls rather than a blocking `time.sleep()` loop, so the mainloop stays
         free to service other D-Bus traffic (like the watch's own concurrent pushes) between
         fragments.
+
+        Frames go through one queue, whole: a sync-notice answer sent while a command's chunks
+        are still going out waits for them. (Two sends used to run side by side and could mix
+        their chunks.) `timeout_add(0)`, not `idle_add`: an idle source can starve on this
+        noisy loop (see the "forget" op).
         """
         chunks = [frame[i:i + CHUNK_SIZE] for i in range(0, len(frame), CHUNK_SIZE)]
+        self._glib.timeout_add(0, self._enqueue, chunks)
 
-        def emit_next(remaining):
-            if not remaining:
-                return False
-            self.notify_chrc.notify(remaining[0])
-            if len(remaining) > 1:
-                self._glib.timeout_add(self.NOTIFY_PACING_MS, emit_next, remaining[1:])
-            return False               # one-shot callback either way
+    def _enqueue(self, chunks):
+        self._tx.extend(chunks)
+        if not self._tx_busy:
+            self._tx_busy = True
+            self._emit_next()
+        return False                   # one-shot
 
-        self._glib.idle_add(emit_next, chunks)
+    def _emit_next(self):
+        if not self._tx:
+            self._tx_busy = False
+            return False
+        self.notify_chrc.notify(self._tx.popleft())
+        if self._tx:
+            self._glib.timeout_add(self.NOTIFY_PACING_MS, self._emit_next)
+        else:
+            self._tx_busy = False
+        return False                   # one-shot; the next chunk is its own timeout
 
     def _send_raw(self, command, flags, conn_id, pkt_num, payload):
         """Like _send(), but with explicit header fields instead of self._conn_id/
@@ -724,28 +784,58 @@ class ServerLink:
                 "opener, so there's no connId/pktNum sequence to send a driver-path "
                 "request into. Wait for ServerLink.handshake_done before calling command().")
         name = CMD_NAMES.get(command, f"0x{command:04x}")
+        pkt = self._pkt_num & 0xFFFF   # a u16 on the wire; a long session must not overflow it
         frame = encode_nsp_frame(command, payload,
                                  self.DRIVER_FLAGS if flags is None else flags,
-                                 self._conn_id, self._pkt_num)
+                                 self._conn_id, pkt)
         if not quiet:
             print(f"  {'[dry-run] ' if self.dry_run else ''}-> 0x{command:04x} "
                   f"{name:22} {len(payload):5} B  {len(frame)} raw byte(s)")
         self.sent.append((command, payload, frame))
-        self._pkt_num += 1
+        self._pkt_num = (pkt + 1) & 0xFFFF
         self.sequence += 1
         if self.dry_run or not expect_reply:
             return b""
-        if not self.notify_chrc.notifying:
-            raise RuntimeError("the watch has not subscribed yet - nothing to send to")
-        self._expecting = command
         self._reply = None
         self._reply_ready.clear()
+        self._pending_pkt = pkt
+        self._expecting = command
         self._send(frame)
-        if not self._reply_ready.wait(timeout):
-            self._expecting = None
-            raise TimeoutError(f"no reply to 0x{command:04x} within {timeout}s")
+        got = self._reply_ready.wait(timeout)
+        reply = self._reply
         self._expecting = None
-        return self._reply.payload
+        self._pending_pkt = None
+        if not got:
+            self._late_pkts.append(pkt)
+            raise TimeoutError(f"no reply to 0x{command:04x} within {timeout}s")
+        if reply is None:
+            raise RuntimeError(f"the watch disconnected before answering 0x{command:04x}")
+        if reply.err_flags:
+            raise WatchRefused(f"the watch refused 0x{command:04x} {name} "
+                               f"(error flags 0x{reply.err_flags:02x})")
+        return reply.payload
+
+
+def handle_rx(assembler, link, chunk, verbose=False):
+    """One chunk the watch wrote: logs the frames it completes and hands each to the link. A
+    frame whose CRC is wrong or missing is dropped, as protocol_ble.c does: its bytes are not
+    the watch's, and a reply made of them would be taken as the answer."""
+    if verbose:
+        print(f"  RX {len(chunk):3d} B  {chunk.hex()}")
+    for message in assembler.feed(chunk):
+        name = CMD_NAMES.get(message.command, f"0x{message.command:04x}")
+        crc = ("crc ok" if message.crc_ok else
+               "CRC MISMATCH" if message.crc_ok is False else "no crc")
+        err = f"  error flags 0x{message.err_flags:02x}" if message.err_flags else ""
+        print(f"  <- 0x{message.command:04x} {name:22} "
+              f"{len(message.payload):5} B  [{crc}]{err}")
+        if verbose and message.payload:
+            print(f"        {message.payload[:64].hex(' ')}"
+                  f"{' ...' if len(message.payload) > 64 else ''}")
+        if message.crc_ok is not True:
+            print("        dropped: damaged frame")
+            continue
+        link.on_message(message)
 
 
 # ambit3_get_compact_serial (ambit_pcap.py's own name for it) - the clean numeric serial
@@ -780,10 +870,10 @@ def parse_compact_serial(payload):
 
 
 def find_adapter(bus, dbus):
-    """The first adapter that can actually do what we need - both managers present."""
+    """The first adapter that can host our GATT service."""
     manager = dbus.Interface(bus.get_object(BLUEZ, "/"), DBUS_OM_IFACE)
     for path, ifaces in manager.GetManagedObjects().items():
-        if GATT_MANAGER_IFACE in ifaces and LE_ADVERTISING_MANAGER_IFACE in ifaces:
+        if GATT_MANAGER_IFACE in ifaces:
             return path
     return None
 
@@ -844,8 +934,88 @@ CONNECT_SETTLE_DELAY_MS = 300
 # real failure mode observed is "retried too fast", not "gave up too early".
 CONNECT_RETRY_BACKOFF_S = 3.0
 
+# A link the watch made that starts no session. On the tablet a good link starts its session
+# within ~1.3 s; one that has started nothing after 6 s never will, and dropping it makes the
+# watch call again (AmbitBleModule.kt EMPTY_LINK_MS, btsnoop 2026-10-25). A little longer here
+# until the desktop's own timing is measured (the log is timestamped now). The wait starts
+# again after a passkey prompt: a fresh pairing subscribes only once it is done.
+EMPTY_LINK_S = 8.0
+EMPTY_LINK_CHECK_MS = 1000
 
-def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent=None):
+# The scan runs in bursts, and not at all while a watch is linked or being dialed. A scan that
+# never stopped kept André's Bluetooth mouse from reconnecting (2026-10-25: it came back a
+# minute after the daemon stopped). The tablet listens far less (30 ms in every 1280 ms) and
+# still catches the watch, which keeps calling for longer than one period on "Sync now" or
+# "Pair with app".
+SCAN_ON_S = 3
+SCAN_PERIOD_S = 10
+
+# A paired watch that drops this soon after connecting, before subscribing, refused this
+# computer's key: BlueZ disconnects ~86 ms in when the watch answers its encryption with "PIN
+# or Key Missing" (btmon, 2026-08-21). Same loop when the computer forgot the watch but the watch
+# kept its key. BlueZ 5.72 gives no disconnect reason over D-Bus, so it is told by the timing,
+# after a few in a row, and `status` says what to do instead of looping in silence.
+QUICK_DROP_S = 2.0
+QUICK_DROPS_FOR_HINT = 3
+HINT_PAIR_AGAIN = ("The watch no longer accepts this computer's pairing. On the watch: "
+                   "Bluetooth > Unpair > Forget, then Pair > Pair with app, and type in "
+                   "Sommet the code it shows.")
+HINT_PAIR_AGAIN_BOTH = ("The watch no longer accepts this computer's pairing. On the watch: "
+                        "Bluetooth > Unpair > Forget. In Sommet: \"Forget Bluetooth device\" "
+                        "on this watch. Then on the watch: Pair > Pair with app, and type in "
+                        "Sommet the code it shows.")
+
+
+class LinkState:
+    """The watch's link as the daemon sees it, for the watchdog and for `status`. Only the GLib
+    loop writes it."""
+
+    def __init__(self):
+        self.path = None               # the watch linked now, or None
+        self.connected_at = None       # time.monotonic() of that link
+        self.quiet_since = None        # the watchdog's clock; restarts after a passkey prompt
+        self.subscribed = False        # this link started a session (the handshake completed)
+        self.quick_drops = 0
+        self.pairing_hint = None
+        self.last_drop = None
+
+    def status(self):
+        return {"linked_device": self.path.split("/")[-1] if self.path else None,
+                "pairing_hint": self.pairing_hint, "quick_drops": self.quick_drops,
+                "last_drop": self.last_drop}
+
+    def linked(self, path):
+        self.path = path
+        self.connected_at = self.quiet_since = time.monotonic()
+        self.subscribed = False
+
+    def on_session(self):
+        self.subscribed = True
+        self.quick_drops = 0
+        self.pairing_hint = None
+
+    def dropped(self, path, paired):
+        """Records a drop; returns the hint when this one makes the pattern."""
+        if path != self.path:
+            return None
+        after = time.monotonic() - self.connected_at
+        self.last_drop = {"device": path.split("/")[-1], "after_s": round(after, 2),
+                          "subscribed": self.subscribed, "at": time.strftime("%H:%M:%S")}
+        quick = after < QUICK_DROP_S and not self.subscribed
+        self.path = self.connected_at = self.quiet_since = None
+        if not quick:
+            if self.subscribed:
+                self.quick_drops = 0
+            return None
+        self.quick_drops += 1
+        if self.quick_drops >= QUICK_DROPS_FOR_HINT:
+            self.pairing_hint = HINT_PAIR_AGAIN_BOTH if paired else HINT_PAIR_AGAIN
+            return self.pairing_hint
+        return None
+
+
+def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent=None,
+                    state=None, session_started=lambda: False):
     """Scan, and connect to anything soliciting the NSP service.
 
     Deliberately an unfiltered scan. The Kotlin module hit exactly this on real hardware: the
@@ -864,27 +1034,111 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
     `agent`, if given, is consulted on every disconnect: if the dropped device is the one the
     pairing Agent is currently waiting on a passkey for, the wait is cancelled immediately
     (see `Agent.cancel_pending`'s own docstring) rather than left to its own 60s timeout.
+
+    `state` (a LinkState) follows the linked watch: the empty-link watchdog (EMPTY_LINK_S)
+    drops a link that starts no session, only one watch is dialed while another is linked,
+    and a run of quick drops sets the "pair again" hint. `session_started` says whether the
+    watch's handshake has completed on this link (a paired watch never subscribes again on a
+    reconnect, so subscribing is not the sign).
     """
     adapter_obj = dbus.Interface(bus.get_object(BLUEZ, adapter), ADAPTER_IFACE)
     seen = set()
     last_attempt_at = {}
+    state = state if state is not None else LinkState()
+    retry_now = set()                  # paths the watchdog dropped: no backoff on their next call
+    waiting_on = set()                 # "another watch is linked" already logged for these
+
+    def short(path):
+        return path.split("/")[-1]
+
+    def device_prop(path, name, default=None):
+        try:
+            props = dbus.Interface(bus.get_object(BLUEZ, path), DBUS_PROP_IFACE)
+            return props.Get("org.bluez.Device1", name)
+        except Exception:
+            return default             # the device went away; nothing to read
+
+    def watch_empty_link(path):
+        """The empty-link watchdog (see EMPTY_LINK_S). Checks once a second while `path` is
+        the linked watch; drops the link once it has started no session for EMPTY_LINK_S."""
+        if state.path != path or state.subscribed:
+            return False               # gone, or the session started
+        if session_started():
+            state.on_session()
+            return False
+        now = time.monotonic()
+        if agent is not None and agent.pending_passkey_device == path:
+            state.quiet_since = now    # a passkey prompt is up: wait for it, then start over
+            return True
+        if now - state.quiet_since < EMPTY_LINK_S:
+            return True                # keep checking
+        print(f"  the watch linked but started no session in {EMPTY_LINK_S:.0f} s "
+              f"({short(path)}) - dropping the link so it can call again")
+        retry_now.add(path)
+        try:
+            dbus.Interface(bus.get_object(BLUEZ, path), "org.bluez.Device1").Disconnect(
+                reply_handler=lambda: None,
+                error_handler=lambda e: print(f"  could not drop the link: {e}"))
+        except Exception as exc:
+            print(f"  could not drop the link: {exc}")
+        return False
+
+    def linked(path):
+        if state.path == path:
+            return
+        state.linked(path)
+        glib.timeout_add(EMPTY_LINK_CHECK_MS, watch_empty_link, path)
+
+    dialing = set()                    # Connect() calls still in flight
+    scanning = [False]
+
+    def scan_start():
+        """One burst (SCAN_ON_S), skipped while a watch is linked or being dialed."""
+        if state.path is not None or dialing:
+            return
+        try:
+            adapter_obj.StartDiscovery()
+        except Exception:
+            pass                       # already running is fine
+        scanning[0] = True
+        glib.timeout_add_seconds(SCAN_ON_S, scan_stop)
+
+    def scan_stop():
+        if scanning[0]:
+            scanning[0] = False
+            try:
+                adapter_obj.StopDiscovery()
+            except Exception:
+                pass                   # already stopped is fine
+        return False                   # one-shot
+
+    def scan_tick():
+        scan_start()
+        return True                    # every SCAN_PERIOD_S
 
     def resume_discovery():
         # consider() stops discovery before connecting (an active scan and a connect fight
         # for the same radio - see its own comment) and nothing was resuming it afterward -
         # real bug, found live 2026-08-11: on a dropped or failed connection, this device
         # was still un-blacklisted from `seen` above, but discovery itself stayed off, so no
-        # new advertisement could ever be seen to retry with.
-        try:
-            adapter_obj.StartDiscovery()
-        except Exception:
-            pass                       # already running is fine
+        # new advertisement could ever be seen to retry with. A burst now, at once: after a
+        # drop the watch usually calls again within seconds.
+        scan_start()
 
     def on_connection_state(interface, changed, invalidated, path=None):
         if interface != "org.bluez.Device1" or not path or path not in seen:
             return
-        if "Connected" not in changed or bool(changed["Connected"]):
-            return                                          # not a drop
+        if "Connected" not in changed:
+            return
+        dialing.discard(path)
+        if bool(changed["Connected"]):
+            linked(path)
+            return
+        was_linked = state.path == path
+        hint = state.dropped(path, bool(device_prop(path, "Paired", False)))
+        if was_linked and state.last_drop:
+            print(f"  the link lasted {state.last_drop['after_s']} s"
+                  f"{'' if state.last_drop['subscribed'] else ', no session started'}")
         if agent is not None and agent.pending_passkey_device == path:
             # Distinct, expected failure - not a generic drop. Suunto's app treats a
             # disconnect mid-bonding as its own named case (BluetoothOperationWaitBonding)
@@ -897,6 +1151,8 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         else:
             print(f"  watch disconnected ({path.split('/')[-1]}) - will retry on the next "
                   "advertisement/Sync now")
+        if hint:
+            print(f"  {state.quick_drops} links in a row dropped before any session: {hint}")
         seen.discard(path)
         resume_discovery()
         if on_disconnect:
@@ -941,8 +1197,19 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         # (RSSI etc.) can arrive many times a second, so `seen` alone doesn't throttle
         # anything here.
         since_last = time.monotonic() - last_attempt_at.get(path, 0.0)
-        if since_last < CONNECT_RETRY_BACKOFF_S:
+        if since_last < CONNECT_RETRY_BACKOFF_S and path not in retry_now:
             return
+        # One watch at a time: every command, the handshake and the notices go through one
+        # ServerLink, so a second watch linking in would mix two sessions. It waits until the
+        # linked one drops.
+        if state.path is not None and state.path != path:
+            if path not in waiting_on:
+                waiting_on.add(path)
+                print(f"  {name or short(path)} is calling - waiting: another watch "
+                      f"({short(state.path)}) is linked")
+            return
+        waiting_on.discard(path)
+        retry_now.discard(path)
         seen.add(path)
         why = "NSP uuid" if solicits else ("name match" if named else "Suunto address")
         print(f"  watch found: {name or '(no name)'} [{why}] - connecting "
@@ -951,16 +1218,15 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         # fight for the same radio, and BlueZ resolves it by aborting the connection -
         # "le-connection-abort-by-local", which reads like a refusal by the watch and is
         # really our own scan getting in the way.
-        try:
-            adapter_obj.StopDiscovery()
-        except Exception:
-            pass                       # already stopped is fine
+        scanning[0] = True             # stop it even mid-burst, or if another path started it
+        scan_stop()
         # If the watch already has a link to us there is nothing to initiate - it connects in
         # on its own, and our outbound attempt is at best redundant ("Operation already in
         # progress") and at worst the thing that kills the session
         # ("le-connection-abort-by-local"). Both were seen for real, 2026-08-11.
         if device.get("Connected", False):
             print("  already connected - waiting for it to subscribe")
+            linked(path)
             return
 
         # Asynchronously, with handlers. A blocking Connect() times out on D-Bus's own
@@ -973,16 +1239,23 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
             # Connect() (le-connection-abort-by-local and friends are common and often
             # transient, per this project's own real history with this watch family) must
             # not permanently rule the device out of future attempts either.
+            dialing.discard(path)
             seen.discard(path)
             resume_discovery()
+
+        def on_connected():
+            dialing.discard(path)
+            print("  connected - waiting for it to subscribe")
 
         def do_connect():
             last_attempt_at[path] = time.monotonic()
             dbus.Interface(bus.get_object(BLUEZ, path), "org.bluez.Device1").Connect(
-                reply_handler=lambda: print("  connected - waiting for it to subscribe"),
+                reply_handler=on_connected,
                 error_handler=on_connect_failed,
                 timeout=60)
             return False               # one-shot
+
+        dialing.add(path)
 
         # Scheduled after a short settle delay rather than fired immediately - see
         # CONNECT_SETTLE_DELAY_MS's own comment. Must go through the main loop (timeout_add),
@@ -1053,14 +1326,16 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
             "DuplicateData": dbus.Boolean(True),
             "RSSI": dbus.Int16(-127),
         })
-        adapter_obj.StartDiscovery()
-        print("  scanning (LE transport, duplicates on) for the watch...")
+        print(f"  scanning for the watch in bursts ({SCAN_ON_S} s every {SCAN_PERIOD_S} s, "
+              "LE transport, duplicates on), none while a watch is linked")
     except Exception as exc:
-        print(f"  could not start discovery: {exc}")
+        print(f"  could not set the discovery filter: {exc}")
+    scan_start()
+    glib.timeout_add_seconds(SCAN_PERIOD_S, scan_tick)
 
 
 def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
-    Application, Service, Characteristic, Advertisement, Agent, dbus, GLib = build_classes()
+    Application, Service, Characteristic, Agent, dbus, GLib = build_classes()
     import dbus.mainloop.glib                              # noqa: PLC0415
 
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
@@ -1068,7 +1343,7 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
 
     adapter = find_adapter(bus, dbus)
     if not adapter:
-        print("  no Bluetooth adapter with GattManager1 + LEAdvertisingManager1 found.")
+        print("  no Bluetooth adapter with GattManager1 found.")
         return 1
     print(f"  adapter: {adapter}")
 
@@ -1106,29 +1381,30 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
 
     def on_write(chunk):
         rx_total[0] += len(chunk)
-        if verbose:
-            print(f"  RX {len(chunk):3d} B  {chunk.hex()}")
-        for message in assembler.feed(chunk):
-            name = CMD_NAMES.get(message.command, f"0x{message.command:04x}")
-            crc = ("crc ok" if message.crc_ok else
-                   "CRC MISMATCH" if message.crc_ok is False else "no crc")
-            print(f"  <- 0x{message.command:04x} {name:22} "
-                  f"{len(message.payload):5} B  [{crc}]")
-            if verbose and message.payload:
-                print(f"        {message.payload[:64].hex(' ')}"
-                      f"{' ...' if len(message.payload) > 64 else ''}")
-            link.on_message(message)
+        handle_rx(assembler, link, chunk, verbose)
 
     write_chrc.on_write = on_write
+    link_state = LinkState()
 
     # The Link-compatible face of this transport. Constructed before the characteristic
     # callbacks are armed so a frame arriving early is never dropped - the same "arm the RX
     # stash first" lesson the Kotlin module learned when the Kailash sent its hello once.
     link = ServerLink(notify_chrc, GLib)
 
+    # A subscription is the start of a session: the watch's next frame is its 0x1201 opener,
+    # which must get the handshake answer, not a sync-notice one. Without a reset here, a link
+    # whose drop BlueZ never signalled left handshake_done set from the old session.
+    def on_subscribed():
+        if not link.handshake_done.is_set():
+            assembler.reset()
+            link.reset()
+
+    notify_chrc.on_subscribed = on_subscribed
+
     if serve_socket:
         control = ControlSocketServer(link, rx_total, agent=agent,
-                                       bus=bus, dbus_module=dbus, adapter=adapter, glib=GLib)
+                                       bus=bus, dbus_module=dbus, adapter=adapter, glib=GLib,
+                                       link_state=link_state)
         threading.Thread(target=control.serve_forever, daemon=True).start()
 
     # Real gap, found testing this live 2026-08-11: BlueZ's GATT server has no
@@ -1141,13 +1417,11 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
     # exist, to un-blacklist the device path for a retry) rather than a second, separate
     # D-Bus listener for the same signal.
     def reset_link_on_disconnect(path):
-        notify_chrc.notifying = False
+        # `notifying` stays as BlueZ left it: a paired watch is still subscribed next time.
         link.reset()
+        assembler.reset()
 
     gatt_manager = dbus.Interface(bus.get_object(BLUEZ, adapter), GATT_MANAGER_IFACE)
-    ad_manager = dbus.Interface(bus.get_object(BLUEZ, adapter),
-                                LE_ADVERTISING_MANAGER_IFACE)
-    advert = Advertisement(bus, 0)
 
     loop = GLib.MainLoop()
 
@@ -1162,11 +1436,9 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
 
     gatt_manager.RegisterApplication(app.path, {},
                                      reply_handler=registered, error_handler=failed)
-    ad_manager.RegisterAdvertisement(
-        advert.path, {},
-        reply_handler=lambda: print("  also advertising as 'AmbitApp' (optional)"),
-        error_handler=lambda e: print(f"  (advertising unavailable: {e} - not required, "
-                                      f"we connect to the watch)"))
+    # No advertisement of our own: the watch is the one calling, and the tablet never
+    # advertises either. The old optional "AmbitApp" one only added radio traffic next to the
+    # scan (removed 2026-10-25 with the scan bursts, after it kept a mouse from reconnecting).
 
     # NOT automatic any more. Clearing bonds every run fixed the first pairing and broke
     # every one after it: the bond a successful session establishes is exactly what lets the
@@ -1179,7 +1451,8 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
     # The real mechanism, mirroring AmbitBleModule.scanAndConnect(): find the watch
     # soliciting our service, then connect to it while we host the server.
     start_discovery(bus, dbus, GLib, adapter, verbose,
-                    on_disconnect=reset_link_on_disconnect, agent=agent)
+                    on_disconnect=reset_link_on_disconnect, agent=agent,
+                    state=link_state, session_started=link.handshake_done.is_set)
 
     if timeout > 0:
         def stop():
@@ -1196,12 +1469,36 @@ def listen(verbose=False, timeout=0, forget=False, serve_socket=True):
         print("\n  stopped")
     finally:
         try:
-            ad_manager.UnregisterAdvertisement(advert.path)
             gatt_manager.UnregisterApplication(app.path)
             agent_manager.UnregisterAgent(AGENT_PATH)
         except Exception:
             pass                       # teardown on an already-gone bus is not a failure
     return 0
+
+
+class _Stamped:
+    """Puts the date and time in front of every line written to `stream`. The daemon log had
+    none, so how long a link lasted, or what came just before a drop, could only be guessed."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._line_start = True
+
+    def write(self, text):
+        out = []
+        for part in text.splitlines(keepends=True):
+            if self._line_start:
+                out.append(time.strftime("%m-%d %H:%M:%S "))
+            out.append(part)
+            self._line_start = part.endswith("\n")
+        self._stream.write("".join(out))
+        return len(text)
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
 
 
 def main():
@@ -1222,6 +1519,7 @@ def main():
                                "uses it; a bare CLI session doesn't need it)")
     args = parser.parse_args()
     if args.action == "listen":
+        sys.stdout = _Stamped(sys.stdout)
         return listen(verbose=args.verbose, timeout=args.timeout, forget=args.forget,
                       serve_socket=not args.no_socket)
     return 1
