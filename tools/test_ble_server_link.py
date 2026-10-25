@@ -207,6 +207,39 @@ def test_the_pair_again_hint():
     assert state.dropped(path, paired=True) is None and state.quick_drops == 0
 
 
+def test_a_refusing_watch_is_called_less_often():
+    state = S.LinkState()
+    path = "/org/bluez/hci0/dev_0C_8C_DC_00_00_01"
+    assert S.retry_floor(state) == S.CONNECT_RETRY_BACKOFF_S
+    for _ in range(S.QUICK_DROPS_FOR_HINT):
+        state.linked(path)
+        state.connected_at -= 0.15
+        state.dropped(path, paired=True)
+    assert S.retry_floor(state) == S.REFUSED_RETRY_S
+    state.forgotten("/org/bluez/hci0/dev_AA_BB_CC_00_00_02")    # another device: no change
+    assert S.retry_floor(state) == S.REFUSED_RETRY_S
+    state.forgotten(path)                                        # forgotten before a new pairing
+    assert S.retry_floor(state) == S.CONNECT_RETRY_BACKOFF_S and state.quick_drops == 0
+
+
+def test_a_link_bluez_will_not_let_go():
+    state = S.LinkState()
+    path = "/org/bluez/hci0/dev_0C_8C_DC_00_00_01"
+    state.linked(path)
+    state.connected_at -= 18                  # the watchdog's 8 s, then the 10 s check
+    state.lost_by_bluez(path, paired=True)
+    status = state.status()
+    assert status["linked_device"] is None and status["bluez_stuck"] == "dev_0C_8C_DC_00_00_01"
+    assert status["pairing_hint"] == S.HINT_BLUEZ_STUCK and state.quick_drops == 0
+    assert state.released("/org/bluez/hci0/dev_AA_BB_CC_00_00_02") is False
+    assert state.released(path) is True and state.status()["bluez_stuck"] is None
+    assert state.status()["pairing_hint"] is None
+    state.linked(path)
+    state.lost_by_bluez(path, paired=True)
+    state.forgotten(path)                     # forgetting the device clears it as well
+    assert state.stuck is None
+
+
 def test_sync_lock():
     class Fake:
         def __init__(self, held):

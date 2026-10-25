@@ -965,6 +965,29 @@ HINT_PAIR_AGAIN_BOTH = ("The watch no longer accepts this computer's pairing. On
                         "on this watch. Then on the watch: Pair > Pair with app, and type in "
                         "Sommet the code it shows.")
 
+# Once the hint is up, the watch is dialed at most every REFUSED_RETRY_S. Every try shows
+# "connected" then "disconnected" on its screen: on 2026-10-25 a Peak that had stopped
+# accepting this computer's key was dialed every 10 s for 8 minutes, 45 times. Forgetting the
+# device (InterfacesRemoved) ends the wait, so a fresh pairing starts at once.
+REFUSED_RETRY_S = 300.0
+
+# BlueZ 5.72 on this kernel (7.0) can list a lost link as connected for good. The kernel now
+# answers a Disconnect for a link it no longer has with "Disconnected (0x0e)"; bluetoothd only
+# knows the older "Not Connected" answer, logs "Failed to disconnect device: Disconnected
+# (0x0e)", never marks the device disconnected, and never replies to the D-Bus call. Asking
+# again gets the same answer (2026-10-25, 19:06 and 21:41). Connect() then has nothing to do,
+# so the watch can't link until Bluetooth is turned off and on, the device is forgotten, or
+# the computer restarts. The daemon checks DROP_CHECK_TIMEOUT_S after each drop it asks for.
+DROP_CHECK_TIMEOUT_S = 10
+HINT_BLUEZ_STUCK = ("This computer's Bluetooth lost track of the watch: it still lists it as "
+                    "connected. Turn Bluetooth off and on (or restart the computer), then "
+                    "press Sync now on the watch.")
+
+
+def retry_floor(state):
+    """Seconds between two dials of the same watch (see REFUSED_RETRY_S)."""
+    return REFUSED_RETRY_S if state.pairing_hint else CONNECT_RETRY_BACKOFF_S
+
 
 class LinkState:
     """The watch's link as the daemon sees it, for the watchdog and for `status`. Only the GLib
@@ -978,11 +1001,35 @@ class LinkState:
         self.quick_drops = 0
         self.pairing_hint = None
         self.last_drop = None
+        self.stuck = None              # a watch BlueZ lists as connected after losing it
 
     def status(self):
         return {"linked_device": self.path.split("/")[-1] if self.path else None,
-                "pairing_hint": self.pairing_hint, "quick_drops": self.quick_drops,
-                "last_drop": self.last_drop}
+                "pairing_hint": HINT_BLUEZ_STUCK if self.stuck else self.pairing_hint,
+                "bluez_stuck": self.stuck.split("/")[-1] if self.stuck else None,
+                "quick_drops": self.quick_drops, "last_drop": self.last_drop}
+
+    def lost_by_bluez(self, path, paired):
+        """BlueZ still lists `path` as connected after a drop we asked for (HINT_BLUEZ_STUCK).
+        The link is over: recorded as a drop, and the watch waits until BlueZ lets it go."""
+        self.dropped(path, paired)
+        self.stuck = path
+
+    def released(self, path):
+        """BlueZ reported `path` disconnected. True if it was the stuck one."""
+        if self.stuck != path:
+            return False
+        self.stuck = None
+        return True
+
+    def forgotten(self, path):
+        """`path` was removed from BlueZ (forgotten in Sommet, or a stale cache entry). A new
+        pairing starts clean: no hint, no long wait, nothing stuck."""
+        if self.stuck == path:
+            self.stuck = None
+        if self.last_drop and self.last_drop["device"] == path.split("/")[-1]:
+            self.quick_drops = 0
+            self.pairing_hint = None
 
     def linked(self, path):
         self.path = path
@@ -1075,13 +1122,29 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         print(f"  the watch linked but started no session in {EMPTY_LINK_S:.0f} s "
               f"({short(path)}) - dropping the link so it can call again")
         retry_now.add(path)
+        drop_link(path)
+        return False
+
+    def drop_link(path):
+        """Disconnects `path`, then checks BlueZ let it go (see HINT_BLUEZ_STUCK). If it
+        still lists the watch as connected, the link is over for us anyway: the session is
+        reset, the scan resumes, and the watch is not dialed until BlueZ releases it."""
+        def check(error=None):
+            if error is not None:
+                print(f"  could not drop the link: {error}")
+            if state.path != path or not device_prop(path, "Connected", False):
+                return                 # gone: on_connection_state has handled it
+            print(f"  BlueZ still lists {short(path)} as connected: {HINT_BLUEZ_STUCK}")
+            state.lost_by_bluez(path, bool(device_prop(path, "Paired", False)))
+            seen.discard(path)
+            resume_discovery()
+            if on_disconnect:
+                on_disconnect(path)
         try:
             dbus.Interface(bus.get_object(BLUEZ, path), "org.bluez.Device1").Disconnect(
-                reply_handler=lambda: None,
-                error_handler=lambda e: print(f"  could not drop the link: {e}"))
+                reply_handler=check, error_handler=check, timeout=DROP_CHECK_TIMEOUT_S)
         except Exception as exc:
-            print(f"  could not drop the link: {exc}")
-        return False
+            check(exc)
 
     def linked(path):
         if state.path == path:
@@ -1126,9 +1189,13 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         scan_start()
 
     def on_connection_state(interface, changed, invalidated, path=None):
-        if interface != "org.bluez.Device1" or not path or path not in seen:
+        if interface != "org.bluez.Device1" or not path or "Connected" not in changed:
             return
-        if "Connected" not in changed:
+        if not bool(changed["Connected"]) and state.released(path):
+            print(f"  BlueZ let go of {short(path)} - it can link again")
+            resume_discovery()
+            return
+        if path not in seen:
             return
         dialing.discard(path)
         if bool(changed["Connected"]):
@@ -1152,7 +1219,8 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
             print(f"  watch disconnected ({path.split('/')[-1]}) - will retry on the next "
                   "advertisement/Sync now")
         if hint:
-            print(f"  {state.quick_drops} links in a row dropped before any session: {hint}")
+            print(f"  {state.quick_drops} links in a row dropped before any session: {hint} "
+                  f"Calling it again in {REFUSED_RETRY_S / 60:.0f} min.")
         seen.discard(path)
         resume_discovery()
         if on_disconnect:
@@ -1196,8 +1264,10 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         # specifically so a later advertisement can retry it, and property-change signals
         # (RSSI etc.) can arrive many times a second, so `seen` alone doesn't throttle
         # anything here.
+        if path == state.stuck:
+            return                     # BlueZ still lists it as connected (HINT_BLUEZ_STUCK)
         since_last = time.monotonic() - last_attempt_at.get(path, 0.0)
-        if since_last < CONNECT_RETRY_BACKOFF_S and path not in retry_now:
+        if since_last < retry_floor(state) and path not in retry_now:
             return
         # One watch at a time: every command, the handshake and the notices go through one
         # ServerLink, so a second watch linking in would mix two sessions. It waits until the
@@ -1266,6 +1336,16 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
 
     bus.add_signal_receiver(
         consider, dbus_interface=DBUS_OM_IFACE, signal_name="InterfacesAdded")
+
+    def on_removed(path, interfaces):
+        # Forgotten in Sommet (RemoveDevice) before a fresh pairing: no long wait for it.
+        if "org.bluez.Device1" in interfaces:
+            last_attempt_at.pop(path, None)
+            seen.discard(path)
+            state.forgotten(path)
+
+    bus.add_signal_receiver(
+        on_removed, dbus_interface=DBUS_OM_IFACE, signal_name="InterfacesRemoved")
 
     # InterfacesAdded fires only for a device BlueZ has NEVER seen. A watch it already
     # cached - which is any watch used once before - re-appears as a PROPERTY UPDATE on the
