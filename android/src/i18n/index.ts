@@ -407,6 +407,13 @@ const fr = {
   routeStats: (dist: string, points: number, ascent: number, descent: number) =>
     `${dist} · ${points} points · D+ ${ascent} m · D- ${descent} m`,
   routeItemExportBtn: 'Exporter',
+  routeItemRemoveBtn: 'Retirer',
+  routeRemoveTitle: 'Retirer de la montre',
+  routeRemoveConfirm: (name: string) => `Retirer « ${name} » de la montre ? Les autres routes et les POI restent.`,
+  routeRemoved: (name: string) => `« ${name} » retirée de la montre.`,
+  routeRemoveLegacy: 'Retirer une route n’est pas encore possible sur l’Ambit1 et l’Ambit2.',
+  routeRemoveNotFound: (name: string) => `« ${name} » n’est plus sur la montre. Relisez la liste.`,
+  routeRemoveReadFailed: (msg: string) => `Impossible de lire les routes de la montre, rien n’a été écrit : ${msg}`,
   routeUploadBtn: 'Envoyer sur la montre',
   routePinsCount: (n: number) => n > 0 ? `${n} repères de direction (« Left 1.2 ») là où la route se recoupe. La montre les annonce dans l'ordre : suivez la route depuis le départ.` : 'Aucun croisement ni aller-retour : pas de repère de direction nécessaire.',
   routePinsNone: (why: string) => `Partira sans repères de direction${why ? ` (${why})` : ''}.`,
@@ -460,6 +467,17 @@ const fr = {
   poiOnWatchError: (msg: string) => `Impossible de lire les POI : ${msg}`,
   poiOnWatchStale: 'Liste ci-dessous : la dernière lue sur la montre, pas son contenu actuel.',
   poiItemExportBtn: 'Exporter',
+  poiItemRemoveBtn: 'Retirer',
+  poiRemoveTitle: 'Retirer de la montre',
+  poiRemoveConfirm: (name: string) => `Retirer « ${name} » de la montre ? Sommet garde d’abord une copie des POI.`,
+  poiRemoved: (name: string, left: number, empty: number) =>
+    `« ${name} » retiré. Il reste ${left} POI sur la montre.` +
+    (empty > 0 ? ` ${empty > 1 ? `${empty} entrées vides` : 'Une entrée vide'} (un nom trop long pour la montre) ${empty > 1 ? 'ont aussi été retirées' : 'a aussi été retirée'}.` : ''),
+  poiRemoveNotFound: (name: string) => `« ${name} » n’est plus sur la montre. Relisez la liste.`,
+  poiRemoveChanged: 'Les POI de la montre ont changé entre-temps. Rien n’a été écrit, réessayez.',
+  poiRemoveFailed: (path: string) => `Le retrait a échoué et les POI n’ont pas pu être remis. Une copie est enregistrée dans ${path}.`,
+  poiRemoveFailedRestored: (msg: string) => `Le retrait a échoué (${msg}). Les POI ont été remis comme avant.`,
+  poiRemoveLegacy: 'Retirer un POI n’est pas encore possible sur l’Ambit1 et l’Ambit2.',
   poiItemAddBtn: 'Ajouter',
   poiCoords: (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
 
@@ -1253,6 +1271,13 @@ const en: typeof fr = {
   routeStats: (dist: string, points: number, ascent: number, descent: number) =>
     `${dist} · ${points} points · ascent ${ascent} m · descent ${descent} m`,
   routeItemExportBtn: 'Export',
+  routeItemRemoveBtn: 'Remove',
+  routeRemoveTitle: 'Remove from the watch',
+  routeRemoveConfirm: (name: string) => `Remove “${name}” from the watch? The other routes and the POIs stay.`,
+  routeRemoved: (name: string) => `“${name}” removed from the watch.`,
+  routeRemoveLegacy: 'Removing a route is not available on the Ambit1 and Ambit2 yet.',
+  routeRemoveNotFound: (name: string) => `“${name}” is no longer on the watch. Read the list again.`,
+  routeRemoveReadFailed: (msg: string) => `Couldn't read the routes on the watch, nothing was written: ${msg}`,
   routeUploadBtn: 'Upload to watch',
   routePinsCount: (n: number) => n > 0 ? `${n} direction pins ("Left 1.2") where the route meets itself. The watch announces them in order, so follow the route from its start.` : 'No crossing or out-and-back: no direction pins needed.',
   routePinsNone: (why: string) => `Goes without direction pins${why ? ` (${why})` : ''}.`,
@@ -1306,6 +1331,17 @@ const en: typeof fr = {
   poiOnWatchError: (msg: string) => `Couldn't read POIs: ${msg}`,
   poiOnWatchStale: 'The list below is the last one read from the watch, not what it holds now.',
   poiItemExportBtn: 'Export',
+  poiItemRemoveBtn: 'Remove',
+  poiRemoveTitle: 'Remove from the watch',
+  poiRemoveConfirm: (name: string) => `Remove “${name}” from the watch? Sommet saves a copy of the POIs first.`,
+  poiRemoved: (name: string, left: number, empty: number) =>
+    `“${name}” removed. ${left} POI${left === 1 ? '' : 's'} left on the watch.` +
+    (empty > 0 ? ` ${empty > 1 ? `${empty} empty entries` : 'An empty entry'} (a name too long for the watch) ${empty > 1 ? 'were' : 'was'} removed too.` : ''),
+  poiRemoveNotFound: (name: string) => `“${name}” is no longer on the watch. Read the list again.`,
+  poiRemoveChanged: 'The POIs on the watch changed meanwhile. Nothing was written, try again.',
+  poiRemoveFailed: (path: string) => `Removing failed and the POIs could not be put back. A copy is saved in ${path}.`,
+  poiRemoveFailedRestored: (msg: string) => `Removing failed (${msg}). The POIs were put back as they were.`,
+  poiRemoveLegacy: 'Removing a POI is not available on the Ambit1 and Ambit2 yet.',
   poiItemAddBtn: 'Add',
   poiCoords: (lat: number, lon: number) => `${lat.toFixed(5)}, ${lon.toFixed(5)}`,
 

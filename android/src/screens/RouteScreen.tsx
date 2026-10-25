@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, Alert, ScrollView, TouchableOpacity, Modal, Pre
 import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import {
   pickRouteGpx, routeFromGpx, uploadRoute, readOnWatchNavigation, getCachedNavigation, exportSingleRouteToGpx,
-  PendingRoute, SendRouteState,
+  PendingRoute, SendRouteState, removeRouteFromWatch,
 } from '../services/NavigationService';
 import {
   LibraryRoute, listLibrary, saveToLibrary, getLibraryGpx, renameLibraryRoute, deleteLibraryRoute, pointsToGpx,
@@ -172,6 +172,7 @@ export default function RouteScreen() {
   const [onWatchLoading, setOnWatchLoading] = useState(false);
   const [onWatchError, setOnWatchError] = useState<string | undefined>();
   const [exportingIndex, setExportingIndex] = useState<number | null>(null);
+  const [removingName, setRemovingName] = useState<string | null>(null);
   // Map/list view (persisted Settings pref) + in-page sort, same pattern as the Activities list.
   const [viewMode, setViewMode] = useState<ViewMode>('map');
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -255,6 +256,25 @@ export default function RouteScreen() {
       Alert.alert(t.error, e?.message ?? t.unknownError);
       setSendState({ phase: 'error', error: e?.message });
     }
+  }
+
+  function handleRemoveItem(route: WatchRoute) {
+    if (removingName !== null) return;
+    Alert.alert(t.routeRemoveTitle, t.routeRemoveConfirm(route.name), [
+      { text: t.cancel, style: 'cancel' },
+      { text: t.routeItemRemoveBtn, style: 'destructive', onPress: async () => {
+        setRemovingName(route.name);
+        try {
+          await removeRouteFromWatch(route.name);
+          Alert.alert(t.routeRemoveTitle, t.routeRemoved(route.name));
+        } catch (e: any) {
+          Alert.alert(t.error, e?.message ?? t.unknownError);
+        } finally {
+          setRemovingName(null);
+          loadOnWatch();
+        }
+      } },
+    ]);
   }
 
   async function handleExportItem(route: WatchRoute, index: number) {
@@ -427,6 +447,15 @@ export default function RouteScreen() {
               >
                 <Text style={styles.exportBtnText}>
                   {exportingIndex === i ? '…' : t.routeItemExportBtn}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.exportBtn}
+                disabled={removingName !== null || onWatchLoading}
+                onPress={() => handleRemoveItem(route)}
+              >
+                <Text style={styles.exportBtnText}>
+                  {removingName === route.name ? '…' : t.routeItemRemoveBtn}
                 </Text>
               </TouchableOpacity>
             </View>

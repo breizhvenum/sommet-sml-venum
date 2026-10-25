@@ -96,6 +96,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     private external fun nativeAmbitAddPoi(name: String, lat: Double, lon: Double, type: Int): Boolean
     private external fun nativeAmbitReadRegion(address: Long, length: Long): String?
     private external fun nativeAmbitReadPoiListRaw(): String?
+    private external fun nativeAmbitSetPoiList(expected: ByteArray, newList: ByteArray): Int
     private external fun nativeAmbitReadMemoryMapRaw(): String?
     // Firmware flasher (firmware_flash_android.c). THE ONE WRITE THAT CAN BRICK.
     private external fun nativeAmbitFwEnterBsl(): Boolean
@@ -674,6 +675,31 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
                 else promise.reject("POI_READ_FAILED", "Failed to read POI list (see logcat AmbitJNI)")
             } catch (e: Exception) {
                 promise.reject("POI_READ_ERROR", e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    // Replaces the watch's POI list: `expectedB64` is the raw POI read (readPoiListRaw) the
+    // caller saved a copy of, `newListB64` the same shape holding the POIs to keep
+    // (PoiService.removePoisFromWatch). Nothing is written if the watch's list changed since
+    // `expectedB64`. Resolves the POI count written.
+    @ReactMethod
+    fun setPoiList(expectedB64: String, newListB64: String, promise: Promise) {
+        if (!jniLoaded) {
+            promise.reject("JNI_NOT_LOADED", "Native library unavailable")
+            return
+        }
+        executor.execute {
+            try {
+                val expected = android.util.Base64.decode(expectedB64, android.util.Base64.DEFAULT)
+                val newList = android.util.Base64.decode(newListB64, android.util.Base64.DEFAULT)
+                when (val n = nativeAmbitSetPoiList(expected, newList)) {
+                    -2 -> promise.reject("POI_LIST_CHANGED", "The POIs on the watch changed since they were read")
+                    -1 -> promise.reject("POI_SET_FAILED", "Writing the POI list failed (see logcat AmbitJNI)")
+                    else -> promise.resolve(n)
+                }
+            } catch (e: Exception) {
+                promise.reject("POI_SET_ERROR", e.message ?: "Unknown error")
             }
         }
     }

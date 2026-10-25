@@ -200,6 +200,14 @@ export function addPoi(name: string, lat: number, lon: number, type: number = 17
   return NativeAmbit.addPoi(name, lat, lon, type);
 }
 
+/** Replaces the watch's POI list (Ambit3 family). `expectedB64` is the raw read
+ * (readPoiListRaw) a copy was saved of, `newListB64` the same shape holding the POIs to keep.
+ * Rejects with code POI_LIST_CHANGED, writing nothing, if the watch's list changed since.
+ * Resolves the POI count written. */
+export function setPoiListRaw(expectedB64: string, newListB64: string): Promise<number> {
+  return NativeAmbit.setPoiList(expectedB64, newListB64);
+}
+
 /**
  * Lit `length` octets à `address` sur la montre, renvoyés en base64.
  * Lecture seule, aucun risque pour la montre. Décodage côté TS (RouteReader.ts).

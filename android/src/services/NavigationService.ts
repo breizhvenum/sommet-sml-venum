@@ -11,7 +11,8 @@ import {
 } from './RouteReader';
 import { readNavBases } from './MemoryMap';
 import { sendLegacyRoute } from './AmbitLegacyNav';
-import { mergeRoutes } from './RouteMerge';
+import { mergeRoutes, existingRoutesToKeep, storedName } from './RouteMerge';
+import { t } from '../i18n';
 
 // AMBIT3_MAX_ROUTE_POINTS / AMBIT3_MAX_NAME_BYTES from
 // android/app/src/main/cpp/libambit/device_driver_ambit3_navigation.h —
@@ -218,6 +219,30 @@ export async function uploadRoute(route: PendingRoute, onState: Listener,
   } catch (e: any) {
     emit({ phase: 'error', error: e?.message ?? 'Failed to write the route' });
   } finally {
+    await disconnect().catch(() => {});
+  }
+}
+
+/** Removes the route named `name` from the watch (Ambit3 / Traverse). The watch takes its
+ * whole route list in one write, so the routes on it are read and written back without this
+ * one, as uploadRoute() adds one; the POIs are kept on the native side. Removing the last
+ * route writes an empty route list. */
+export async function removeRouteFromWatch(name: string): Promise<void> {
+  await connect();
+  try {
+    if (isAmbit12((await getDeviceInfo()).name)) throw new Error(t.routeRemoveLegacy);
+    let nav: WatchNavigation;
+    try {
+      nav = await readAmbit3Navigation();
+    } catch (e: any) {
+      throw new Error(t.routeRemoveReadFailed(e?.message ?? String(e)));
+    }
+    if (!nav.routes.some(r => storedName(r.name) === storedName(name))) {
+      throw new Error(t.routeRemoveNotFound(name));
+    }
+    await writeRoutes(existingRoutesToKeep(nav, name, Math.floor(Date.now() / 1000)));
+  } finally {
+    await clearNavigationCache();
     await disconnect().catch(() => {});
   }
 }

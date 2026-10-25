@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Alert, ScrollView, TouchableOpacity, Modal, Pre
 import { useFocusEffect } from '@react-navigation/native';
 import {
   addPoiToWatch, AddPoiState, readOnWatchPois, getCachedPois, exportSinglePoiToGpx, pickAndParseWaypoints,
-  WatchPoi,
+  WatchPoi, removePoisFromWatch,
 } from '../services/PoiService';
 import { t } from '../i18n';
 import { useV3Theme, v3Spacing, v3Type } from '../theme/v3';
@@ -58,6 +58,7 @@ export default function PoiScreen() {
   const [onWatchLoading, setOnWatchLoading] = useState(false);
   const [onWatchError, setOnWatchError] = useState<string | undefined>();
   const [exportingIndex, setExportingIndex] = useState<number | null>(null);
+  const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   // Map/list view (persisted Settings pref). POIs are single points, so no sort control
   // (name is the only meaningful key) - just the view toggle.
   const [viewMode, setViewMode] = useState<ViewMode>('map');
@@ -158,6 +159,25 @@ export default function PoiScreen() {
     } finally {
       setAddingIndex(null);
     }
+  }
+
+  function handleRemoveItem(poi: WatchPoi, index: number) {
+    if (removingIndex !== null) return;
+    Alert.alert(t.poiRemoveTitle, t.poiRemoveConfirm(poi.name), [
+      { text: t.cancel, style: 'cancel' },
+      { text: t.poiItemRemoveBtn, style: 'destructive', onPress: async () => {
+        setRemovingIndex(index);
+        try {
+          const r = await removePoisFromWatch([poi]);
+          Alert.alert(t.poiRemoveTitle, t.poiRemoved(poi.name, r.left, r.emptyCleared));
+        } catch (e: any) {
+          Alert.alert(t.error, e?.message ?? t.unknownError);
+        } finally {
+          setRemovingIndex(null);
+          loadOnWatch();
+        }
+      } },
+    ]);
   }
 
   async function handleExportItem(poi: WatchPoi, index: number) {
@@ -283,6 +303,9 @@ export default function PoiScreen() {
               </View>
               <TouchableOpacity style={styles.exportBtn} disabled={exportingIndex !== null} onPress={() => handleExportItem(poi, i)}>
                 <Text style={styles.exportBtnText}>{exportingIndex === i ? '…' : t.poiItemExportBtn}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.exportBtn} disabled={removingIndex !== null || onWatchLoading} onPress={() => handleRemoveItem(poi, i)}>
+                <Text style={styles.exportBtnText}>{removingIndex === i ? '…' : t.poiItemRemoveBtn}</Text>
               </TouchableOpacity>
             </View>
           </View>

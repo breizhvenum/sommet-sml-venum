@@ -1,9 +1,11 @@
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { connect, disconnect, addPoi, pickGpxFile, readPoiListRaw, saveToDownloads, getDeviceInfo, readLegacyNav } from '../native/AmbitUsbModule';
+import { connect, disconnect, addPoi, pickGpxFile, readPoiListRaw, saveToDownloads, getDeviceInfo, readLegacyNav, setPoiListRaw } from '../native/AmbitUsbModule';
 import { isAmbit12 } from './AmbitSettingsService';
 import { parseGpxWaypoints } from './RouteGpxParser';
-import { base64ToBytes } from './Base64';
+import { base64ToBytes, bytesToBase64 } from './Base64';
+import { saveWatchBackup } from './WatchBackup';
+import { t } from '../i18n';
 
 // ─── SBEM0102 POI decoding ─────────────────────────────────────────────────────
 // Mirrors ambit-app's tools/ambit_format.py parse_sbem_poi_list(): after the
@@ -98,31 +100,107 @@ export async function readPoisFromWatch(): Promise<WatchPoi[]> {
 
   const b64 = await readPoiListRaw();
   if (!b64) return [];
-  const bytes = base64ToBytes(b64);
-  const pois: WatchPoi[] = [];
+  return poiEntries(base64ToBytes(b64)).flatMap(e => (e.poi ? [e.poi] : []));
+}
 
-  for (const entry of sbemEntries(bytes)) {
-    if (entry.id !== POI_ENTRY_ID) continue;
-    let p = entry.start;
-    const nulAt = (from: number) => {
-      let i = from;
-      while (i < entry.end && bytes[i] !== 0) i++;
-      return i;
-    };
-    const nameEnd = nulAt(p);
-    const name = decodeUtf8(bytes, p, nameEnd);
-    p = nameEnd + 1;
-    const routeNameEnd = nulAt(p);
-    p = routeNameEnd + 1;
-    const stampEnd = nulAt(p);
-    p = stampEnd + 1;
-    p += 5; // route_index, type, sub_type, type_index, flags — not needed for a GPX export
-    if (p + 8 > entry.end) continue; // malformed entry, skip rather than throw
-    const lat = (new DataView(bytes.buffer, bytes.byteOffset + p, 4)).getInt32(0, true) / 1e7;
-    const lon = (new DataView(bytes.buffer, bytes.byteOffset + p + 4, 4)).getInt32(0, true) / 1e7;
-    pois.push({ name: name || 'POI', latitude: lat, longitude: lon });
+/** A 0x55 entry of a raw POI read, and the POI it holds: null for an empty entry (`55 00`, a
+ * name the watch could not keep) or one this decoder does not understand. */
+export interface PoiEntry { start: number; end: number; poi: WatchPoi | null }
+
+function decodePoi(bytes: Uint8Array, entry: SbemEntry): WatchPoi | null {
+  let p = entry.start;
+  const nulAt = (from: number) => {
+    let i = from;
+    while (i < entry.end && bytes[i] !== 0) i++;
+    return i;
+  };
+  const nameEnd = nulAt(p);
+  const name = decodeUtf8(bytes, p, nameEnd);
+  p = nameEnd + 1;
+  const routeNameEnd = nulAt(p);
+  p = routeNameEnd + 1;
+  const stampEnd = nulAt(p);
+  p = stampEnd + 1;
+  p += 5; // route_index, type, sub_type, type_index, flags — not needed for a GPX export
+  if (p + 8 > entry.end) return null; // malformed entry, skip rather than throw
+  const lat = (new DataView(bytes.buffer, bytes.byteOffset + p, 4)).getInt32(0, true) / 1e7;
+  const lon = (new DataView(bytes.buffer, bytes.byteOffset + p + 4, 4)).getInt32(0, true) / 1e7;
+  return { name: name || 'POI', latitude: lat, longitude: lon };
+}
+
+export function poiEntries(bytes: Uint8Array): PoiEntry[] {
+  return sbemEntries(bytes)
+    .filter(e => e.id === POI_ENTRY_ID)
+    .map(e => ({ start: e.start, end: e.end, poi: decodePoi(bytes, e) }));
+}
+
+/** A raw POI list shaped like a 0x0b24 read (`read`'s 14-byte header, then `keep`'s entries,
+ * byte for byte, in that order): what setPoiListRaw takes. Empty when nothing is kept. */
+export function buildPoiList(read: Uint8Array, keep: { start: number; end: number }[]): Uint8Array {
+  if (keep.length === 0) return new Uint8Array(0);
+  const out: number[] = Array.from(read.subarray(0, 14));
+  for (const e of keep) {
+    const len = e.end - e.start;
+    if (len < 0xff) out.push(POI_ENTRY_ID, len);
+    else out.push(POI_ENTRY_ID, 0xff, len & 0xff, (len >> 8) & 0xff, (len >> 16) & 0xff, (len >>> 24) & 0xff);
+    for (let i = e.start; i < e.end; i++) out.push(read[i]);
   }
-  return pois;
+  return Uint8Array.from(out);
+}
+
+/** The entries to keep when removing `targets` from `entries`: each target takes the first
+ * entry with its name and coordinates not already taken, and empty entries go too (nothing in
+ * them can be written back). Throws, naming the POI, when a target is not there. */
+export function poisToKeep(entries: PoiEntry[], targets: WatchPoi[]): { keep: PoiEntry[]; empty: number } {
+  const drop = new Set<number>();
+  for (const target of targets) {
+    const i = entries.findIndex((e, k) => !drop.has(k) && e.poi !== null
+      && e.poi.name === target.name && e.poi.latitude === target.latitude && e.poi.longitude === target.longitude);
+    if (i < 0) throw new Error(t.poiRemoveNotFound(target.name));
+    drop.add(i);
+  }
+  const keep = entries.filter((e, k) => !drop.has(k) && e.end > e.start);
+  return { keep, empty: entries.filter(e => e.end === e.start).length };
+}
+
+export interface RemovePoisResult { left: number; emptyCleared: number; backupPath: string }
+
+/**
+ * Removes `targets` from the watch (Ambit3 family). Reads the list, saves a copy of it
+ * (backups/POIs/<serial>/), then has the watch replace its list with the rest
+ * (AmbitUsbModule.setPoiList: 0x0b04 empties it, 0x0b25 writes the rest, the count is
+ * checked). The watch writes nothing if its list changed since the read. When the write
+ * fails after the list was emptied, the copy is written back once.
+ */
+export async function removePoisFromWatch(targets: WatchPoi[]): Promise<RemovePoisResult> {
+  await connect();
+  try {
+    const info = await getDeviceInfo();
+    if (isAmbit12(info.name)) throw new Error(t.poiRemoveLegacy);
+    const b64 = (await readPoiListRaw()) ?? '';
+    const bytes = b64 ? base64ToBytes(b64) : new Uint8Array(0);
+    const { keep, empty } = poisToKeep(poiEntries(bytes), targets);
+    const backupPath = await saveWatchBackup('POIs', b64, info.serial ?? '');
+    console.log(`[pois] copy saved before removing: ${backupPath}`);
+    try {
+      const left = await setPoiListRaw(b64, bytesToBase64(buildPoiList(bytes, keep)));
+      return { left, emptyCleared: empty, backupPath };
+    } catch (e: any) {
+      if (e?.code === 'POI_LIST_CHANGED') throw new Error(t.poiRemoveChanged);
+      // Put the copy back: read what is there now, and replace it with the copy.
+      let restored = false;
+      try {
+        const now = (await readPoiListRaw()) ?? '';
+        await setPoiListRaw(now, b64);
+        restored = true;
+      } catch { /* the copy stays on the phone */ }
+      throw new Error(restored ? t.poiRemoveFailedRestored(e?.message ?? String(e))
+                               : t.poiRemoveFailed(backupPath));
+    }
+  } finally {
+    await clearPoiCache();
+    await disconnect().catch(() => {});
+  }
 }
 
 function poisToGpx(pois: WatchPoi[]): string {
