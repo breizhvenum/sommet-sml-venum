@@ -86,6 +86,11 @@ private const val SCAN_TIMEOUT_MS = 15_000L
 // ambit_app_ble_stability_suunto_app_diff memory) - a bonding attempt gets this long to
 // resolve to BOND_BONDED/BOND_NONE before it's treated as a named failure.
 private const val BOND_TIMEOUT_MS = 60_000L
+// From the scan match to the watch subscribing to our notify characteristic. The watch can
+// link and then never subscribe (seen 2026-10-24: three links, no subscription, and Home
+// showed "Connecting" for 3.5 minutes). Bonding has its own BOND_TIMEOUT_MS; this one waits
+// it out and then starts again.
+private const val SUBSCRIBE_TIMEOUT_MS = 30_000L
 /* Belt-and-suspenders alongside the service-UUID scan filter (which already
  * only matches this device family) and the Ambit3/Traverse USB PID table
  * this project already maintains — see AmbitUsbModule.kt's SUUNTO_PID_NAMES.
@@ -128,6 +133,194 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
     private var chunkInFlight = false
 
     override fun getName() = "AmbitBleModule"
+
+    // ─── Tablet Bluetooth switched off ───────────────────────────────────────
+    // When the phone's own Bluetooth goes off, the GATT server and the link die with it, but
+    // no connection-state callback arrives. Home kept showing "Connected · via Bluetooth" with
+    // no way to reconnect (seen 2026-10-24 after an off/on). Treat it like the watch closing
+    // the link: reset, and tell JS.
+    private val adapterStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val state = intent.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1)
+            if (state == android.bluetooth.BluetoothAdapter.STATE_ON) { rearmBackgroundConnect(); return }
+            if (state != android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF &&
+                state != android.bluetooth.BluetoothAdapter.STATE_OFF) return
+            mainHandler.post { onAdapterOff() }
+        }
+    }
+
+    // After adapterStateReceiver: Kotlin runs initializers in the order they are written.
+    init {
+        registerAdapterStateReceiver()
+    }
+
+    private fun registerAdapterStateReceiver() {
+        try {
+            ContextCompat.registerReceiver(
+                reactContext, adapterStateReceiver,
+                IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED),
+                ContextCompat.RECEIVER_EXPORTED)
+        } catch (e: Exception) {
+            Log.e("AmbitBleModule", "adapter state receiver not registered: ${e.message}")
+        }
+    }
+
+    private fun onAdapterOff() {
+        val wasLive = nativeInitStarted
+        val wasConnecting = connectPromise != null
+        if (!wasLive && !wasConnecting && gattServer == null) return
+        Log.d("AmbitBleModule", "tablet Bluetooth turned off (live=$wasLive connecting=$wasConnecting)")
+        clearSubscribeTimeout()
+        scanCallback?.let { cb ->
+            try {
+                (reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)
+                    ?.adapter?.bluetoothLeScanner?.stopScan(cb)
+            } catch (_: Exception) {}
+        }
+        if (wasConnecting) {
+            failConnect("BLUETOOTH_OFF", "Bluetooth was turned off on this device")
+        } else {
+            closeServer()
+        }
+        nativeInitStarted = false
+        if (wasLive) emitDisconnected(-1, "adapter_off")
+    }
+
+    // ─── Standing reconnect, as the Suunto app does ──────────────────────────
+    // The watch ends every session itself (HCI reason 0x13) a few seconds to minutes after
+    // its sync. The Suunto app keeps a background connect to the bonded watch (btsnoop
+    // 2026-08-09: LE Create Connection with the accept-list filter, re-issued after every
+    // disconnect, phone = central), so whenever the watch advertises again - "Sync now", or
+    // its own schedule - it is linked in ~0.2 s and syncs. Sommet used to connect only after a
+    // scan started by the Connect button, so every session needed Connect + Sync now.
+    private var autoReconnectAddress: String? = null
+
+    /** Keeps a background connect armed to this bonded watch until disconnectBle(). Resolves
+     * false when it can't (no permission, Bluetooth off, not bonded). */
+    @ReactMethod
+    fun armAutoReconnect(address: String, promise: Promise) {
+        val adapter = (reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        val device = try { adapter?.getRemoteDevice(address) } catch (_: Exception) { null }
+        val bonded = try { device?.bondState == BluetoothDevice.BOND_BONDED } catch (_: SecurityException) { false }
+        if (!hasBlePermissions() || adapter == null || !adapter.isEnabled || device == null || !bonded) {
+            promise.resolve(false)
+            return
+        }
+        autoReconnectAddress = address
+        mainHandler.post { armBackgroundConnect(device) }
+        promise.resolve(true)
+    }
+
+    // A link the watch made that starts no session. The watch's first discovery request can
+    // reach the stack before Android has registered the link; Android then never answers it
+    // and the watch waits out its 30 s ATT timeout, stuck, before hanging up (btsnoop
+    // 2026-10-25 00:53:16: request 0.2 ms before the connection event; in the links that
+    // worked it came ~30 ms after and was answered at once). A good link starts its session
+    // within ~1.3 s, so after EMPTY_LINK_MS we drop it and re-arm: a watch that still wants
+    // to sync calls again.
+    private val EMPTY_LINK_MS = 6_000L
+    private var emptyLinkRunnable: Runnable? = null
+    // Set when the watchdog drops a link: the watch is calling back, so the next try is a
+    // direct connect (see armBackgroundConnect).
+    private var fastRetryNext = false
+    @Volatile private var linkUp = false
+
+    private fun armEmptyLinkWatchdog(device: BluetoothDevice) {
+        emptyLinkRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable {
+            emptyLinkRunnable = null
+            if (nativeInitStarted || connectPromise != null) return@Runnable
+            Log.d("AmbitBleModule", "the watch linked but started no session in ${EMPTY_LINK_MS / 1000} s - dropping the link")
+            fastRetryNext = true
+            try { gattServer?.cancelConnection(device) } catch (_: Exception) {}
+        }
+        emptyLinkRunnable = r
+        mainHandler.postDelayed(r, EMPTY_LINK_MS)
+    }
+
+    private fun rearmBackgroundConnect() {
+        val address = autoReconnectAddress ?: return
+        val fast = fastRetryNext
+        fastRetryNext = false
+        mainHandler.postDelayed({
+            if (autoReconnectAddress != address) return@postDelayed
+            val adapter = (reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+            val device = try { adapter?.getRemoteDevice(address) } catch (_: Exception) { null } ?: return@postDelayed
+            armBackgroundConnect(device, fast)
+        }, 1_000L)
+    }
+
+    // The background connect listens 30 ms in every 1280 ms (btsnoop 2026-10-25), so a watch
+    // calling back after a dropped link took 8-24 s to get through. After a drop we first try
+    // a direct connect (30 ms in every 60 ms) for FAST_RETRY_MS, then fall back to the
+    // background one. The current Suunto app connects in the same order (direct first,
+    // autoConnect as the fallback: RetryWithAutoConnectStrategy, 6.12.7).
+    private val FAST_RETRY_MS = 15_000L
+    private var fastRetryRunnable: Runnable? = null
+
+    private fun clearFastRetry() {
+        fastRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+        fastRetryRunnable = null
+    }
+
+    private fun armBackgroundConnect(device: BluetoothDevice, fast: Boolean = false) {
+        clearFastRetry()
+        if (nativeInitStarted || connectPromise != null) return   // a session or a Connect is running
+        val adapter = (reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
+        if (adapter == null || !adapter.isEnabled) return
+        nativeAmbitBleResetRx()          // the next session's first bytes wait for its handshake
+        if (!fast) {
+            Log.d("AmbitBleModule", "standing reconnect armed for ${device.address}")
+            openServerAndConnect(device, background = true)
+            return
+        }
+        Log.d("AmbitBleModule", "fast reconnect for ${device.address} (direct for ${FAST_RETRY_MS / 1000} s)")
+        openServerAndConnect(device, background = false)
+        val r = Runnable {
+            fastRetryRunnable = null
+            if (nativeInitStarted || connectPromise != null || linkUp) return@Runnable
+            if (autoReconnectAddress != device.address) return@Runnable   // Disconnect was pressed
+            Log.d("AmbitBleModule", "no call back in ${FAST_RETRY_MS / 1000} s - back to the background connect")
+            try { gattServer?.cancelConnection(device) } catch (_: Exception) {}
+            armBackgroundConnect(device, fast = false)
+        }
+        fastRetryRunnable = r
+        mainHandler.postDelayed(r, FAST_RETRY_MS)
+    }
+
+    private fun emitReconnected(address: String) {
+        Log.d("AmbitBleModule", "the watch reconnected by itself - session up")
+        val params = Arguments.createMap().apply { putString("address", address) }
+        try {
+            reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit("AmbitBleReconnected", params)
+        } catch (e: Exception) {
+            Log.e("AmbitBleModule", "emitReconnected failed: ${e.message}")
+        }
+    }
+
+    // ─── Link up, but the watch never subscribes ─────────────────────────────
+    private var subscribeTimeoutRunnable: Runnable? = null
+
+    private fun armSubscribeTimeout() {
+        clearSubscribeTimeout()
+        val r = Runnable {
+            subscribeTimeoutRunnable = null
+            if (nativeInitStarted || connectPromise == null) return@Runnable
+            if (bondingInProgress) { armSubscribeTimeout(); return@Runnable }
+            failConnect("NO_SESSION",
+                "The watch connected but did not start the session. Choose \"Sync now\" on the watch and try again.")
+        }
+        subscribeTimeoutRunnable = r
+        mainHandler.postDelayed(r, SUBSCRIBE_TIMEOUT_MS)
+    }
+
+    private fun clearSubscribeTimeout() {
+        subscribeTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        subscribeTimeoutRunnable = null
+    }
 
     // Required by NativeEventEmitter on the JS side (without them React Native logs a warning at
     // every start). Events are sent through RCTDeviceEventEmitter, so there's nothing to track.
@@ -286,12 +479,38 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
 
     // ─── Connect: open the GATT server and let the watch connect in ───────────
     private fun connectToDevice(device: BluetoothDevice) {
+        // The standing reconnect may already have linked the watch and started its session
+        // (it resolves the pending Connect itself); a new server now would cut it.
+        if (nativeInitStarted) return
         nativeInitStarted = false
+        armSubscribeTimeout()
         registerBondAndPairingReceiver(device)
         openServerAndConnect(device)
     }
 
-    private fun openServerAndConnect(device: BluetoothDevice) {
+    // false: direct connect, right after a scan match (the user's Connect). true: a standing
+    // background connect to a bonded watch, see armBackgroundConnect().
+    private var connectInBackground = false
+
+    private fun openServerAndConnect(device: BluetoothDevice, background: Boolean = false) {
+        connectInBackground = background
+        // One server for every session. A new one changes the GATT database, so the watch gets a
+        // Service Changed indication as it links, and its discovery request racing that
+        // indication went unanswered until its 30 s ATT timeout, when it hung up (btsnoop
+        // 2026-10-25 01:26 and 01:27; the links that worked had no such race). Reusing it also
+        // keeps a second server from being registered next to the first (serverIf 8 and 9).
+        val existing = gattServer
+        if (existing != null && notifyChar != null) {
+            synchronized(chunkQueueLock) { pendingChunks.clear(); chunkInFlight = false }
+            connectedDevice = device
+            try {
+                existing.connect(device, background)
+                Log.d("AmbitBleModule", "gattServer.connect(${if (background) "background" else "direct"}) issued for ${device.address} (same server)")
+            } catch (e: SecurityException) {
+                failConnect("PERMISSION_DENIED", e.message)
+            }
+            return
+        }
         val manager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         if (manager == null) {
             failConnect("BLUETOOTH_OFF", "BluetoothManager unavailable")
@@ -330,11 +549,13 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
 
             // addService is async; connect to the watch once it's registered
             // (onServiceAdded) so the watch never discovers an incomplete DB.
+            // Remember which device we're servicing (also needed for notify). Set before
+            // addService: onServiceAdded runs on a binder thread, can come back first, and
+            // connects to this device; when it won the race the connect was never issued
+            // (2026-10-25 01:49).
+            connectedDevice = device
             Log.d("AmbitBleModule", "opening GATT server, adding NSP service")
             server.addService(service)
-
-            // Remember which device we're servicing (also needed for notify).
-            connectedDevice = device
         } catch (e: SecurityException) {
             failConnect("PERMISSION_DENIED", e.message)
         }
@@ -356,8 +577,8 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
             // bond and isn't racing a fresh-pair window each time.
             val device = connectedDevice ?: return
             try {
-                gattServer?.connect(device, false)
-                Log.d("AmbitBleModule", "gattServer.connect(direct) issued for ${device.address}")
+                gattServer?.connect(device, connectInBackground)
+                Log.d("AmbitBleModule", "gattServer.connect(${if (connectInBackground) "background" else "direct"}) issued for ${device.address}")
             } catch (e: SecurityException) {
                 failConnect("PERMISSION_DENIED", e.message)
             }
@@ -366,13 +587,21 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.d("AmbitBleModule", "server onConnectionStateChange status=$status newState=$newState dev=${device.address}")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                linkUp = true
                 connectedDevice = device
+                mainHandler.post { clearFastRetry() }
+                if (connectPromise == null && !nativeInitStarted) armEmptyLinkWatchdog(device)
                 // Do NOT start the native handshake yet — wait for the watch to
                 // actually subscribe to our notify CCCD (onDescriptorWriteRequest),
                 // which is the real "transport is live" signal. Bonding, if needed,
                 // happens around here and is driven by the bond-state receiver.
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (!nativeInitStarted) {
+                linkUp = false
+                if (!nativeInitStarted && connectPromise == null) {
+                    // A link the watch opened by itself that closed before a session started:
+                    // nothing to report, wait for the next one.
+                    rearmBackgroundConnect()
+                } else if (!nativeInitStarted) {
                     if (bondingInProgress) {
                         // Distinct, expected failure - not a generic drop. Suunto's own app
                         // (jadx diff, 2026-08-21 - ambit_app_ble_stability_suunto_app_diff
@@ -405,7 +634,8 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
                     Log.d("AmbitBleModule", "post-handshake disconnect (status=$status) - notifying JS")
                     nativeInitStarted = false
                     connectedDevice = null
-                    emitDisconnected(status)
+                    emitDisconnected(status, "watch")
+                    rearmBackgroundConnect()
                 }
             }
         }
@@ -416,7 +646,15 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
         ) {
             // Watch -> phone NSP data lands here (writes to c6339440).
             if (characteristic.uuid == NSP_WRITE_CHAR_UUID) {
-                nativeAmbitBleOnNotify(value)
+                nativeAmbitBleOnNotify(value)   // stashed until the handshake is armed
+                // A bonded watch reconnecting may skip rewriting the notify CCCD (a client keeps
+                // that per bond) and go straight to its opener; that starts the session too.
+                if (!nativeInitStarted) {
+                    nativeInitStarted = true
+                    connectedDevice = device
+                    mainHandler.post { clearSubscribeTimeout() }
+                    proceedToNativeInit(device)
+                }
             }
             if (responseNeeded) {
                 try {
@@ -444,6 +682,7 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
 
             if (isNotifyCccd && enabling && !nativeInitStarted) {
                 nativeInitStarted = true
+                mainHandler.post { clearSubscribeTimeout() }
                 connectedDevice = device
                 proceedToNativeInit(device)
             }
@@ -461,6 +700,17 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
         executor.execute {
             val ok = nativeAmbitBleInit(SUUNTO_VID, guessProductId(device.name))
             mainHandler.post {
+                if (connectPromise == null) {
+                    // The watch connected by itself (Sync now, or its own schedule) through the
+                    // standing background connect: tell JS, which syncs like after Connect.
+                    if (ok) emitReconnected(device.address)
+                    else {
+                        Log.e("AmbitBleModule", "background session: device-info handshake failed")
+                        nativeInitStarted = false
+                        try { gattServer?.cancelConnection(device) } catch (_: Exception) {}
+                    }
+                    return@post
+                }
                 connectPromise?.let {
                     connectPromise = null
                     // Resolve the connected watch's address (multi-watch switcher, 2026-08-16):
@@ -521,25 +771,53 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun disconnectBle(promise: Promise) {
+        autoReconnectAddress = null
         unregisterBondReceiver()
+        clearSubscribeTimeout()
+        closeServer()
+        nativeInitStarted = false
+        promise.resolve(true)
+    }
+
+    private fun closeServer() {
         try {
             connectedDevice?.let { gattServer?.cancelConnection(it) }
             gattServer?.close()
-        } catch (_: SecurityException) {}
+        } catch (_: Exception) {}
         gattServer = null
         notifyChar = null
         connectedDevice = null
-        nativeInitStarted = false
+        linkUp = false
+        mainHandler.post { clearFastRetry() }
         synchronized(chunkQueueLock) { pendingChunks.clear(); chunkInFlight = false }
-        promise.resolve(true)
+    }
+
+    /** The watch asked to sync ("Sync now" on the watch while the link is already up).
+     * Called from protocol_ble.c on the thread that received the notice, after it has been
+     * answered; JS (HomeScreen) runs the same sync as the app's own Sync button. */
+    @Suppress("unused") // called from protocol_ble.c via JNI
+    fun bleSyncRequested() {
+        Log.d("AmbitBleModule", "the watch asked to sync")
+        mainHandler.post {
+            try {
+                reactContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit("AmbitBleSyncRequested", null)
+            } catch (e: Exception) {
+                Log.e("AmbitBleModule", "sync request not passed on: ${e.message}")
+            }
+        }
     }
 
     /** Tells JS a live BLE link just dropped, so HomeScreen.tsx can flip `bleConnected` back
      * to false and surface a real reconnect prompt instead of trusting a stale assumption
      * that the link never drops on its own. See the post-handshake disconnect branch above
      * for why this exists. */
-    private fun emitDisconnected(status: Int) {
-        val params = Arguments.createMap().apply { putInt("status", status) }
+    private fun emitDisconnected(status: Int, reason: String) {
+        val params = Arguments.createMap().apply {
+            putInt("status", status)
+            putString("reason", reason)   // "watch" (the watch closed the link) or "adapter_off"
+        }
         try {
             reactContext
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -552,15 +830,14 @@ class AmbitBleModule(private val reactContext: ReactApplicationContext) :
     private fun failConnect(code: String, message: String?) {
         Log.e("AmbitBleModule", "failConnect($code): $message")
         mainHandler.post {
+            clearSubscribeTimeout()
             connectPromise?.let { connectPromise = null; it.reject(code, message) }
         }
-        try {
-            connectedDevice?.let { gattServer?.cancelConnection(it) }
-            gattServer?.close()
-        } catch (_: SecurityException) {}
-        gattServer = null
-        notifyChar = null
+        // Drop the link but keep the server (see openServerAndConnect).
+        try { connectedDevice?.let { gattServer?.cancelConnection(it) } } catch (_: Exception) {}
         connectedDevice = null
+        synchronized(chunkQueueLock) { pendingChunks.clear(); chunkInFlight = false }
+        rearmBackgroundConnect()   // back to waiting for the watch, if it has been connected before
     }
 
     // ─── Pairing / bonding (unchanged prerequisite) ──────────────────────────

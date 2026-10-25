@@ -81,6 +81,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // ─── Fonctions JNI (implémentées dans jni_bridge.cpp) ────────────────────
     private external fun nativeAmbitInit(fd: Int, epIn: Int, epOut: Int, vid: Int, pid: Int): Boolean
     private external fun nativeAmbitGetDeviceInfo(): String
+    private external fun nativeAmbitSyncDisplay(on: Boolean): Boolean
     private external fun nativeAmbitGetLogCount(knownDates: Array<String>): Int
     private external fun nativeAmbitGetLogAsGpx(index: Int): String?
     private external fun nativeAmbitGetLogAsFit(index: Int): String?
@@ -421,6 +422,18 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // Retourne un tableau de strings GPX (un par log).
     // Exécuté sur un thread dédié car nativeAmbitGetLogCount() peut bloquer
     // plusieurs minutes lors de la lecture des logs depuis la montre.
+    @ReactMethod
+    fun syncDisplay(on: Boolean, promise: Promise) {
+        // Takes (true) or releases (false) the watch's sync lock: the watch shows its "Syncing"
+        // message while held, and a "Sync now" pressed on the watch only reports success once a
+        // phone has taken and released it (Suunto app, btsnoop 2026-08-09: 0x0b19/0x0b1a 1 at
+        // the start of a sync, 0x0b19/0x0b1a 0 at the end). Best-effort: resolves false on error.
+        if (!jniLoaded) { promise.resolve(false); return }
+        executor.execute {
+            try { promise.resolve(nativeAmbitSyncDisplay(on)) } catch (e: Throwable) { promise.resolve(false) }
+        }
+    }
+
     @ReactMethod
     fun getLogs(knownIds: ReadableArray, promise: Promise) {
         if (!jniLoaded) {

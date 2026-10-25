@@ -168,8 +168,11 @@ void libambit_close(ambit_object_t *object)
     LOG_INFO("Closing");
     if (object != NULL) {
         if (object->driver != NULL) {
-            // Make sure to clear log lock (if possible)
-            if (object->driver->lock_log != NULL) {
+            // Make sure to clear log lock (if possible). Not over Bluetooth: a BLE object is
+            // closed when the watch has already ended the link (a new session replaces it),
+            // and each command then waited out its 20 s reply timeout (2026-10-25: a
+            // reconnect took 22 s). The Bluetooth sync releases the lock itself.
+            if (object->driver->lock_log != NULL && object->transport != AMBIT_TRANSPORT_BLE) {
                 object->driver->lock_log(object, false);
             }
             if (object->driver->deinit != NULL) {

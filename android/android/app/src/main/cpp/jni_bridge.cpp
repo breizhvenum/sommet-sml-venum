@@ -2061,6 +2061,18 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitDisconnect(
     }
 }
 
+/** Takes or releases the watch's sync lock (0x0b19 check, 0x0b1a set): libambit's
+ * sync_display_show/clear. See AmbitUsbModule.syncDisplay(). */
+JNIEXPORT jboolean JNICALL
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSyncDisplay(
+        JNIEnv * /* env */, jobject /* thiz */, jboolean on)
+{
+    if (!g_device) return JNI_FALSE;
+    if (on) libambit_sync_display_show(g_device);
+    else libambit_sync_display_clear(g_device);
+    return JNI_TRUE;
+}
+
 /**
  * nativeAmbitBleInit
  *

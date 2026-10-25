@@ -69,13 +69,38 @@ export function disconnectBle(): Promise<void> {
   return NativeAmbitBle.disconnectBle();
 }
 
+/** Keeps a background connect armed to this bonded watch (until disconnectBle()), as the
+ * Suunto app does: whenever the watch calls - "Sync now", or its own schedule - it links by
+ * itself and onBleReconnected fires once the session is up. Resolves false when it can't
+ * (no permission, Bluetooth off, watch not bonded). */
+export function armAutoReconnect(address: string): Promise<boolean> {
+  if (typeof NativeAmbitBle.armAutoReconnect !== 'function') return Promise.resolve(false);
+  return NativeAmbitBle.armAutoReconnect(address);
+}
+
+/** The watch connected by itself through armAutoReconnect and its session is up. */
+export function onBleReconnected(callback: (event: { address: string }) => void): () => void {
+  const sub = emitter.addListener('AmbitBleReconnected', callback);
+  return () => sub.remove();
+}
+
 /** Fires when a live, already-handshaken BLE link drops on its own (the watch's own
  * behavior, not something JS asked for — see AmbitBleModule.kt's post-handshake
  * onConnectionStateChange branch). Real gap fixed 2026-08-21: without this, HomeScreen.tsx
  * had no way to learn a connection it thought was still up had actually gone, and kept
  * showing "Connected" indefinitely. Callers should reset their own "connected" state and
  * let the user reconnect (scanAndConnect/scanAndConnectTo) rather than polling. */
-export function onBleDisconnected(callback: (event: { status: number }) => void): () => void {
+export function onBleDisconnected(
+  callback: (event: { status: number; reason?: 'watch' | 'adapter_off' }) => void,
+): () => void {
   const sub = emitter.addListener('AmbitBleDisconnected', callback);
+  return () => sub.remove();
+}
+
+/** The watch asked to sync: "Sync now" on the watch while the Bluetooth link is already up.
+ * Before 2026-10-24 Sommet never answered that request, so pressing Sync now on a linked
+ * watch did nothing. */
+export function onBleSyncRequested(callback: () => void): () => void {
+  const sub = emitter.addListener('AmbitBleSyncRequested', callback);
   return () => sub.remove();
 }

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { NativeModules, NativeEventEmitter } from 'react-native';
 import type { DeviceConnector, DeviceInfo, SyncProgressEvent } from './DeviceConnector';
 
@@ -62,21 +63,53 @@ export const ambitConnector: DeviceConnector = {
 // screen owns its lifecycle). Making that switch HERE means every existing
 // service works over BLE with zero changes to it.
 let bleActive = false;
-export function setBleTransportActive(active: boolean) { bleActive = active; }
+// The last watch link was Bluetooth. When it has closed, a watch job falls back to USB and
+// used to fail with "Check the USB OTG cable", which misleads someone who never uses a cable.
+let lastLinkWasBle = false;
+export function setBleTransportActive(active: boolean) {
+  bleActive = active;
+  if (active) lastLinkWasBle = true;
+}
 export function isBleTransportActive() { return bleActive; }
 
+// Watch jobs in progress (every screen wraps its watch work in connect()/disconnect()), so a
+// sync the watch asks for over Bluetooth waits for a POI or route write to finish instead of
+// running in the middle of it. Time-bounded in case a caller never calls disconnect().
+let watchJobs = 0;
+let watchJobSince = 0;
+const WATCH_JOB_MAX_MS = 5 * 60 * 1000;
+export function isWatchJobRunning(): boolean {
+  return watchJobs > 0 && Date.now() - watchJobSince < WATCH_JOB_MAX_MS;
+}
+
 export const connect = async (): Promise<DeviceInfo> => {
+  let info: DeviceInfo;
   if (bleActive) {
     try {
-      const info = await NativeAmbit.getDeviceInfo();
-      return { name: info?.name || 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+      const d = await NativeAmbit.getDeviceInfo();
+      info = { name: d?.name || 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
     } catch {
-      return { name: 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+      info = { name: 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+    }
+  } else {
+    try {
+      info = await ambitConnector.connect();
+      lastLinkWasBle = false;
+    } catch (e: any) {
+      if (lastLinkWasBle && e?.code === 'AMBIT_NOT_FOUND') {
+        const err: any = new Error(t.watchBleClosedError);
+        err.code = 'BLE_CLOSED';
+        throw err;
+      }
+      throw e;
     }
   }
-  return ambitConnector.connect();
+  if (watchJobs === 0 || !isWatchJobRunning()) { watchJobs = 0; watchJobSince = Date.now(); }
+  watchJobs += 1;
+  return info;
 };
 export const disconnect = async (): Promise<void> => {
+  watchJobs = Math.max(0, watchJobs - 1);
   if (bleActive) return;           // leave the BLE link up; HomeScreen manages it
   return ambitConnector.disconnect();
 };
@@ -332,6 +365,13 @@ export function writePersonalSetting(offset: number, width: number, value: numbe
  */
 export function writeSettingsRaw(dataBase64: string): Promise<boolean> {
   return NativeAmbit.writeSettingsRaw(dataBase64);
+}
+
+/** Takes (true) or releases (false) the watch's sync lock - its "Syncing" message, and what a
+ * "Sync now" pressed on the watch waits for. Best-effort, never throws. */
+export async function syncDisplay(on: boolean): Promise<boolean> {
+  if (typeof NativeAmbit.syncDisplay !== 'function') return false;
+  try { return await NativeAmbit.syncDisplay(on); } catch { return false; }
 }
 
 /**

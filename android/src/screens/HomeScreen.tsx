@@ -18,7 +18,8 @@ import {
   connect as ambitConnect, disconnect as ambitDisconnect, getDeviceInfo, AmbitDeviceInfo,
   listDevices, selectDevice, AmbitUsbDevice,
   wasLaunchedViaUsbAttach, onUsbAttached, detectAttachedDeviceType, AttachedDeviceType,
-  readDeviceHistoryRaw, readDeviceLogRaw, setBleTransportActive, saveToDownloads,
+  readDeviceHistoryRaw, readDeviceLogRaw, setBleTransportActive, saveToDownloads, isWatchJobRunning,
+  syncDisplay,
   setDateTime,
 } from '../native/AmbitUsbModule';
 import RNFS from 'react-native-fs';
@@ -26,7 +27,8 @@ import { runIntervalsAutoSync } from '../services/IntervalsImport';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   scanAndConnect as bleScanAndConnect, scanAndConnectTo as bleScanAndConnectTo,
-  listBondedWatches, BondedWatch, onBleDisconnected,
+  listBondedWatches, BondedWatch, onBleDisconnected, onBleSyncRequested,
+  armAutoReconnect, onBleReconnected,
 } from '../native/AmbitBleModule';
 import * as Garmin from '../native/GarminModule';
 import type { GarminConnectResult } from '../native/GarminModule';
@@ -105,6 +107,11 @@ const watchPillName = (name: string) => name.replace(/^Suunto\s+/i, '');
 // picked instead of grabbing whichever enumerates first on every launch. Keyed by USB productId
 // (stable per model across replug, unlike the USB path) or BLE address, never the volatile path.
 const SELECTED_WATCH_KEY = 'ambit.selectedWatch.v1';
+// The bonded watch Sommet keeps a standing Bluetooth reconnect for (the last one connected).
+const BLE_RECONNECT_KEY = 'ambit.bleReconnect.v1';
+// A sync the watch asks for (its sync notice) runs at most this often: it sends one right after
+// a session's own sync, and a pair for each "Sync now".
+const WATCH_SYNC_REQUEST_GAP_MS = 60_000;
 type SavedWatch = { transport: 'usb'; productId: number } | { transport: 'ble'; bleAddress: string };
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
@@ -470,6 +477,10 @@ export default function HomeScreen() {
   deviceTypeRef.current = deviceType;
   const bleConnectedRef = useRef(bleConnected);
   bleConnectedRef.current = bleConnected;
+  // A standing Bluetooth reconnect is armed (the watch reconnects by itself when it calls).
+  const autoReconnectRef = useRef(false);
+  // When the last sync started or ended, to space out syncs the watch asks for.
+  const lastSyncAtRef = useRef(0);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timeoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -614,6 +625,12 @@ export default function HomeScreen() {
       bleConnectedRef.current = true;
       setBleTransportActive(true);   // route all connect()/disconnect() through BLE
       setConnectedBleAddress(targetAddress ?? connectedAddr ?? null); // highlights the active BLE watch in the picker
+      // From now on the watch reconnects by itself whenever it calls (Suunto app behaviour).
+      const reconnectAddr = targetAddress ?? connectedAddr;
+      if (reconnectAddr) {
+        AsyncStorage.setItem(BLE_RECONNECT_KEY, reconnectAddr).catch(() => {});
+        armAutoReconnect(reconnectAddr).then(ok => { autoReconnectRef.current = ok; }).catch(() => {});
+      }
       setSelectedWatch(null);
       refreshWatchLists();
       setPhase('connected');
@@ -654,16 +671,51 @@ export default function HomeScreen() {
   useEffect(() => { runIntervalsAutoSync().catch(() => {}); }, []);
 
   useEffect(() => {
-    return onBleDisconnected(() => {
+    return onBleDisconnected(event => {
       if (!bleConnectedRef.current) return;   // already knew (e.g. mid handleBleConnect retry)
       setBleConnected(false);
       bleConnectedRef.current = false;
       setBleTransportActive(false);
       setConnectedBleAddress(null);
-      setConnectError(t.homeBleDisconnectedError);
+      setConnectError(event?.reason === 'adapter_off' ? t.homeBleAdapterOffError
+        : autoReconnectRef.current ? t.homeBleSessionEnded : t.homeBleDisconnectedError);
       setPhase('connect-error');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The watch linked by itself (standing reconnect): same state as after Connect, then sync.
+  useEffect(() => {
+    return onBleReconnected(async ({ address }) => {
+      stopSearchTimers();
+      let devInfo: AmbitDeviceInfo | null = null;
+      try { devInfo = await getDeviceInfo(); } catch { /* hide the info block */ }
+      setAmbitInfo(devInfo);
+      setDeviceType('ambit');
+      setBleAttempt(false);
+      setConnectError(undefined);
+      setBleConnected(true);
+      bleConnectedRef.current = true;
+      setBleTransportActive(true);
+      setConnectedBleAddress(address);
+      setSelectedWatch(null);
+      setPhase('connected');
+      console.log('[ble] the watch reconnected by itself');
+      handleSyncRef.current();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "Sync now" on the watch while the link is already up: the watch asks, we sync (handleSync
+  // ignores it while a sync or another watch job is running).
+  useEffect(() => {
+    return onBleSyncRequested(() => {
+      if (!bleConnectedRef.current) return;
+      if (Date.now() - lastSyncAtRef.current < WATCH_SYNC_REQUEST_GAP_MS) return;
+      if (isWatchJobRunning()) { console.log('[ble] the watch asked to sync; another watch job is running'); return; }
+      console.log('[ble] the watch asked to sync');
+      handleSyncRef.current();
+    });
   }, []);
 
   // Writes the Kailash track fetched at connect time (kailashTrack) to Downloads as GPX.
@@ -768,6 +820,12 @@ export default function HomeScreen() {
         }
       } catch { /* corrupt/empty selection - fall back to first-found */ }
       restoredRef.current = true;
+      // Android: re-arm the standing reconnect to the last Bluetooth watch. Passive (the phone
+      // waits for the watch to call), so it can't use up the watch's advertising window.
+      if (Platform.OS === 'android') {
+        const addr = await AsyncStorage.getItem(BLE_RECONNECT_KEY).catch(() => null);
+        if (addr) armAutoReconnect(addr).then(ok => { autoReconnectRef.current = ok; }).catch(() => {});
+      }
       // On iOS there is no USB, and the phone hosts + advertises the NSP server
       // continuously (the watch connects in), so there is no short watch-advertising
       // window to drain — auto-connect over BLE on launch instead of the USB search.
@@ -838,6 +896,7 @@ export default function HomeScreen() {
   async function handleSync(forceRefresh = false) {
     if (isBusy) return;
     setLastActive('sync');
+    lastSyncAtRef.current = Date.now();
     try {
       // Real, 2026-08-08: Kailash has no ExerciseLog for the default provider's native
       // walker to find (see KailashDeviceProvider.ts's own header comment) - its one real
@@ -857,7 +916,15 @@ export default function HomeScreen() {
       // re-imports on the next sync. A user-triggered forceRefresh takes precedence and also
       // satisfies the pending re-import.
       const reimportForFit = !forceRefresh && await isFitReimportPending();
-      await runSync(setSync, provider, { forceRefresh, reimportForFit });
+      // Over Bluetooth, hold the watch's sync lock for the read, as the Suunto app does: without
+      // it a "Sync now" pressed on the watch ended in "Sync failed" although the sync ran.
+      const overBle = bleConnectedRef.current;
+      if (overBle) await syncDisplay(true);
+      try {
+        await runSync(setSync, provider, { forceRefresh, reimportForFit });
+      } finally {
+        if (overBle) await syncDisplay(false);
+      }
       if (forceRefresh || reimportForFit) await markFitReimportDone();
       // Recalculate the watch's activity class from the athlete's latest intervals.icu
       // training on every sync (André, 2026-08-18: "recalculate activity level on each sync
@@ -872,6 +939,8 @@ export default function HomeScreen() {
     } catch (e: any) {
       Alert.alert(t.error, e?.message ?? t.unknownError);
       setSync(s => ({ ...s, phase: 'error' }));
+    } finally {
+      lastSyncAtRef.current = Date.now();
     }
   }
 

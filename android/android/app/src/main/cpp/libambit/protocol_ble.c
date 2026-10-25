@@ -73,6 +73,7 @@ typedef struct {
     JavaVM *jvm;
     jobject module_ref;       /* global ref to the Kotlin AmbitBleModule instance */
     jmethodID write_chunk_mid; /* void bleWriteChunk(byte[]) */
+    jmethodID sync_request_mid; /* void bleSyncRequested(), NULL if the module lacks it */
 #else
     /* Host-supplied GATT write callback (iOS: CBPeripheral writeValue). Called
      * with each <=20-byte chunk of a fully-built frame, in order. */
@@ -82,6 +83,15 @@ typedef struct {
 
     pthread_mutex_t lock;
     pthread_cond_t cond;
+    /* Held for a whole command, from send to reply. There is one reply slot, and the app
+     * calls in from more than one thread (a battery read on the React Native thread while a
+     * sync runs on the executor); without this, two commands overlapped and each could take
+     * the other's reply or lose its own (CRC errors and timeouts seen 2026-10-24). */
+    pthread_mutex_t cmd_lock;
+    /* Held while one frame's chunks are queued, so two frames sent from different threads
+     * (a command, and an answer to a watch notice sent from the receive thread) never
+     * interleave their chunks. Only covers the queueing, never a wait for the watch. */
+    pthread_mutex_t send_lock;
     int reply_ready;
     int reply_is_error;
     uint16_t reply_command;   /* (msgId<<8)|subId echoed in the reply header */
@@ -169,6 +179,8 @@ int libambit_ble_transport_new(ambit_object_t *object, JavaVM *jvm, jobject modu
 
     jclass cls = (*env)->GetObjectClass(env, ctx->module_ref);
     ctx->write_chunk_mid = (*env)->GetMethodID(env, cls, "bleWriteChunk", "([B)V");
+    ctx->sync_request_mid = (*env)->GetMethodID(env, cls, "bleSyncRequested", "()V");
+    if (!ctx->sync_request_mid) (*env)->ExceptionClear(env);   /* optional */
     (*env)->DeleteLocalRef(env, cls);
     if (!ctx->write_chunk_mid) {
         LOGE("bleWriteChunk([B)V not found on BLE module — Kotlin/native mismatch");
@@ -179,6 +191,8 @@ int libambit_ble_transport_new(ambit_object_t *object, JavaVM *jvm, jobject modu
 
     pthread_mutex_init(&ctx->lock, NULL);
     pthread_cond_init(&ctx->cond, NULL);
+    pthread_mutex_init(&ctx->cmd_lock, NULL);
+    pthread_mutex_init(&ctx->send_lock, NULL);
 
     ctx->rx_acc_cap = 512;
     ctx->rx_acc = (uint8_t *)malloc(ctx->rx_acc_cap);
@@ -186,6 +200,8 @@ int libambit_ble_transport_new(ambit_object_t *object, JavaVM *jvm, jobject modu
         (*env)->DeleteGlobalRef(env, ctx->module_ref);
         pthread_mutex_destroy(&ctx->lock);
         pthread_cond_destroy(&ctx->cond);
+        pthread_mutex_destroy(&ctx->cmd_lock);
+        pthread_mutex_destroy(&ctx->send_lock);
         free(ctx);
         return -1;
     }
@@ -207,12 +223,16 @@ int libambit_ble_transport_new(ambit_object_t *object, ambit_ble_write_fn write_
 
     pthread_mutex_init(&ctx->lock, NULL);
     pthread_cond_init(&ctx->cond, NULL);
+    pthread_mutex_init(&ctx->cmd_lock, NULL);
+    pthread_mutex_init(&ctx->send_lock, NULL);
 
     ctx->rx_acc_cap = 512;
     ctx->rx_acc = (uint8_t *)malloc(ctx->rx_acc_cap);
     if (!ctx->rx_acc) {
         pthread_mutex_destroy(&ctx->lock);
         pthread_cond_destroy(&ctx->cond);
+        pthread_mutex_destroy(&ctx->cmd_lock);
+        pthread_mutex_destroy(&ctx->send_lock);
         free(ctx);
         return -1;
     }
@@ -235,13 +255,34 @@ void libambit_ble_transport_close(ambit_object_t *object)
         (*env)->DeleteGlobalRef(env, ctx->module_ref);
     }
 #endif
+    /* Let a command still waiting on this link finish (it times out within
+     * BLE_REPLY_TIMEOUT_SEC) before its context is freed under it. */
+    pthread_mutex_lock(&ctx->cmd_lock);
+    pthread_mutex_unlock(&ctx->cmd_lock);
     pthread_mutex_destroy(&ctx->lock);
     pthread_cond_destroy(&ctx->cond);
+    pthread_mutex_destroy(&ctx->cmd_lock);
+    pthread_mutex_destroy(&ctx->send_lock);
     free(ctx->rx_acc);
     free(ctx->reply_payload);
     free(ctx);
     object->transport_ctx = NULL;
 }
+
+static int ble_build_and_send(ble_ctx_t *ctx, uint16_t command, uint8_t flags,
+                              uint16_t connId, uint16_t pktNum,
+                              const uint8_t *data, size_t datalen);
+
+/* The watch's sync notice, 0x1201 with flags 0x06, ends in the SBEM entry f6 01 <v>. It sends
+ * one every 30 minutes while linked, and a pair (1 s apart) each time the user picks "Sync now"
+ * on a watch that is already linked (André's Peak 2026-10-25 00:52 and 00:54, v = 0 both
+ * times; v = 1 was only seen while nothing answered). The Suunto app answers each with an
+ * empty 0x1201, flags 0x09, same pktNum (assets/ble 2026-08-09 capture); unanswered, the watch
+ * repeats it every 5 s, three times. These are requests from the watch, never a reply to our
+ * command. Every one asks for a sync; the app decides whether one is due (HomeScreen). */
+#define BLE_SYNC_NOTICE      0x1201
+#define BLE_SYNC_NOTICE_FL   0x06
+#define BLE_SYNC_NOTICE_ACK  0x09
 
 /*
  * Called from jni_bridge.cpp (nativeAmbitBleOnNotify) on whatever thread
@@ -254,6 +295,11 @@ void ambit_ble_on_notify(ambit_object_t *object, const uint8_t *data, size_t len
 {
     if (!object || object->transport != AMBIT_TRANSPORT_BLE || !object->transport_ctx) return;
     ble_ctx_t *ctx = (ble_ctx_t *)object->transport_ctx;
+
+    /* Sync notices to answer once ctx->lock is released (answering sends a frame). */
+    uint16_t notice_pkts[4];
+    int notices = 0;
+    int sync_requested = 0;
 
     pthread_mutex_lock(&ctx->lock);
 
@@ -283,7 +329,17 @@ void ambit_ble_on_notify(ambit_object_t *object, const uint8_t *data, size_t len
                             ctx->conn_id = connId; /* learn it from the first real reply */
                         }
 
-                        if (ctx->handshake_mode) {
+                        uint16_t frame_cmd = ((uint16_t)msgId << 8) | subId;
+                        if (!ctx->handshake_mode && frame_cmd == BLE_SYNC_NOTICE &&
+                            ctx->rx_acc[2] == BLE_SYNC_NOTICE_FL) {
+                            const uint8_t *pl = ctx->rx_acc + BLE_HEADER_LEN;
+                            uint16_t pkt;
+                            memcpy(&pkt, ctx->rx_acc + 6, 2);
+                            if (notices < 4) notice_pkts[notices++] = pkt;
+                            sync_requested = 1;
+                            LOGI("watch sync notice (pkt %u, value %d)", pkt,
+                                 (payload_len >= 3 && pl[payload_len - 3] == 0xf6) ? pl[payload_len - 1] : -1);
+                        } else if (ctx->handshake_mode) {
                             /* Server handshake: enqueue the whole frame for the
                              * handshake loop to dispatch, rather than the
                              * request/reply single-slot the driver path uses. */
@@ -359,7 +415,21 @@ void ambit_ble_on_notify(ambit_object_t *object, const uint8_t *data, size_t len
         ctx->rx_acc[ctx->rx_acc_len++] = b;
     }
 
+    uint16_t conn = ctx->conn_id;
     pthread_mutex_unlock(&ctx->lock);
+
+    for (int n = 0; n < notices; n++) {
+        ble_build_and_send(ctx, BLE_SYNC_NOTICE, BLE_SYNC_NOTICE_ACK, conn, notice_pkts[n], NULL, 0);
+    }
+#ifdef __ANDROID__
+    if (sync_requested && ctx->sync_request_mid) {
+        JNIEnv *env = NULL;
+        if ((*ctx->jvm)->GetEnv(ctx->jvm, (void **)&env, JNI_VERSION_1_6) == JNI_OK && env) {
+            (*env)->CallVoidMethod(env, ctx->module_ref, ctx->sync_request_mid);
+            if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        }
+    }
+#endif
 }
 
 /*
@@ -429,6 +499,7 @@ static int ble_build_and_send(ble_ctx_t *ctx, uint16_t command, uint8_t flags,
         attached = 1;
     }
 
+    pthread_mutex_lock(&ctx->send_lock);
     for (size_t pos = 0; pos < frame_len; pos += BLE_CHUNK_SIZE) {
         size_t chunk_len = frame_len - pos;
         if (chunk_len > BLE_CHUNK_SIZE) chunk_len = BLE_CHUNK_SIZE;
@@ -445,14 +516,17 @@ static int ble_build_and_send(ble_ctx_t *ctx, uint16_t command, uint8_t flags,
             break;
         }
     }
+    pthread_mutex_unlock(&ctx->send_lock);
 
     if (attached) (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
 #else /* iOS / generic host: hand each chunk to the C write callback in order */
+    pthread_mutex_lock(&ctx->send_lock);
     for (size_t pos = 0; pos < frame_len; pos += BLE_CHUNK_SIZE) {
         size_t chunk_len = frame_len - pos;
         if (chunk_len > BLE_CHUNK_SIZE) chunk_len = BLE_CHUNK_SIZE;
         ctx->write_chunk(ctx->write_ud, frame + pos, chunk_len);
     }
+    pthread_mutex_unlock(&ctx->send_lock);
 #endif
     free(frame);
     return ret;
@@ -624,6 +698,9 @@ done:
     return got_hello ? 0 : -1;
 }
 
+static int ble_command_one(ble_ctx_t *ctx, uint16_t command, uint8_t *data, size_t datalen,
+                           uint8_t **reply_data, size_t *replylen);
+
 int libambit_protocol_command_ble(ambit_object_t *object, uint16_t command,
                                    uint8_t *data, size_t datalen,
                                    uint8_t **reply_data, size_t *replylen,
@@ -640,6 +717,16 @@ int libambit_protocol_command_ble(ambit_object_t *object, uint16_t command,
     }
     ble_ctx_t *ctx = (ble_ctx_t *)object->transport_ctx;
 
+    pthread_mutex_lock(&ctx->cmd_lock);
+    int ret = ble_command_one(ctx, command, data, datalen, reply_data, replylen);
+    pthread_mutex_unlock(&ctx->cmd_lock);
+    return ret;
+}
+
+/* One command and its reply. The caller holds ctx->cmd_lock. */
+static int ble_command_one(ble_ctx_t *ctx, uint16_t command, uint8_t *data, size_t datalen,
+                           uint8_t **reply_data, size_t *replylen)
+{
     pthread_mutex_lock(&ctx->lock);
     ctx->reply_ready = 0;
     free(ctx->reply_payload);
