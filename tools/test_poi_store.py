@@ -27,6 +27,11 @@ class FakeWatch:
 
     def command(self, command, payload=b"", **_):
         self.sent.append(command)
+        if command == W.CMD_DEVICE_INFO:
+            return b"Emu".ljust(16, b"\0") + b"8A153C5111000900".ljust(16, b"\0") + bytes(12)
+        if command == W.CMD_POI_CLEAR:           # 0x0b04 alone: both POI lists emptied
+            self.records.clear()
+            return b""
         if command == W.CMD_POI_COUNT:
             return len(self.records).to_bytes(4, "little")
         if command == W.CMD_POI_WRITE:
@@ -149,6 +154,78 @@ class PoiStore(unittest.TestCase):
         watch = FakeWatch()
         ble_pois.add_poi(watch, "A", 50.6, 3.0)
         self.assertFalse(W.check_poi_count(watch, 2))
+
+
+
+class RemovePoi(unittest.TestCase):
+    """Removing a POI on the desktop (write_nav.remove_pois), the Android flow's twin."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.watch = FakeWatch()
+        for name, lat in (("SommetA", 50.6), ("Maceira Leiria", 39.69), ("SommetB", 50.61)):
+            ble_pois.add_poi(self.watch, name, lat, 3.06)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_the_others_stay_byte_for_byte_and_a_copy_is_saved_first(self):
+        before = W.read_pois(self.watch)
+        kept = [r for r in self.watch.records if not r.startswith(b"SommetA\0")]
+        result = W.remove_pois(self.watch, [("SommetA", 50.6, 3.06)], self.tmp.name)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["left"], 2)
+        self.assertEqual(sorted(self.watch.records), sorted(kept))
+        self.assertTrue(result["backup"].endswith(".bin"))
+        self.assertIn("/POIs/8A153C5111000900/POIs_pre_", result["backup"])
+        self.assertEqual(pathlib.Path(result["backup"]).read_bytes(), before)
+        self.assertLess(self.watch.sent.index(W.CMD_POI_READ), self.watch.sent.index(W.CMD_POI_CLEAR))
+
+    def test_of_two_identical_pois_one_stays(self):
+        ble_pois.add_poi(self.watch, "SommetA", 50.6, 3.06)
+        self.assertTrue(W.remove_pois(self.watch, [("SommetA", 50.6, 3.06)], self.tmp.name)["ok"])
+        self.assertEqual(sorted(names(W.read_pois(self.watch))),
+                         ["Maceira Leiria", "SommetA", "SommetB"])
+
+    def test_a_poi_not_there_writes_nothing(self):
+        result = W.remove_pois(self.watch, [("SommetA", 50.7, 3.06)], self.tmp.name)
+        self.assertFalse(result["ok"])
+        self.assertIn("SommetA", result["error"])
+        self.assertNotIn(W.CMD_POI_CLEAR, self.watch.sent)
+        self.assertEqual(len(self.watch.records), 3)
+
+    def test_empty_entries_are_cleared_too(self):
+        self.watch.records.append(b"N" * 16 + b"\0\0" + b"2026-10-25T09:00:00\0" + bytes(13))
+        result = W.remove_pois(self.watch, [("SommetB", 50.61, 3.06)], self.tmp.name)
+        self.assertEqual((result["ok"], result["left"], result["emptyCleared"]), (True, 2, 1))
+        self.assertEqual(sorted(names(W.read_pois(self.watch))), ["Maceira Leiria", "SommetA"])
+
+    def test_the_last_poi_leaves_an_empty_list(self):
+        for name, lat in (("SommetA", 50.6), ("Maceira Leiria", 39.69), ("SommetB", 50.61)):
+            self.assertTrue(W.remove_pois(self.watch, [(name, lat, 3.06)], self.tmp.name)["ok"])
+        self.assertEqual(self.watch.records, [])
+
+    def test_a_write_the_watch_did_not_keep_puts_the_list_back(self):
+        real = self.watch.command
+        state = {"writes": 0}
+
+        def flaky(command, payload=b"", **k):
+            if command == W.CMD_POI_WRITE:
+                state["writes"] += 1
+                if state["writes"] == 1:
+                    return b""                   # acked, not stored (0x0b25 always acks)
+            return real(command, payload, **k)
+        self.watch.command = flaky
+        before = sorted(self.watch.records)
+        result = W.remove_pois(self.watch, [("SommetA", 50.6, 3.06)], self.tmp.name)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["restored"])
+        self.assertEqual(sorted(self.watch.records), before)
+
+    def test_the_routes_command_is_never_sent(self):
+        W.remove_pois(self.watch, [("SommetA", 50.6, 3.06)], self.tmp.name)
+        self.assertFalse({0x0B16, 0x0B18} & set(self.watch.sent))
 
 
 if __name__ == "__main__":

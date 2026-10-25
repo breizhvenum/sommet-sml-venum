@@ -117,6 +117,52 @@ void PoiService::addPoi(const QString &name, double lat, double lon, int type)
     });
 }
 
+void PoiService::removePoi(const QString &name, double lat, double lon)
+{
+    if (m_removing)
+        return;
+    QJsonObject body;
+    body[QStringLiteral("name")] = name;
+    body[QStringLiteral("lat")] = lat;
+    body[QStringLiteral("lon")] = lon;
+
+    m_removing = true;
+    m_removeResultText.clear();
+    emit removeResultChanged();
+
+    QNetworkRequest req(QUrl(kBackendBase + QStringLiteral("/api/pois/remove")));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    QNetworkReply *reply = m_network.post(req, QJsonDocument(body).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, name] {
+        reply->deleteLater();
+        const QJsonObject obj = QJsonDocument::fromJson(reply->readAll()).object();
+        m_removing = false;
+        m_removeOk = obj.value(QStringLiteral("ok")).toBool();
+        if (m_removeOk) {
+            const int left = obj.value(QStringLiteral("left")).toInt();
+            const int empty = obj.value(QStringLiteral("emptyCleared")).toInt();
+            // Same wording as the Android app's poiRemoved().
+            m_removeResultText = left == 1
+                ? QStringLiteral("“%1” removed. 1 POI left on the watch.").arg(name)
+                : QStringLiteral("“%1” removed. %2 POIs left on the watch.").arg(name, QString::number(left));
+            if (empty == 1)
+                m_removeResultText += QStringLiteral(" An empty entry (a name too long for the "
+                                                     "watch) was removed too.");
+            else if (empty > 1)
+                m_removeResultText += QStringLiteral(" %1 empty entries (a name too long for "
+                                                     "the watch) were removed too.").arg(empty);
+        } else {
+            m_removeResultText = obj.value(QStringLiteral("error")).toString();
+            if (m_removeResultText.isEmpty())
+                m_removeResultText = reply->error() != QNetworkReply::NoError
+                    ? backendErrorText(reply) : QStringLiteral("Removing the POI failed.");
+        }
+        emit removeResultChanged();
+        // Re-read either way: after a failure the list may have been put back.
+        refresh();
+    });
+}
+
 void PoiService::importGpxFile(const QUrl &fileUrl)
 {
     m_importedPois.clear();

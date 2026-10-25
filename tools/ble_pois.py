@@ -21,7 +21,7 @@ import sys
 
 from write_nav import (
     CMD_POI_WRITE, POI_ENTRY, build_poi_record, poi_count, poi_write_payload_add, read_pois,
-    show_entries,
+    remove_pois, show_entries,
 )
 
 
@@ -51,6 +51,13 @@ def add_poi(link, name, lat, lon):
         return {"ok": False, "dry_run": link.dry_run,
                 "error": f"the watch did not keep the POI ({before} -> {after} POIs)"}
     return {"ok": True, "dry_run": link.dry_run, "count": after}
+
+
+
+def remove_poi(link, name, lat, lon, backup_dir):
+    """The BLE path for POST /api/pois/remove: write_nav.remove_pois() against the bridge, the
+    same steps the USB path runs through `write_nav.py delpoi`."""
+    return remove_pois(link, [(name, lat, lon)], backup_dir)
 
 
 def main():

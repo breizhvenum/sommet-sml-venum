@@ -44,6 +44,28 @@ PageFlickable {
         onAccepted: root.saveError = LocalFileService.saveText(selectedFile, pendingGpx)
     }
 
+    // Removing a POI from the watch (2026-10-25, the Android app's Remove ported): a confirm
+    // first, then PoiService.removePoi() - the backend saves a copy of the list and writes it
+    // back without this one.
+    ThemedDialog {
+        id: removePoiDialog
+        property var poi: null
+        title: qsTr("Remove from the watch")
+        standardButtons: Dialog.Yes | Dialog.No
+        width: 380
+        contentItem: Text {
+            width: 340
+            wrapMode: Text.WordWrap
+            color: Theme.text
+            font.pixelSize: Theme.fontSizeBody
+            text: removePoiDialog.poi
+                  ? qsTr("Remove “%1” from the watch? Sommet saves a copy of the POIs first.")
+                        .arg(removePoiDialog.poi.name)
+                  : ""
+        }
+        onAccepted: if (poi) PoiService.removePoi(poi.name, poi.lat, poi.lon)
+    }
+
     // POI note dialog - what happens to POIs sent to the watch (André, 2026-08-17), the same
     // little "i" affordance as the Routes page. Opens next to its badge.
     ThemedDialog {
@@ -722,6 +744,17 @@ PageFlickable {
                     font.pixelSize: Theme.fontSizeCaption
                     text: qsTr("Couldn't save: %1").arg(root.saveError)
                 }
+                Text {
+                    visible: !HomeViewModel.isGarmin
+                             && (PoiService.removing || PoiService.removeResultText.length > 0)
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: Theme.fontSizeCaption
+                    color: PoiService.removing ? Theme.mutedText
+                         : PoiService.removeOk ? Theme.success : Theme.error
+                    text: PoiService.removing ? qsTr("Removing the POI from the watch...")
+                                              : PoiService.removeResultText
+                }
 
                 Repeater {
                     model: onDevicePoiCard.loading ? [] : onDevicePoiCard.onDevicePois
@@ -758,7 +791,9 @@ PageFlickable {
                                 text: Icons.poiTypeGlyph(modelData.type !== undefined ? modelData.type : 17)
                             }
                             Text {
-                                width: parent.width - onWatchPoiGlyph.width - poiExportButton.width - Theme.spacingSmall * 2
+                                width: parent.width - onWatchPoiGlyph.width - poiExportButton.width
+                                       - (poiRemoveButton.visible ? poiRemoveButton.width + Theme.spacingSmall : 0)
+                                       - Theme.spacingSmall * 2
                                 anchors.verticalCenter: parent.verticalCenter
                                 elide: Text.ElideRight
                                 text: modelData.name
@@ -778,6 +813,17 @@ PageFlickable {
                                     poiExportDialog.currentFile =
                                         LocalFileService.downloadsLocation + "/" + safeName + ".gpx"
                                     poiExportDialog.open()
+                                }
+                            }
+
+                            RoundedButton {
+                                id: poiRemoveButton
+                                visible: !HomeViewModel.isGarmin && DeviceCapabilities.supportsNavRemove
+                                enabled: !PoiService.removing
+                                text: qsTr("Remove")
+                                onClicked: {
+                                    removePoiDialog.poi = modelData
+                                    removePoiDialog.open()
                                 }
                             }
                         }

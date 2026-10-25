@@ -283,6 +283,7 @@ def demo_ambit():
 # work on the sample (/api/customodes/displays, /mode, /multisport) are not in this list.
 DEMO_REFUSED_POSTS = {
     "/api/settings", "/api/pois", "/api/routes", "/api/time/sync",
+    "/api/pois/remove", "/api/routes/remove",
     "/api/restore", "/api/backup", "/api/firmware/flash", "/api/sync/apply",
     "/api/apps/install", "/api/apps/logging", "/api/hrv/install",
     "/api/workout/install", "/api/trainingprogram/install",
@@ -881,8 +882,7 @@ def run_tool(script, args, timeout=180, stdin=None, product_id=None, serial=None
     """Runs one of tools/*.py exactly as a person at a terminal would. Returns
     (returncode, stdout, stderr); never raises for a nonzero exit, the caller decides what
     that means for the specific tool. Serialized across all callers via WATCH_LOCK - see its
-    own comment for why. `stdin`, when given, is a string fed to the tool's stdin (set_pois.py
-    reads its POI list that way).
+    own comment for why. `stdin`, when given, is a string fed to the tool's stdin.
 
     `product_id` (optional, 2026-09-04): pin THIS call to a specific watch on the bus without
     touching the global SELECTED_PRODUCT_ID. Used to read a second connected watch (e.g. a Peak
@@ -1000,6 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return p in {
             "/api/pois", "/api/routes", "/api/settings", "/api/device/select",
+            "/api/pois/remove", "/api/routes/remove",
             "/api/time/sync", "/api/apps/install", "/api/apps/logging", "/api/apps/import",
             "/api/hrv/install", "/api/workout/install", "/api/restore",
             "/api/firmware/flash", "/api/gpstrackpod/retrieve", "/api/suuntot6/retrieve",
@@ -1442,7 +1443,7 @@ class Handler(BaseHTTPRequestHandler):
         # A route write also invalidates the PERSISTENT on-disk route-track cache (the in-memory
         # clear above doesn't reach it) so the next /api/nav re-reads the watch, not stale tracks.
         _p = self.path.split("?", 1)[0]
-        if _p in ("/api/routes", "/api/routes/export") or _p.startswith("/api/nav"):
+        if _p in ("/api/routes", "/api/routes/export", "/api/routes/remove") or _p.startswith("/api/nav"):
             try:
                 for _f in ROUTE_CACHE_DIR.glob("*.json"):
                     _f.unlink(missing_ok=True)
@@ -1463,6 +1464,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_route_write(body)
         elif self.path == "/api/routes/export":
             self._handle_route_export(body)
+        elif self.path == "/api/routes/remove":
+            self._handle_route_remove(body)
         elif self.path == "/api/router/color":
             self._handle_router_color(body)
         elif self.path == "/api/route/slice":
@@ -1674,6 +1677,8 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_workout_install(body)
         elif self.path == "/api/pois":
             self._handle_poi_add(body)
+        elif self.path == "/api/pois/remove":
+            self._handle_poi_remove(body)
         elif self.path == "/api/gpstrackpod/retrieve":
             self._handle_gpstrackpod_retrieve(body)
         elif self.path == "/api/gpstrackpod/logs":
@@ -3949,10 +3954,10 @@ class Handler(BaseHTTPRequestHandler):
         """Body: {"name": str, "lat": float, "lon": float, "type"?: str/int}. This was an honest 501 until
         2026-08-11: the working implementation existed only in the Android app's native
         ambit3_add_poi_to_watch() (confirmed on real hardware 2026-08-06, Milestone 6).
-        write_nav.py's `addpoi` is that same algorithm ported back: read the whole POI
-        list (0x0b24), rewrite it with the new record first (0x0b25), never touching the
-        Waypoints/Routes flash regions and needing no commit. The read-before-write is
-        load-bearing - skipping it is what erased the POI store on 2026-08-04."""
+        write_nav.py's `addpoi` sends only the new record through 0x0b25, which appends it,
+        and checks the count (0x0b02) went up by one, never touching the Waypoints/Routes
+        flash regions and needing no commit. Sending the whole list again, as it once did,
+        doubled every POI, since 0x0b25 appends (see run_addpoi)."""
         name = (body.get("name") or "").strip()
         try:
             lat = float(body.get("lat"))
@@ -4015,6 +4020,80 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
         self._send_json(200, {"ok": True, "transport": "ble", **result})
+
+    def _handle_poi_remove(self, body):
+        """Body: {"name", "lat", "lon"}, the POI as /api/pois lists it. Removes that one POI and
+        keeps every other one byte for byte (write_nav.remove_pois: a copy of the list goes to
+        BACKUP_DIR/POIs/<serial>/ first, 0x0b04 empties the list, the rest goes back and the
+        count is checked; a failed write puts the copy back). Never touches the routes. Ambit3
+        family only, like the Android twin PoiService.removePoisFromWatch()."""
+        name = body.get("name") or ""
+        try:
+            lat = float(body.get("lat"))
+            lon = float(body.get("lon"))
+        except (TypeError, ValueError):
+            self._send_json(400, {"ok": False, "error": "missing/invalid \"lat\"/\"lon\""})
+            return
+        if not name.strip():
+            self._send_json(400, {"ok": False, "error": "which POI? \"name\" is empty"})
+            return
+
+        if use_ble():
+            sys.path.insert(0, str(TOOLS_DIR))
+            import ble_pois                                  # noqa: PLC0415
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                result = ble_pois.remove_poi(ble_bridge.bridge, name, lat, lon, BACKUP_DIR)
+            except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError) as exc:
+                self._send_json(502, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200 if result.get("ok") else 502, {"transport": "ble", **result})
+            return
+
+        if selected_is_legacy():
+            self._send_json(409, {"ok": False, "error":
+                                  "Removing a POI is not available on the Ambit1 and Ambit2 yet."})
+            return
+        code, out, err = run_tool("write_nav.py", [
+            "delpoi", "--name", name, "--lat", f"{lat:.7f}", "--lon", f"{lon:.7f}",
+            "--backup-dir", str(BACKUP_DIR), "--write"])
+        result = self._parse_last_json_line(out) or {
+            "ok": False, "error": (err or out or "").strip() or "POI removal failed"}
+        self._send_json(200 if code == 0 and result.get("ok") else 502,
+                        {**result, "raw_output": out})
+
+    def _handle_route_remove(self, body):
+        """Body: {"name"}, the route as /api/nav lists it. Rewrites the routes database with every
+        other route, or resets it when none is left, and puts back the POIs that write erases
+        (write_nav.remove_route). Ambit3 family only, like the Android twin
+        NavigationService.removeRouteFromWatch()."""
+        name = body.get("name") or ""
+        if not name.strip():
+            self._send_json(400, {"ok": False, "error": "which route? \"name\" is empty"})
+            return
+
+        if use_ble():
+            sys.path.insert(0, str(TOOLS_DIR))
+            import ble_routes                                # noqa: PLC0415
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                result = ble_routes.delete_route(ble_bridge.bridge, name)
+            except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError) as exc:
+                self._send_json(502, {"ok": False, "error": str(exc)})
+                return
+            self._send_json(200 if result.get("ok") else 502, {"transport": "ble", **result})
+            return
+
+        if selected_is_legacy():
+            self._send_json(409, {"ok": False, "error":
+                                  "Removing a route is not available on the Ambit1 and Ambit2 yet."})
+            return
+        code, out, err = run_tool("write_nav.py", ["delroute", "--name", name, "--write"],
+                                  timeout=300)
+        result = self._parse_last_json_line(out) or {
+            "ok": False, "error": (err or out or "").strip() or "route removal failed"}
+        self._send_json(200 if code == 0 and result.get("ok") else 502,
+                        {**result, "raw_output": out})
 
     def _handle_route_write(self, body):
         """Body: {"name": str, "gpx": "<gpx xml text>", "confirm": bool}. Without `confirm`,

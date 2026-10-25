@@ -41,6 +41,12 @@ class PoiService : public QObject
     // hardware output, not guessed at ahead of a real watch check the way that comment
     // originally worried about.
     Q_PROPERTY(QVariantList onWatchPois READ onWatchPois NOTIFY dataChanged)
+    // Removing one on-watch POI (Ambit3 family, 2026-10-25): the backend saves a copy of the
+    // list, then writes it back without that POI (POST /api/pois/remove). The Android twin is
+    // PoiService.removePoisFromWatch().
+    Q_PROPERTY(bool removing READ removing NOTIFY removeResultChanged)
+    Q_PROPERTY(QString removeResultText READ removeResultText NOTIFY removeResultChanged)
+    Q_PROPERTY(bool removeOk READ removeOk NOTIFY removeResultChanged)
 
 public:
     explicit PoiService(QObject *parent = nullptr);
@@ -54,6 +60,9 @@ public:
     QVariantList importedPois() const { return m_importedPois; }
     QString importError() const { return m_importError; }
     QVariantList onWatchPois() const { return m_onWatchPois; }
+    bool removing() const { return m_removing; }
+    QString removeResultText() const { return m_removeResultText; }
+    bool removeOk() const { return m_removeOk; }
 
     Q_INVOKABLE void refresh();
     // `type` is the Ambit POI type byte 0-17 (the icon the watch shows); default 17
@@ -61,6 +70,8 @@ public:
     // working unchanged - only the manual add-POI form passes a chosen type.
     Q_INVOKABLE void addPoi(const QString &name, double lat, double lon, int type = 17);
     Q_INVOKABLE void importGpxFile(const QUrl &fileUrl);
+    // `lat`/`lon` exactly as onWatchPois lists them: the backend matches the stored values.
+    Q_INVOKABLE void removePoi(const QString &name, double lat, double lon);
     // A single real <wpt> GPX, for LocalFileService.saveText() - built locally (no backend
     // round trip) since a one-point GPX needs nothing the watch/network has to supply beyond
     // the name/lat/lon this page already has in memory.
@@ -72,6 +83,7 @@ signals:
     void lastErrorChanged();
     void addResultChanged();
     void importedPoisChanged();
+    void removeResultChanged();
 
 private:
     QNetworkAccessManager m_network;
@@ -84,6 +96,9 @@ private:
     QVariantList m_importedPois;
     QString m_importError;
     QVariantList m_onWatchPois;
+    bool m_removing = false;
+    QString m_removeResultText;
+    bool m_removeOk = false;
 
     void setLoading(bool value);
     static QVariantList parseOnWatchPois(const QString &rawOutput);

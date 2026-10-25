@@ -23,6 +23,7 @@ PageFlickable {
     property var bryton: null          // null = no Bryton mounted
     property var legacyRoutes: []
     property string busyKey: ""
+    property string removingKey: ""     // the watch route being removed (busyKey is set too)
     property string msg: ""
     property string sortKey: "name"
     readonly property bool watchHere: HomeViewModel.connected
@@ -299,14 +300,16 @@ PageFlickable {
     ThemedDialog {
         id: deleteDialog
         property var item: null
-        title: qsTr("Delete route")
+        title: item && item.src === "watch" ? qsTr("Remove from the watch") : qsTr("Delete route")
         standardButtons: Dialog.Yes | Dialog.No
         width: 380
         contentItem: Text {
             width: 340; wrapMode: Text.WordWrap
             color: Theme.text; font.pixelSize: Theme.fontSizeBody
             text: deleteDialog.item
-                  ? (deleteDialog.item.src === "bryton"
+                  ? (deleteDialog.item.src === "watch"
+                     ? qsTr("Remove “%1” from the watch? The other routes and the POIs stay.").arg(deleteDialog.item.name)
+                     : deleteDialog.item.src === "bryton"
                      ? qsTr("Delete “%1” from the Bryton?").arg(deleteDialog.item.name)
                      : deleteDialog.item.src === "etrex"
                      ? qsTr("Delete “%1” (%2) from the eTrex's SD card?").arg(deleteDialog.item.name).arg(deleteDialog.item.fileName)
@@ -321,6 +324,20 @@ PageFlickable {
                 root.api("POST", "/api/bryton/tracks/delete", { name: item.name }, r => r.ok ? root.refresh() : root.msg = r.error)
             else if (item.src === "etrex")
                 root.msg = GarminService.deleteRouteFromSdCard(item.fileName)   // SD card only; "" = done
+            else if (item.src === "watch") {
+                // The routes database is rewritten without it and the POIs put back
+                // (POST /api/routes/remove, write_nav.remove_route); the Android app's Remove.
+                const key = item.key
+                root.busyKey = key
+                root.removingKey = key
+                root.msg = ""
+                root.api("POST", "/api/routes/remove", { name: item.name }, r => {
+                    if (root.busyKey === key) root.busyKey = ""
+                    root.removingKey = ""
+                    if (r.ok) RouteService.refresh()
+                    else root.msg = r.error || qsTr("Removing the route failed.")
+                })
+            }
         }
     }
 
@@ -334,6 +351,8 @@ PageFlickable {
         // eTrex: only files on the SD card (never internal memory - GARMIN_USB_IMPORT_SPEC.md).
         ThemedMenuItem { text: qsTr("Delete…"); visible: itemMenu.item.src === "saved" || itemMenu.item.src === "bryton"
                                                          || (itemMenu.item.src === "etrex" && itemMenu.item.onSdCard === true)
+                                                         || (itemMenu.item.src === "watch" && !root.legacyWatch
+                                                             && DeviceCapabilities.supportsNavRemove)
                          onTriggered: { deleteDialog.item = itemMenu.item; deleteDialog.open() } }
     }
 
@@ -422,7 +441,8 @@ PageFlickable {
                                     id: actions
                                     spacing: Theme.spacingSmall
                                     RoundedButton {
-                                        text: root.busyKey === routeDelegate.route.key ? qsTr("Exporting…") : qsTr("Export")
+                                        text: root.removingKey === routeDelegate.route.key ? qsTr("Removing…")
+                                              : root.busyKey === routeDelegate.route.key ? qsTr("Exporting…") : qsTr("Export")
                                         enabled: root.busyKey === "" && (routeDelegate.route.src !== "magene" || !!routeDelegate.route.libraryId)
                                         onClicked: root.exportItem(routeDelegate.route)
                                     }

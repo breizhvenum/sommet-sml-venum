@@ -37,7 +37,7 @@ import tempfile
 
 from write_nav import (
     build_routes, check_memory_map, existing_routes_as_gpx, nav_summary_json, put_pois_back,
-    read_memory_map, read_nav_flash, read_pois, send_plan, waypoint_size,
+    read_memory_map, read_nav_flash, read_pois, remove_route, send_plan, waypoint_size,
 )
 
 
@@ -91,6 +91,12 @@ def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
 
     return {"ok": True, "messages": len(link.sent), "dry_run": link.dry_run,
             "routes_kept": len(temp_paths), "routes_added": len(gpx_paths)}
+
+
+def delete_route(link, name):
+    """The BLE path for POST /api/routes/remove: write_nav.remove_route() against the bridge,
+    the same steps the USB path runs through `write_nav.py delroute`."""
+    return remove_route(link, name)
 
 
 def main():

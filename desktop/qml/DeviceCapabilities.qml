@@ -55,6 +55,11 @@ QtObject {
     // byte for byte) plus the route's waypoints in the waypoint list. Kailash has no routes.
     property bool supportsRouteWrite: !_isKailash
 
+    // Removing one POI or one route from the watch (2026-10-25): Ambit3 family / Traverse only,
+    // through write_nav.py delpoi/delroute (the Android app's own removal, ported). Ambit1/2
+    // keep theirs in the legacy waypoint region, which this does not write.
+    property bool supportsNavRemove: !_isKailash && !_isLegacy
+
     // Backup & Restore is write_nav.py's nav --save/restore over the SBEM flash regions.
     // BackupPage used to read supportsRoutes for this, which was fine while the two were the
     // same predicate; they are separated because excluding Kailash from Routes would

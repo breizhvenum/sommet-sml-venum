@@ -1067,6 +1067,203 @@ def run_addpoi(args):
     return 0
 
 
+# Alone, 0x0b04 empties both POI lists and nothing else (Ambit3 firmware 0x1a65c: two
+# FUN_000688ca calls). Checked on André's Peak 2026-10-25: the routes read back identical.
+CMD_POI_CLEAR = CMD_NAV_COMMIT
+POI_BACKUPS_KEPT = 30     # copies kept per watch, as the Android app keeps (WatchBackup.ts)
+
+
+def poi_place(record):
+    """(name, lat_e7, lon_e7) of one POI record, the fields build_poi_record() lays out; None
+    for an empty entry or one too short to be a POI."""
+    off, fields = 0, []
+    for _ in range(3):                       # name, route name, timestamp, each NUL-ended
+        end = record.find(b"\0", off)
+        if end < 0:
+            return None
+        fields.append(record[off:end])
+        off = end + 1
+    off += 5                                 # route index, type, sub type, type index, flags
+    if len(record) < off + 8:
+        return None
+    return (fields[0].decode("utf-8", "replace"),
+            int.from_bytes(record[off:off + 4], "little", signed=True),
+            int.from_bytes(record[off + 4:off + 8], "little", signed=True))
+
+
+def poi_records_to_keep(reply, targets):
+    """The records of `reply` to keep when removing `targets` ([(name, lat, lon)], degrees):
+    each target takes the first POI with its name and coordinates (to 1e-7 degree, how the
+    watch stores them) not already taken, so of two identical POIs one stays. Empty entries go
+    too: nothing in them can be written back. Returns (keep, empty_count); raises LookupError
+    naming a target that is not there. Same rule as the Android app's poisToKeep()."""
+    records = ([data for entry_id, data in F.sbem_entries(reply) if entry_id == POI_ENTRY]
+               if reply and F.SBEM_MAGIC in reply else [])
+    places = [poi_place(r) if r else None for r in records]
+    taken = set()
+    for name, lat, lon in targets:
+        want = (name, int(round(lat * 1e7)), int(round(lon * 1e7)))
+        hit = next((i for i, place in enumerate(places) if i not in taken and place == want), None)
+        if hit is None:
+            raise LookupError(f"“{name}” is no longer on the watch. Read the list again.")
+        taken.add(hit)
+    keep = [r for i, r in enumerate(records) if i not in taken and r]
+    return keep, sum(1 for r in records if not r)
+
+
+def serial_from_device_info(reply):
+    """The serial in a device-info reply (model[16], serial[16], ...), "" when there is none."""
+    return reply[16:32].split(b"\0")[0].decode("ascii", "replace").strip() if len(reply) >= 32 else ""
+
+
+def save_poi_backup(reply, serial, backup_dir):
+    """Saves a raw POI read as <backup_dir>/POIs/<serial>/POIs_pre_<stamp>.bin, the layout the
+    Android app uses, and keeps the newest POI_BACKUPS_KEPT. Returns the path."""
+    import time
+    folder = pathlib.Path(backup_dir) / "POIs" / (serial or "unknown")
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"POIs_pre_{time.strftime('%Y%m%d-%H%M%S')}.bin"
+    path.write_bytes(reply)
+    for old in sorted(folder.glob("POIs_pre_*.bin"))[:-POI_BACKUPS_KEPT]:
+        old.unlink(missing_ok=True)
+    return path
+
+
+def set_poi_records(link, records):
+    """Replaces the watch's POI list with `records` (in the order read): 0x0b04 empties it,
+    the count must then be 0, the records go back reversed in entries of at most 254 bytes
+    (poi_entry_payloads, the order that kept André's list in order on 2026-10-25), and the
+    count must match. Raises RuntimeError when a step does not hold."""
+    link.command(CMD_POI_CLEAR, b"")
+    left = poi_count(link)
+    if left not in (None, 0):
+        raise RuntimeError(f"the watch still holds {left} POIs after emptying the list")
+    for payload in poi_entry_payloads(list(reversed(records))):
+        link.command(CMD_POI_WRITE, payload)
+    if not check_poi_count(link, len(records)):
+        raise RuntimeError(f"the watch did not keep the {len(records)} POIs written back")
+
+
+def remove_pois(link, targets, backup_dir):
+    """Removes `targets` ([(name, lat, lon)]) from an Ambit3-family watch, keeping every other
+    POI byte for byte: device info, read the list (0x0b24, every page), save a copy, then
+    set_poi_records() with the rest. If that fails after the list was emptied, the copy is
+    written back once. Never touches the routes. The Android twin is
+    PoiService.removePoisFromWatch(), tested on André's Peak 2026-10-25.
+
+    Returns {ok, left, emptyCleared, backup}, or {ok: False, error, backup?}."""
+    info = link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
+    reply = read_pois(link)
+    try:
+        keep, empty = poi_records_to_keep(reply, targets)
+    except LookupError as e:
+        return {"ok": False, "error": str(e)}
+    backup = None if link.dry_run else str(save_poi_backup(
+        reply, serial_from_device_info(info) or getattr(link, "opened_serial", None) or "", backup_dir))
+    try:
+        set_poi_records(link, keep)
+    except (RuntimeError, TimeoutError, OSError) as e:
+        records = [d for i, d in F.sbem_entries(reply) if i == POI_ENTRY and d]
+        try:
+            set_poi_records(link, records)
+            return {"ok": False, "error": f"Removing failed ({e}). The POIs were put back "
+                    "as they were.", "restored": True, "backup": backup}
+        except (RuntimeError, TimeoutError, OSError) as e2:
+            return {"ok": False, "error": f"Removing failed and the POIs could not be put "
+                    f"back ({e}; {e2}). A copy is saved in {backup}.", "restored": False,
+                    "backup": backup}
+    return {"ok": True, "dry_run": link.dry_run, "left": len(keep), "emptyCleared": empty,
+            "backup": backup}
+
+
+def run_delpoi(args):
+    """CLI for remove_pois(): one POI, by --name --lat --lon as `pois` lists it. Prints a
+    JSON result on the last line. Dry-run by default (it then reads nothing either)."""
+    if not args.name or args.lat is None or args.lon is None:
+        raise SystemExit("delpoi: --name, --lat and --lon are required")
+    link = Link(dry_run=not args.write, verbose=args.verbose, product_id=args.product_id)
+    if args.write:
+        print("!! REAL WRITE requested")
+        link.open()
+    else:
+        print("dry-run mode: not a byte will be emitted")
+    result = remove_pois(link, [(args.name, args.lat, args.lon)],
+                         args.backup_dir or pathlib.Path.home() / "AmbitAppBackups")
+    print(json.dumps(result))
+    return 0 if result.get("ok") else 1
+
+
+def routes_to_keep_as_gpx(flash, name):
+    """GPX of every route in `flash` except the one named `name`, compared as the watch stores
+    names (15 UTF-8 bytes, stored_name). Same rule as the Android app's existingRoutesToKeep().
+    Raises LookupError when no route has that name."""
+    header = F.RouteHeader.parse(flash.read(F.ROUTE_BASE, 32))
+    count = header.route_count if header.magic == F.ROUTE_HEADER_MAGIC else 0
+    keep, found = [], False
+    for i in range(count):
+        d = F.RouteDescriptor.parse(flash.read(F.ROUTE_DESC + 52 * i, 52))
+        if stored_name(d.name) == stored_name(name):
+            found = True
+        else:
+            keep.append(route_to_gpx(flash, i))
+    if not found:
+        raise LookupError(f"“{name}” is no longer on the watch. Read the list again.")
+    return keep
+
+
+def remove_route(link, name):
+    """Removes route `name` from an Ambit3-family watch: the routes database is rewritten with
+    every other route (or reset when none is left), and the POIs that write erases are put
+    back (put_pois_back). Refuses when the watch's memory map is not the one these addresses
+    are for. Real writes only: a dry-run has no routes to read. The Android twin is
+    NavigationService.removeRouteFromWatch(), tested on André's Peak 2026-10-25.
+
+    Returns {ok, routesLeft, poisPutBack} or {ok: False, error}."""
+    import tempfile
+    if link.dry_run:
+        return {"ok": False, "error": "removing a route needs the watch: run it with --write"}
+    link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
+    pois = read_pois(link)
+    if not check_memory_map(read_memory_map(link)):
+        return {"ok": False, "error": "this watch's memory map is not the one Sommet writes "
+                "routes for; nothing was written"}
+    try:
+        keep = routes_to_keep_as_gpx(read_nav_flash(link), name)
+    except LookupError as e:
+        return {"ok": False, "error": str(e)}
+    wsize = waypoint_size(link)
+    paths = []
+    try:
+        for text in keep:
+            with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
+                f.write(text)
+                paths.append(f.name)
+        flash, layout = (build_routes([pathlib.Path(p) for p in paths], None, wsize) if paths
+                         else build_reset(wsize))
+        send_plan(link, flash, layout)
+    finally:
+        for path in paths:
+            pathlib.Path(path).unlink(missing_ok=True)
+    back = put_pois_back(link, pois)
+    if back is None:
+        return {"ok": False, "routesLeft": len(keep),
+                "error": "the route is removed, but the watch did not keep every POI put back"}
+    return {"ok": True, "routesLeft": len(keep), "poisPutBack": back}
+
+
+def run_delroute(args):
+    """CLI for remove_route(): `delroute --name NAME --write`. JSON result on the last line."""
+    if not args.name:
+        raise SystemExit("delroute: --name is required")
+    link = Link(dry_run=not args.write, verbose=args.verbose, product_id=args.product_id)
+    if args.write:
+        print("!! REAL WRITE requested")
+        link.open()
+    result = remove_route(link, args.name)
+    print(json.dumps(result))
+    return 0 if result.get("ok") else 1
+
+
 def read_memory_map(link):
     """Addresses and sizes declared by the watch. In dry-run the reference values,
     the ones from the capture, are returned."""
@@ -1426,7 +1623,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action",
                         choices=("reset", "route", "settings", "pois",
-                                 "logbook", "nav", "restore", "addpoi"))
+                                 "logbook", "nav", "restore", "addpoi", "delpoi", "delroute"))
     parser.add_argument("gpx", nargs="*")
     parser.add_argument("--name", metavar="NAME",
                         help="addpoi: the POI's name as the watch will show it")
@@ -1439,6 +1636,9 @@ def main():
                              "Car, Crossroads, Beginning, End, Food, Forest, Geocache, "
                              "Lodging, Meadow, Mountain, Sight, Road, Rock, Water, Waypoint). "
                              "Default Waypoint (17), what the watch itself uses.")
+    parser.add_argument("--backup-dir", metavar="DIR", default=None,
+                        help="delpoi: where the copy of the POI list goes (default "
+                             "~/AmbitAppBackups; saved as POIs/<serial>/POIs_pre_<time>.bin)")
     parser.add_argument("--write", action="store_true",
                         help="actually emits; without this option nothing is sent")
     parser.add_argument("--meta", metavar="CAPTURE",
@@ -1494,6 +1694,10 @@ def main():
         return run_nav(args)
     if args.action == "addpoi":
         return run_addpoi(args)
+    if args.action == "delpoi":
+        return run_delpoi(args)
+    if args.action == "delroute":
+        return run_delroute(args)
     if args.action in QUERIES:
         if args.write:
             parser.error(f"{args.action} is read-only, --write has nothing to write")
