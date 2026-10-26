@@ -587,6 +587,9 @@ void DeviceService::connectBle(bool forget)
     m_blePendingPasskeyDevice.clear();
     m_bleError.clear();
     m_bleAttemptSeconds = 0;
+    // A request the watch makes from now on starts a sync; one the daemon saw earlier doesn't.
+    m_bleWatching = false;
+    m_bleLastNoticeAt = QDateTime::currentMSecsSinceEpoch() / 1000.0;
     emit bleStateChanged();
 
     QJsonObject body;
@@ -616,11 +619,22 @@ void DeviceService::pollBleStatus()
         m_network.get(QNetworkRequest(backendUrl(QStringLiteral("/api/ble/status"))));
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         reply->deleteLater();
+        if (!m_bleAttempting && !m_bleWatching)
+            return;  // disconnectBle()/forgetBle() was called while this request was in flight
         const auto obj = QJsonDocument::fromJson(reply->readAll()).object();
         if (reply->error() != QNetworkReply::NoError) {
+            if (m_bleWatching) {
+                // The backend restarting, most likely: try again a little later.
+                m_blePollTimer.start(5 * kBleWatchIntervalMs);
+                return;
+            }
             m_bleAttempting = false;
             m_bleError = backendErrorText(reply);
             emit bleStateChanged();
+            return;
+        }
+        if (m_bleWatching) {
+            watchBleStatus(obj);
             return;
         }
         m_bleAttemptSeconds += 1;
@@ -648,6 +662,9 @@ void DeviceService::pollBleStatus()
             // refresh() already gets, applied to the one other query that had been missing
             // it.
             checkGpsOrbitStatus();
+            // Keep listening: the watch's requests to sync, the link dropping and coming back.
+            m_bleWatching = true;
+            watchBleStatus(obj);
             return;
         }
         if (!m_bleAttempting) {
@@ -667,6 +684,9 @@ void DeviceService::pollBleStatus()
             m_bleError = tr("No watch found within %1s - check it's on the Bluetooth pairing "
                              "screen and try again").arg(kBleSearchTimeoutS);
             emit bleStateChanged();
+            // The daemon keeps looking: a watch that links later is still picked up.
+            m_bleWatching = true;
+            m_blePollTimer.start(kBleWatchIntervalMs);
             return;
         }
         // Keep polling - a fresh pairing's passkey wait can take longer than any single
@@ -676,9 +696,50 @@ void DeviceService::pollBleStatus()
     });
 }
 
+void DeviceService::watchBleStatus(const QJsonObject &obj)
+{
+    // The daemon stopped (Bluetooth turned off in the app, or it exited): nothing to hear.
+    if (!obj.value(QStringLiteral("running")).toBool(true)) {
+        m_bleWatching = false;
+        if (m_bleHandshakeDone || m_bleSubscribed) {
+            m_bleHandshakeDone = m_bleSubscribed = false;
+            emit bleStateChanged();
+        }
+        return;
+    }
+    const bool done = obj.value(QStringLiteral("handshake_done")).toBool();
+    const bool subscribed = obj.value(QStringLiteral("subscribed")).toBool();
+    // A pairing can start later too (the passkey dialog opens on this, HomePage.qml).
+    const auto pendingVal = obj.value(QStringLiteral("pending_passkey_device"));
+    const QString pending = pendingVal.isNull() ? QString() : pendingVal.toString();
+    if (done != m_bleHandshakeDone || subscribed != m_bleSubscribed
+            || pending != m_blePendingPasskeyDevice) {
+        const bool cameBack = done && !m_bleHandshakeDone;
+        m_bleHandshakeDone = done;
+        m_bleSubscribed = subscribed;
+        m_blePendingPasskeyDevice = pending;
+        if (cameBack)
+            m_bleError.clear();        // "No watch found" no longer holds
+        emit bleStateChanged();
+        if (cameBack) {
+            refresh();                 // linked late, or called back by itself: read it again
+            checkGpsOrbitStatus();
+        }
+    }
+    // last_sync_notice_at is null until the watch first asks; toDouble() reads that as 0.
+    const double noticeAt = obj.value(QStringLiteral("last_sync_notice_at")).toDouble();
+    if (noticeAt > m_bleLastNoticeAt) {
+        m_bleLastNoticeAt = noticeAt;
+        if (m_bleHandshakeDone)
+            emit bleSyncRequested();
+    }
+    m_blePollTimer.start(kBleWatchIntervalMs);
+}
+
 void DeviceService::disconnectBle()
 {
     m_blePollTimer.stop();
+    m_bleWatching = false;
     m_bleAttempting = false;
     m_bleSubscribed = false;
     m_bleHandshakeDone = false;
@@ -694,6 +755,7 @@ void DeviceService::disconnectBle()
 void DeviceService::forgetBle()
 {
     m_blePollTimer.stop();
+    m_bleWatching = false;
     m_bleAttempting = false;
     m_bleSubscribed = false;
     m_bleHandshakeDone = false;

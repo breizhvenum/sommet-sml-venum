@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QQmlEngine>
@@ -333,6 +334,10 @@ signals:
     void suuntoT6ExperimentEnabledChanged();
     void demoModeChanged();
     void bleStateChanged();
+    // The watch asked to sync over Bluetooth: "Sync now" on the watch, or its own check every
+    // 30 min while linked (0x1201 notices, answered by the daemon). Main.qml runs the sync,
+    // as the tablet does (🟣38).
+    void bleSyncRequested();
     void bleExperimentEnabledChanged();
     void markSyncedEnabledChanged();
     void intervalsEnabledChanged();
@@ -416,10 +421,17 @@ private:
     // fresh pairing's own passkey wait).
     QTimer m_blePollTimer;
     static constexpr int kBlePollIntervalMs = 1000;
+    // Once the handshake is done, the same poll keeps going, slower, for as long as the
+    // daemon runs: it is how the app hears the watch ask to sync (bleSyncRequested) and sees
+    // the link drop and come back. The watch hangs up ~60 s after an unanswered request.
+    bool m_bleWatching = false;
+    double m_bleLastNoticeAt = 0;      // the daemon's last_sync_notice_at already seen (epoch s)
+    static constexpr int kBleWatchIntervalMs = 2000;
     // Real request, 2026-08-13 - see pollBleStatus()'s own comment for why this only cuts
     // off the never-subscribed case, not a passkey wait already in progress.
     static constexpr int kBleSearchTimeoutS = 30;
     void pollBleStatus();
+    void watchBleStatus(const QJsonObject &status);   // the poll once linked (m_bleWatching)
 
     void setLoading(bool value);
     void setLastError(const QString &friendlyMessage, const QString &technicalDetail);

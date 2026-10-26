@@ -153,6 +153,51 @@ ApplicationWindow {
         }
     }
 
+    // The watch asks to sync over Bluetooth ("Sync now" on the watch, or its own check every
+    // 30 min while linked): run the same sync as the Sync button, as the tablet does (🟣38).
+    // Unanswered, the watch hangs up about a minute later. Not within a minute of the last one
+    // (it asks several times in a row); while another watch job runs, the request waits for it,
+    // up to watchSyncWait's limit, since the watch would be gone by then.
+    property double _lastWatchSyncAt: 0
+    function _watchJobRunning() {
+        return ActivityService.loading || RouteService.loading || PoiService.loading
+            || SettingsWriteService.loading || CustomModesService.loading
+            || TrainingProgramService.loading || TrainingProgramService.installing
+            || TrainingPlanSync.pending || KailashService.loading
+    }
+    function _runWatchSync() {
+        if (window._watchJobRunning()) return false
+        watchSyncWait.stop()
+        window._lastWatchSyncAt = Date.now()
+        console.info("[ble] the watch asked to sync")
+        ActivityService.refresh()
+        return true
+    }
+    Connections {
+        target: DeviceService
+        function onBleSyncRequested() {
+            if (Date.now() - window._lastWatchSyncAt < 60000 || watchSyncWait.running) return
+            if (!window._runWatchSync()) {
+                console.info("[ble] the watch asked to sync; waiting for another watch job")
+                watchSyncWait.tries = 0
+                watchSyncWait.start()
+            }
+        }
+    }
+    Timer {
+        id: watchSyncWait
+        property int tries: 0
+        interval: 2000
+        repeat: true
+        onTriggered: {
+            if (window._runWatchSync()) return
+            if (++tries >= 20) {       // 40 s
+                stop()
+                console.info("[ble] the watch's sync request lapsed: another watch job ran too long")
+            }
+        }
+    }
+
     // Automatic intervals.icu sync (André, 2026-08-25: "make the sync automatic"). Runs the same
     // CLOUD operations as Settings → Sync now (import gear/activities, export activities), on a
     // timer while the app is open, so he never has to press it. Interval is 15 minutes, NOT the
