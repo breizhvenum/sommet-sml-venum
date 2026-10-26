@@ -207,11 +207,60 @@ On macOS and Windows, start the backend yourself before launching the binary:
 `cd desktop/backend && python3 server.py` (use `python` on Windows). Only the **Linux**
 build is confirmed on real hardware so far.
 
-### Linux: a Bluetooth watch that won't reconnect after sleep
+### Linux: pairing a watch over Bluetooth (the password prompt)
 
-With Linux's default Bluetooth settings, the watch pairs and syncs, then refuses the computer
-after it sleeps. Sommet can fix this itself, or you can turn on Bluetooth privacy once - see
-[Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md) for the commands.
+**What you'll see.** The first time you pair a Suunto watch with Sommet over Bluetooth on
+Linux (**Pair another device by Bluetooth → Suunto watch**), your system asks for your
+password once, with the usual administrator prompt. A notification says why just before it,
+and the prompt names `sommet-bluetooth-privacy`. Your Bluetooth mouse, keyboard or
+headphones may disconnect for a second, then come back.
+
+**Order matters:** type the password **first**, and only then choose **Pair → Pair with app**
+on the watch, and type the code it shows into Sommet. The watch only offers to pair for a
+short time; if you start it on the watch before the password, it can run out, and you
+choose Pair with app again.
+
+**Why Sommet asks.** When a phone pairs with the watch, it tells the watch its Bluetooth
+identity, and the watch saves the pairing under that address. Linux only does this when its
+Bluetooth *privacy* setting is on, and it is off by default. With privacy off, the watch saves
+the pairing under the address `00:00:00:00:00:00`. Everything works until the link drops
+(the watch sleeps, or goes out of range). From then on the watch refuses the computer, and
+you'd have to pair again every time. Sommet says so with *"The watch no longer accepts this
+computer's pairing"*.
+
+**What Sommet does with your password.** Changing privacy needs administrator rights, so
+Sommet runs one short script as root through `pkexec` (`tools/bt_privacy.py`). It:
+
+1. turns Bluetooth privacy on, unless it already is. This switches Bluetooth off for about
+   a second.
+2. waits while the watch pairs and syncs.
+3. turns privacy off again, the same way, once the watch's link drops by itself. It also
+   turns it off if you stop Bluetooth in Sommet, if Sommet quits, or after 30 minutes at
+   most. If privacy was already on, Sommet leaves it on.
+
+The watch keeps the address it saved while privacy was on, so it reconnects later with
+privacy off: tested on an Ambit3 Peak, through a link drop and a computer restart. Nothing
+in `/etc` is changed, and a restart of the computer or of Bluetooth also resets privacy to
+your setting.
+
+**When Sommet doesn't ask.**
+- A watch is already paired with this computer: that's a reconnect, not a pairing.
+- `pkexec` or `btmgmt` isn't installed (`btmgmt` is in `bluez` on Ubuntu and Debian, and in
+  `bluez-utils` on Arch).
+- You cancel the prompt. The pairing still works, but the watch won't reconnect after the
+  link drops.
+
+**Doing it yourself instead.** If you'd rather not give Sommet your password, turn privacy on
+once in `/etc/bluetooth/main.conf`, or only for the pairing with `btmgmt`. The commands, and
+how to undo them, are in
+[Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md).
+
+**Already paired before this?** A watch paired with privacy off has the `00:00:00:00:00:00`
+pairing. Pair it once more: on the watch **Bluetooth → Unpair → Forget**, in Sommet
+**Forget Bluetooth device**, then pair again as above.
+
+Android phones and iPhones send their identity when pairing (seen in Bluetooth captures of the
+Suunto app), so they aren't affected. macOS and Windows haven't been tested with this yet.
 
 ### macOS: the "Input Monitoring" permission
 

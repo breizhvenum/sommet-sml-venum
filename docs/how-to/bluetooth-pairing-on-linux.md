@@ -4,7 +4,7 @@
 
 **Why.** When a phone pairs with the watch, it tells the watch its Bluetooth identity, and the watch saves the pairing under that address. Linux doesn't do this when its Bluetooth privacy setting is off, which is the default. The watch then saves the pairing under the address `00:00:00:00:00:00`. The link works until the watch sleeps. After that, the computer reconnects from its real address, the watch finds no pairing for it, and drops the link.
 
-Sommet can also fix this from its side by writing the computer's address into the watch's pairing record. If you'd rather fix Linux itself, follow the steps below once.
+Sommet handles this for you when you pair from the app: it asks for your password once and turns privacy on just for the pairing (see the README, "Linux: pairing a watch over Bluetooth"). If you'd rather not give Sommet your password, use one of the fixes below.
 
 ## Fix it once: turn on Bluetooth privacy
 

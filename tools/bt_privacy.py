@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Linux only: turns Bluetooth privacy on while a watch pairs, then off again (André,
+2026-10-26: "do it but document it well on the read me").
+
+Why: with BlueZ's default `Privacy = off` the kernel gives the watch no identity when
+pairing (net/bluetooth/smp.c adds SMP_DIST_ID_KEY only with HCI_PRIVACY). The Ambit3 then
+files the pairing under MAC 00:00:00:00:00:00 - read off André's Peak over USB - and refuses
+the computer once the link drops. Paired with privacy on, the watch keeps the computer's real
+address, and reconnects work afterwards with privacy off again (verified on the Peak,
+2026-10-26: reconnected without a code after a drop and a reboot).
+
+Changing privacy needs root and a powered-off adapter, so one `pkexec` prompt runs a short
+bash script as root: privacy on (unless it already is), then it waits on its stdin; a line or
+EOF (Sommet quitting) or 30 minutes turns privacy off again. Each change switches Bluetooth
+off for about a second, so a mouse or keyboard reconnects.
+
+    ./tools/bt_privacy.py check     -> {"ok", "needed", "reason"}   (read-only)
+    ./tools/bt_privacy.py window    turn it on, wait for Enter, turn it off (by hand)
+"""
+
+import json
+import pathlib
+import platform
+import shutil
+import subprocess
+import sys
+import threading
+import time
+
+MAX_WINDOW_S = 1800         # the root script turns privacy off by itself after this
+
+# The root script, its own file so the password prompt names it ("sommet-bluetooth-privacy")
+# instead of /bin/bash. Runs under pkexec; prints ALREADY | ON | FAILED, then OFF at the end.
+ROOT_SCRIPT = pathlib.Path(__file__).resolve().parent / "sommet-bluetooth-privacy"
+
+
+def suunto_paired():
+    """True when this computer already holds a Suunto watch pairing (a reconnect, not a
+    fresh pairing). bt_bonds.py's own rule for what counts as Suunto."""
+    import bt_bonds                                          # noqa: PLC0415
+    try:
+        return any(d["kind"] == "suunto" for d in bt_bonds.list_devices())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def check():
+    """(needed, reason): whether a pairing about to start should get the privacy window."""
+    if platform.system() != "Linux":
+        return False, "not Linux"
+    for tool in ("pkexec", "btmgmt", "bluetoothctl"):
+        if not shutil.which(tool):
+            return False, f"{tool} is not installed"
+    if suunto_paired():
+        return False, "a Suunto watch is already paired with this computer"
+    return True, "fresh pairing on Linux"
+
+
+NOTICE = ("Type your password first, THEN choose Pair with app on the watch. Sommet needs it "
+          "once, to turn on Bluetooth privacy while your watch pairs - without it, the watch "
+          "won't reconnect to this computer after it sleeps. Privacy goes off again after the "
+          "pairing; Bluetooth may blink off for a second.")
+
+
+def notify():
+    """A desktop notification saying why the password prompt is coming (best-effort)."""
+    if shutil.which("notify-send"):
+        try:
+            subprocess.run(["notify-send", "-a", "Sommet", "-i", "bluetooth",
+                            "Sommet: pairing your watch", NOTICE], timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+class PrivacyWindow:
+    """One pkexec'd root script. open() blocks until privacy is on (or the prompt is
+    cancelled); close() turns it off again. Safe to close() twice."""
+
+    def __init__(self, log=print):
+        self.log = log
+        self.proc = None
+        self.state = "idle"     # on | already | declined | failed | unavailable | off
+
+    def open(self, prompt_timeout=120):
+        btmgmt = shutil.which("btmgmt")
+        notify()
+        try:
+            self.proc = subprocess.Popen(
+                ["pkexec", str(ROOT_SCRIPT), btmgmt],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True)
+        except OSError as exc:
+            self.state = "unavailable"
+            self.log(f"Bluetooth privacy: could not start pkexec ({exc})")
+            return self.state
+        line = [None]
+        reader = threading.Thread(target=lambda: line.__setitem__(0, self.proc.stdout.readline()),
+                                  daemon=True)
+        reader.start()
+        reader.join(prompt_timeout)
+        word = (line[0] or "").strip()
+        if word in ("ON", "ALREADY", "FAILED"):
+            self.state = {"ON": "on", "ALREADY": "already", "FAILED": "failed"}[word]
+            if word == "ALREADY":                       # nothing to undo; the script has ended
+                self.proc.wait(timeout=10)
+                self.proc = None
+        else:
+            # Cancelled prompt (pkexec exits 126), no polkit agent (127), or no answer.
+            code = self.proc.poll()
+            self.state = "declined" if code == 126 else "unavailable"
+            if code is None:
+                self.proc.kill()
+            self.proc = None
+        self.log({"on": "Bluetooth privacy on for this pairing",
+                  "already": "Bluetooth privacy was already on - leaving it as it is",
+                  "failed": "Bluetooth privacy did not turn on - the watch may not reconnect "
+                            "by itself after this pairing",
+                  "declined": "Bluetooth privacy: password prompt cancelled - pairing without "
+                              "it; the watch may not reconnect by itself (README: Linux "
+                              "Bluetooth)",
+                  "unavailable": "Bluetooth privacy: no password prompt available - pairing "
+                                 "without it (README: Linux Bluetooth)"}[self.state])
+        return self.state
+
+    def close(self):
+        proc, self.proc = self.proc, None
+        if proc is None:
+            return
+        try:
+            proc.stdin.write("\n")
+            proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+        try:
+            proc.wait(timeout=40)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        if self.state == "on":
+            self.log("Bluetooth privacy off again")
+        self.state = "off"
+
+
+def run_window(window, status, restart, on_done=lambda: None, poll_s=2.0, idle_s=1200):
+    """Closes `window` at the right moment, from a background thread. `status()` = the
+    daemon's status dict; `restart()` restarts the daemon after the adapter power-cycle.
+    Closes when: the paired watch's link drops by itself after a session; the daemon stops;
+    no session within `idle_s`; or MAX_WINDOW_S - 60 s overall."""
+    def watch():
+        began = time.monotonic()
+        had_session = False
+        while window.proc is not None:
+            time.sleep(poll_s)
+            s = status()
+            if not s.get("running"):
+                break
+            had_session = had_session or bool(s.get("handshake_done"))
+            if had_session and not s.get("linked_device"):
+                break
+            age = time.monotonic() - began
+            if (not had_session and age > idle_s) or age > MAX_WINDOW_S - 60:
+                break
+        cycled = window.state in ("on", "failed")       # turning it off power-cycles the adapter
+        was_running = bool(status().get("running"))
+        window.close()
+        if cycled and was_running:
+            restart()
+        on_done()
+    t = threading.Thread(target=watch, daemon=True)
+    t.start()
+    return t
+
+
+def main(argv=None):
+    a = argv if argv is not None else sys.argv[1:]
+    if a == ["check"]:
+        needed, reason = check()
+        print(json.dumps({"ok": True, "needed": needed, "reason": reason}))
+        return 0
+    if a == ["window"]:
+        w = PrivacyWindow()
+        if w.open() in ("on", "already", "failed"):
+            input("Pair the watch now, then press Enter to turn privacy off again... ")
+            w.close()
+        return 0
+    print("usage: bt_privacy.py check | window")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -468,6 +468,62 @@ def device_key():
     return hex(SELECTED_PRODUCT_ID) if SELECTED_PRODUCT_ID is not None else "watch"
 
 
+# Linux: Bluetooth privacy on while a watch pairs, off again after (tools/bt_privacy.py has the
+# why: without it the watch files the pairing under 00:00:00:00:00:00 and won't reconnect).
+# "state": idle | not needed: <reason> | on | already | failed | declined | unavailable | off.
+_BT_PRIVACY = {"window": None, "state": "idle"}
+
+
+def _ble_log(message):
+    """One line in the Bluetooth daemon's log, stamped like the daemon's own lines."""
+    try:
+        with open(ble_bridge.bridge._log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%m-%d %H:%M:%S')}   {message}\n")
+    except OSError:
+        pass
+
+
+def _open_bt_privacy_window():
+    """Before the daemon starts: on a fresh pairing on Linux, one password prompt turns
+    privacy on. Blocks while the prompt is up; never fails the connect."""
+    if _BT_PRIVACY["window"] is not None:
+        return
+    sys.path.insert(0, str(TOOLS_DIR))
+    import bt_privacy                                        # noqa: PLC0415
+    needed, reason = bt_privacy.check()
+    if not needed:
+        _BT_PRIVACY["state"] = f"not needed: {reason}"
+        return
+    window = bt_privacy.PrivacyWindow(log=_ble_log)
+    _BT_PRIVACY["state"] = window.open()
+    if window.proc is not None:
+        _BT_PRIVACY["window"] = window
+
+
+def _watch_bt_privacy_window():
+    """After the daemon starts: privacy goes off again once the paired watch's link drops by
+    itself (or the daemon stops, or time runs out), then the daemon restarts on the
+    power-cycled adapter."""
+    window = _BT_PRIVACY["window"]
+    if window is None:
+        return
+    sys.path.insert(0, str(TOOLS_DIR))
+    import bt_privacy                                        # noqa: PLC0415
+
+    def restart():
+        ble_bridge.bridge.stop()
+        try:
+            ble_bridge.bridge.start()
+        except ble_bridge.BleBridgeError as exc:
+            _ble_log(f"restart after Bluetooth privacy off failed: {exc}")
+
+    def done():
+        _BT_PRIVACY["window"] = None
+        _BT_PRIVACY["state"] = "off"
+
+    bt_privacy.run_window(window, ble_bridge.bridge.status, restart, on_done=done)
+
+
 def ble_device_key():
     """The watch on the Bluetooth link, named the way the cable names it: the serial from its
     hello (8A153C5111000900 on the Peak), which is also the serial the Android app uses over
@@ -4651,7 +4707,7 @@ class Handler(BaseHTTPRequestHandler):
         heartbeat. "subscribed" is the real "transport is live" signal (the watch has
         subscribed to our notify characteristic) - same meaning as
         AmbitBleModule.kt's nativeInitStarted gate on the Android side."""
-        self._send_json(200, ble_bridge.bridge.status())
+        self._send_json(200, {**ble_bridge.bridge.status(), "bt_privacy": _BT_PRIVACY["state"]})
 
     def _handle_ble_logs_summary(self):
         """GET /api/ble/logs/summary - the first real post-handshake 0x1200 request in the
@@ -4692,12 +4748,18 @@ class Handler(BaseHTTPRequestHandler):
         request would leave the UI with nothing to poll while that's happening. The caller
         polls GET /api/ble/status instead - "subscribed"/"handshake_done"/
         "pending_passkey_device" are exactly the states a connect UI needs to show."""
+        fresh = not ble_bridge.bridge.status().get("running")
+        if fresh:
+            _open_bt_privacy_window()
         try:
             ble_bridge.bridge.start(forget=bool(body.get("forget", False)))
         except ble_bridge.BleBridgeError as exc:
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
-        self._send_json(200, {"ok": True, **ble_bridge.bridge.status()})
+        if fresh:
+            _watch_bt_privacy_window()
+        self._send_json(200, {"ok": True, **ble_bridge.bridge.status(),
+                              "bt_privacy": _BT_PRIVACY["state"]})
 
     def _handle_ble_disconnect(self):
         """POST /api/ble/disconnect - tears the daemon down. Leaves the watch's bond alone;
