@@ -32,6 +32,10 @@ const TIMESTAMP_ID = 0x130;
 const DAYS = 30;
 const NO_COUNT = 0xffffffff;
 const STORE_KEY = 'health.watchSteps';
+// Each watch's own days, kept apart: {watch serial: {date: value}} (see storeByWatch).
+const STEPS_BY_WATCH_KEY = 'health.watchStepsByWatch';
+const ACTIVITY_BY_WATCH_KEY = 'health.watchActivityByWatch';
+const RECOVERY_BY_WATCH_KEY = 'health.watchRecoveryByWatch';
 // Ambit3 Peak, Sport, Run, Vertical (the model name the watch itself reports). The Kailash,
 // Traverse and Ambit1/2 number their fields differently or keep no daily steps.
 const AMBIT3_MODELS = ['emu', 'finch', 'ibisbill', 'kaka'];
@@ -155,15 +159,59 @@ export async function loadWatchSteps(): Promise<Array<{ date: string; steps: num
   }
 }
 
-/** Merges a read into the store: a newer read of a day replaces the older one (today's count
- *  grows; past days don't change on the watch). */
-export async function mergeWatchSteps(days: StepsDay[]): Promise<void> {
-  const byDate = new Map<string, number>();
-  for (const e of await loadWatchSteps()) byDate.set(e.date, e.steps);
-  for (const d of days) byDate.set(d.date, d.steps);
-  const list = Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, steps]) => ({ date, steps }));
-  await AsyncStorage.setItem(STORE_KEY, JSON.stringify(list));
+export type ByWatch = Record<string, Record<string, number>>;
+
+async function readJson(key: string): Promise<any> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Each watch's own days, kept apart at `byKey` (André, 2026-10-26: "it should import from any,
+ *  so we can merge"). The list Health shows (`mergedKey`, [{date, <field>}]) takes, per day, the
+ *  highest value any watch has: a watch left on the desk reports 0 for a day the one on the
+ *  wrist counted and must not erase it, and two watches worn together aren't counted twice. A
+ *  newer read of a day replaces that watch's older one (today's count grows). The list kept
+ *  before watches were told apart stays, as "earlier". Same rule as the desktop's
+ *  ActivityService storeByWatch(). */
+async function storeByWatch(byKey: string, mergedKey: string, field: 'steps' | 'kcal',
+                            watch: string, days: Array<{ date: string; value: number }>): Promise<ByWatch> {
+  const stored = await readJson(byKey);
+  const all: ByWatch = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  if (!stored) {
+    const earlier: Record<string, number> = {};
+    const list = await readJson(mergedKey);
+    if (Array.isArray(list)) {
+      for (const e of list) {
+        if (e && typeof e.date === 'string' && typeof e[field] === 'number') earlier[e.date] = e[field];
+      }
+    }
+    if (Object.keys(earlier).length > 0) all.earlier = earlier;
+  }
+  const mine = { ...(all[watch] ?? {}) };
+  for (const d of days) mine[d.date] = d.value;
+  all[watch] = mine;
+  await AsyncStorage.setItem(byKey, JSON.stringify(all));
+
+  const merged = new Map<string, number>();
+  for (const perDay of Object.values(all)) {
+    for (const [date, v] of Object.entries(perDay ?? {})) {
+      if (typeof v === 'number' && (!merged.has(date) || v > merged.get(date)!)) merged.set(date, v);
+    }
+  }
+  const list = Array.from(merged.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, value]) => ({ date, [field]: value }));
+  await AsyncStorage.setItem(mergedKey, JSON.stringify(list));
+  return all;
+}
+
+/** Stores one watch's read of its daily steps; returns every watch's days. */
+export async function mergeWatchSteps(days: StepsDay[], watch = 'watch'): Promise<ByWatch> {
+  return storeByWatch(STEPS_BY_WATCH_KEY, STORE_KEY, 'steps', watch,
+                      days.map(d => ({ date: d.date, value: d.steps })));
 }
 
 /** Every day of watch activity Sommet has read, oldest first: [{date, kcal}]. */
@@ -189,16 +237,73 @@ export async function loadWatchRecovery(): Promise<WatchRecovery | null> {
   }
 }
 
-/** Stores a read's activity days (a newer read of a day replaces the older one) and its
- *  recovery snapshot. */
-export async function mergeWatchActivity(decoded: WatchSteps): Promise<void> {
+/** Stores one watch's read of its activity days and its recovery snapshot. Health shows the
+ *  snapshot of the watch with the most steps on the snapshot's day - the one that was worn, not
+ *  one left on the desk at 0 h - and the newest on a tie. */
+export async function mergeWatchActivity(decoded: WatchSteps, watch = 'watch',
+                                         stepsByWatch?: ByWatch): Promise<void> {
+  await storeByWatch(ACTIVITY_BY_WATCH_KEY, ACTIVITY_KEY, 'kcal', watch,
+                     decoded.activity.map(d => ({ date: d.date, value: d.kcal })));
+  const stored = await readJson(RECOVERY_BY_WATCH_KEY);
+  const snaps: Record<string, WatchRecovery> =
+    stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  if (decoded.recovery) {
+    snaps[watch] = decoded.recovery;
+    await AsyncStorage.setItem(RECOVERY_BY_WATCH_KEY, JSON.stringify(snaps));
+  }
+  const steps: ByWatch = stepsByWatch ?? ((await readJson(STEPS_BY_WATCH_KEY)) || {});
+  let best: WatchRecovery | null = null;
+  let bestSteps = -1;
+  for (const [w, snap] of Object.entries(snaps)) {
+    if (!snap || typeof snap.time !== 'string') continue;
+    const daySteps = steps[w]?.[snap.time.slice(0, 10)] ?? 0;
+    if (daySteps > bestSteps || (daySteps === bestSteps && best && snap.time > best.time)) {
+      best = snap;
+      bestSteps = daySteps;
+    }
+  }
+  if (best) await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify(best));
+}
+
+/** The watch's activity kcal from Monday to `now`'s day (André, 2026-10-26: "how much activity
+ *  you did this week"), over the merged days. `from` = that Monday, `days` = days with a value. */
+export function weekActivity(kcal: Array<{ date: string; kcal?: number }>, now = new Date()):
+    { kcal: number; days: number; from: string } {
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${
+    String(d.getDate()).padStart(2, '0')}`;
+  const today = ymd(now);
+  const from = addDays(today, -((now.getDay() + 6) % 7));
+  let total = 0;
+  let days = 0;
+  for (const e of kcal) {
+    if (typeof e.kcal === 'number' && e.date >= from && e.date <= today) {
+      total += e.kcal;
+      days++;
+    }
+  }
+  return { kcal: total, days, from };
+}
+
+/** Steps per day from Monday to Sunday of `now`'s week (André, 2026-10-26), for the week bars.
+ *  `steps` = -1 for a day still to come or with no count. */
+export function weekSteps(series: Array<{ date: string; steps?: number }>, now = new Date()):
+    { days: Array<{ date: string; label: string; steps: number; today: boolean }>; total: number; max: number } {
+  const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${
+    String(d.getDate()).padStart(2, '0')}`;
+  const today = ymd(now);
+  const monday = addDays(today, -((now.getDay() + 6) % 7));
   const byDate = new Map<string, number>();
-  for (const e of await loadWatchActivity()) byDate.set(e.date, e.kcal);
-  for (const d of decoded.activity) byDate.set(d.date, d.kcal);
-  const list = Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, kcal]) => ({ date, kcal }));
-  await AsyncStorage.setItem(ACTIVITY_KEY, JSON.stringify(list));
-  if (decoded.recovery) await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify(decoded.recovery));
+  for (const e of series) if (typeof e.steps === 'number') byDate.set(e.date, e.steps);
+  const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  let total = 0;
+  let max = 0;
+  const days = labels.map((label, i) => {
+    const date = addDays(monday, i);
+    const v = date <= today ? byDate.get(date) : undefined;
+    if (v !== undefined) { total += v; max = Math.max(max, v); }
+    return { date, label, steps: v ?? -1, today: date === today };
+  });
+  return { days, total, max };
 }
 
 /** Reads the connected watch's daily steps and stores them. Returns how many days were read,
@@ -210,8 +315,10 @@ export async function syncWatchSteps(): Promise<number> {
     if (!AMBIT3_MODELS.some(c => model.includes(c)) && !model.includes('ambit3')) return 0;
     const decoded = decodeWatchSteps(await readObjectRaw(DEVICE_HISTORY_QUERY));
     if (!decoded) return 0;
-    await mergeWatchSteps(decoded.days);
-    await mergeWatchActivity(decoded);
+    // Each watch's days are kept apart and merged (storeByWatch): its serial names it.
+    const watch = String(info?.serial ?? '').trim() || 'watch';
+    const stepsByWatch = await mergeWatchSteps(decoded.days, watch);
+    await mergeWatchActivity(decoded, watch, stepsByWatch);
     return decoded.days.length;
   } catch (e: any) {
     console.log('[steps] daily steps read failed:', e?.message ?? e);

@@ -14,6 +14,52 @@ Item {
     function lastDate(series) {
         return series && series.length > 0 ? DateFormat.date(series[series.length - 1].date) : ""
     }
+    // "This week" (André, 2026-10-26: "how much activity you did this week"): the watch's daily
+    // activity kcal from Monday to today. The days are already merged over every watch read.
+    readonly property var weekActivity: {
+        const now = new Date()
+        const monday = new Date(now.getFullYear(), now.getMonth(),
+                                now.getDate() - (now.getDay() + 6) % 7)
+        const from = Qt.formatDate(monday, "yyyy-MM-dd")
+        const today = Qt.formatDate(now, "yyyy-MM-dd")
+        const series = HealthService.watchActivity
+        let kcal = 0, days = 0
+        for (let i = 0; i < series.length; ++i) {
+            if (series[i].date >= from && series[i].date <= today) {
+                kcal += series[i].value
+                days++
+            }
+        }
+        return { kcal: kcal, days: days, from: from }
+    }
+    // Steps per day, Monday to Sunday of this week, from the merged steps (watch over the cloud
+    // sources). value -1 = a day still to come or with no count.
+    readonly property var weekSteps: {
+        const now = new Date()
+        const today = Qt.formatDate(now, "yyyy-MM-dd")
+        const byDate = {}
+        const series = HealthService.steps
+        for (let i = 0; i < series.length; ++i)
+            byDate[series[i].date] = series[i].value
+        const days = []
+        let total = 0, max = 0, any = false
+        for (let d = 0; d < 7; ++d) {
+            const day = new Date(now.getFullYear(), now.getMonth(),
+                                 now.getDate() - (now.getDay() + 6) % 7 + d)
+            const key = Qt.formatDate(day, "yyyy-MM-dd")
+            const has = byDate[key] !== undefined && key <= today
+            if (has) {
+                total += byDate[key]
+                max = Math.max(max, byDate[key])
+                any = true
+            }
+            days.push({ label: Qt.locale("en").dayName(day.getDay(), Locale.ShortFormat),
+                        value: has ? byDate[key] : -1, today: key === today })
+        }
+        for (let d = 0; d < days.length; ++d)
+            days[d].max = max
+        return { days: days, total: total, max: max, any: any }
+    }
     // The Ambit3's recovery snapshot from the last watch read: {time, hours, peak, spanHours}.
     readonly property bool hasRecovery: HealthService.watchRecovery.hours !== undefined
     function recoveryText(h) {
@@ -70,7 +116,8 @@ Item {
                 width: parent.width
                 visible: HealthService.rhr.length > 0 || HealthService.steps.length > 0
                          || HealthService.watchActivity.length > 0 || root.hasRecovery
-                Row {
+                // Wraps: with every source on, the tiles are wider than the card.
+                Flow {
                     width: parent.width
                     spacing: Theme.spacingLarge * 2
                     Column {
@@ -109,6 +156,18 @@ Item {
                                color: Theme.text; font.pixelSize: Theme.fontSizeDisplay; font.bold: true }
                         Text { text: root.lastDate(HealthService.watchActivity); color: Theme.mutedText
                                font.pixelSize: Theme.fontSizeCaption }
+                    }
+                    Column {
+                        spacing: 2
+                        // The watch's activity kcal from Monday to today, every watch merged.
+                        visible: root.weekActivity.days > 0
+                        Text { text: qsTr("This week (watch)"); color: Theme.mutedText
+                               font.pixelSize: Theme.fontSizeLabel }
+                        Text { text: Math.round(root.weekActivity.kcal)
+                                     .toLocaleString(Qt.locale("en"), 'f', 0) + qsTr(" kcal")
+                               color: Theme.text; font.pixelSize: Theme.fontSizeDisplay; font.bold: true }
+                        Text { text: qsTr("since Monday ") + DateFormat.date(root.weekActivity.from)
+                               color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption }
                     }
                     Column {
                         spacing: 2
@@ -233,6 +292,73 @@ Item {
                     label: qsTr("Resting heart rate")
                     unit: qsTr(" bpm")
                     series: HealthService.rhr
+                }
+            }
+            // Steps this week (André, 2026-10-26): one bar per day, Monday to Sunday. Days still to
+            // come, and days nothing counted, show a flat stub.
+            Card {
+                width: parent.width
+                visible: root.weekSteps.any
+                variant: "flat"
+                height: 180
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingSmall
+                    spacing: Theme.spacingSmall
+                    Row {
+                        spacing: Theme.spacingSmall
+                        Text { text: qsTr("Steps this week"); color: Theme.text
+                               font.pixelSize: Theme.fontSizeLabel; font.bold: true }
+                        Text { text: Math.round(root.weekSteps.total).toLocaleString(Qt.locale("en"), 'f', 0)
+                               color: Theme.accent; font.pixelSize: Theme.fontSizeLabel; font.bold: true }
+                    }
+                    Row {
+                        id: weekBars
+                        width: parent.width
+                        height: parent.height - y
+                        spacing: Theme.spacingSmall
+                        Repeater {
+                            model: root.weekSteps.days
+                            Column {
+                                id: dayCol
+                                required property var modelData
+                                width: (parent.width - Theme.spacingSmall * 6) / 7
+                                height: parent.height
+                                spacing: 2
+                                Item {
+                                    width: parent.width
+                                    height: dayCol.height - barValue.height - barDay.height - 4
+                                    Rectangle {
+                                        anchors.bottom: parent.bottom
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        width: Math.min(parent.width, 48)
+                                        radius: Theme.radiusSmall / 2
+                                        height: dayCol.modelData.value > 0
+                                                ? Math.max(4, parent.height * dayCol.modelData.value
+                                                              / Math.max(1, dayCol.modelData.max))
+                                                : 4
+                                        color: dayCol.modelData.value > 0 ? Theme.accent : Theme.border
+                                    }
+                                }
+                                Text {
+                                    id: barValue
+                                    width: parent.width
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: dayCol.modelData.value >= 0
+                                          ? Math.round(dayCol.modelData.value).toLocaleString(Qt.locale("en"), 'f', 0) : ""
+                                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
+                                }
+                                Text {
+                                    id: barDay
+                                    width: parent.width
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: dayCol.modelData.label
+                                    color: dayCol.modelData.today ? Theme.text : Theme.mutedText
+                                    font.pixelSize: Theme.fontSizeCaption; font.bold: dayCol.modelData.today
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Card {

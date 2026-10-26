@@ -8,7 +8,7 @@ import { MetricChart } from '../components/MetricChart';
 import { fmtDate } from '../i18n';
 import { fetchWellness, WellnessDay } from '../services/WellnessService';
 import {
-  loadWatchActivity, loadWatchRecovery, loadWatchSteps, type WatchRecovery,
+  loadWatchActivity, loadWatchRecovery, loadWatchSteps, weekActivity, weekSteps, type WatchRecovery,
 } from '../services/AmbitSteps';
 import { isHrStrapAvailable, measureHrv, type HrStrapReading } from '../services/HrStrapService';
 import { isStrapHrvEnabled } from '../services/StrapHrvPref';
@@ -142,6 +142,10 @@ export default function HealthScreen() {
   }, [days]);
 
   const present = METRICS.filter(m => (seriesFor.get(m.key as string) ?? []).length > 0);
+  const week = useMemo(() => weekActivity(days.map(d => ({ date: d.date, kcal: d.watchKcal }))),
+                       [days]);
+  const stepsWeek = useMemo(() => weekSteps(days.map(d => ({ date: d.date, steps: d.steps ?? undefined }))),
+                            [days]);
 
   return (
     <ScrollView
@@ -232,7 +236,7 @@ export default function HealthScreen() {
       )}
 
       {/* Current values first, then the trends - the summary before the detail. */}
-      {(present.length > 0 || recovery) && (
+      {(present.length > 0 || recovery || week.days > 0) && (
         <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
           <View style={styles.tiles}>
             {present.map(m => {
@@ -248,6 +252,16 @@ export default function HealthScreen() {
                 </View>
               );
             })}
+            {/* The watch's activity kcal from Monday to today, every watch merged. */}
+            {week.days > 0 && (
+              <View style={styles.tile}>
+                <Text style={[styles.label, { color: t.mutedText }]}>This week (watch)</Text>
+                <Text style={[styles.big, { color: t.text }]}>{Math.round(week.kcal)} kcal</Text>
+                <Text style={[styles.caption, { color: t.mutedText }]}>
+                  since Monday {fmtDate(week.from) || week.from}
+                </Text>
+              </View>
+            )}
             {/* The watch's "Recovery time" at the last watch read, and its peak over the
                 watch's last 24 h of quarter-hour samples. */}
             {recovery && (
@@ -260,6 +274,34 @@ export default function HealthScreen() {
                 </Text>
               </View>
             )}
+          </View>
+        </View>
+      )}
+
+      {/* Steps this week (André, 2026-10-26): one bar per day, Monday to Sunday. Days still
+          to come, and days nothing counted, show a flat stub. */}
+      {stepsWeek.days.some(d => d.steps >= 0) && (
+        <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
+          <Text style={{ color: t.text, fontSize: v3Type.caption, fontWeight: '700' }}>
+            Steps this week{'  '}
+            <Text style={{ color: t.primary, fontSize: v3Type.caption }}>{Math.round(stepsWeek.total)}</Text>
+          </Text>
+          <View style={styles.bars}>
+            {stepsWeek.days.map(d => (
+              <View key={d.date} style={styles.barCol}>
+                <View style={styles.barArea}>
+                  <View style={{
+                    width: '70%', borderRadius: 4,
+                    height: d.steps > 0 ? `${Math.max(4, (100 * d.steps) / Math.max(1, stepsWeek.max))}%` : 4,
+                    backgroundColor: d.steps > 0 ? t.primary : t.border,
+                  }} />
+                </View>
+                <Text style={[styles.caption, { color: t.mutedText }]}>{d.steps >= 0 ? Math.round(d.steps) : ' '}</Text>
+                <Text style={[styles.caption, { color: d.today ? t.text : t.mutedText, fontWeight: d.today ? '700' : '400' }]}>
+                  {d.label}
+                </Text>
+              </View>
+            ))}
           </View>
         </View>
       )}
@@ -290,4 +332,7 @@ const styles = StyleSheet.create({
   label: { fontSize: v3Type.tiny, fontWeight: '600' },
   big: { fontSize: v3Type.subtitle, fontWeight: '700' },
   caption: { fontSize: v3Type.caption },
+  bars: { flexDirection: 'row', height: 130, marginTop: v3Spacing.small },
+  barCol: { flex: 1, alignItems: 'center' },
+  barArea: { flex: 1, width: '100%', justifyContent: 'flex-end', alignItems: 'center' },
 });

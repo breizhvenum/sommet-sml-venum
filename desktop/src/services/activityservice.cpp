@@ -338,6 +338,51 @@ void ActivityService::readWatchActivities(int productId, const QString &serial,
     });
 }
 
+// Each watch's own days, kept apart: {watch: {date: value}} at byKey (André, 2026-10-26: "it
+// should import from any, so we can merge"). The list Health shows (mergedKey, [{date, value}])
+// takes, per day, the highest value any watch has: a watch left on the desk reports 0 for a day
+// the one on the wrist counted and must not erase it, and two watches worn together aren't
+// counted twice. A newer read of a day replaces that watch's older one (today's count grows).
+// The list kept before watches were told apart stays, as "earlier".
+static QJsonObject storeByWatch(QSettings &s, const QString &byKey, const QString &mergedKey,
+                                const QString &watch, const QMap<QString, double> &days)
+{
+    QJsonObject all = QJsonDocument::fromJson(s.value(byKey).toString().toUtf8()).object();
+    if (!s.contains(byKey)) {
+        QJsonObject earlier;
+        for (const auto &v : QJsonDocument::fromJson(
+                 s.value(mergedKey).toString().toUtf8()).array()) {
+            const auto o = v.toObject();
+            const QString d = o.value(QStringLiteral("date")).toString();
+            if (!d.isEmpty() && o.value(QStringLiteral("value")).isDouble())
+                earlier.insert(d, o.value(QStringLiteral("value")));
+        }
+        if (!earlier.isEmpty())
+            all.insert(QStringLiteral("earlier"), earlier);
+    }
+    QJsonObject mine = all.value(watch).toObject();
+    for (auto it = days.constBegin(); it != days.constEnd(); ++it)
+        mine.insert(it.key(), it.value());
+    all.insert(watch, mine);
+    s.setValue(byKey, QString::fromUtf8(QJsonDocument(all).toJson(QJsonDocument::Compact)));
+
+    QMap<QString, double> merged;
+    for (auto w = all.constBegin(); w != all.constEnd(); ++w) {
+        const QJsonObject perDay = w.value().toObject();
+        for (auto d = perDay.constBegin(); d != perDay.constEnd(); ++d) {
+            const double v = d.value().toDouble();
+            if (!merged.contains(d.key()) || v > merged.value(d.key()))
+                merged.insert(d.key(), v);
+        }
+    }
+    QJsonArray out;
+    for (auto it = merged.constBegin(); it != merged.constEnd(); ++it)
+        out.append(QJsonObject{{QStringLiteral("date"), it.key()},
+                               {QStringLiteral("value"), it.value()}});
+    s.setValue(mergedKey, QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)));
+    return all;
+}
+
 void ActivityService::readWatchSteps(int productId, const QString &serial)
 {
     QString path = QStringLiteral("/api/watch/steps");
@@ -347,7 +392,8 @@ void ActivityService::readWatchSteps(int productId, const QString &serial)
             path += QStringLiteral("&serial=") + QString::fromUtf8(QUrl::toPercentEncoding(serial));
     }
     QNetworkReply *reply = m_network.get(QNetworkRequest(QUrl(kBackendBase + path)));
-    connect(reply, &QNetworkReply::finished, this, [reply] {
+    const QString lastDevice = m_lastDevice;
+    connect(reply, &QNetworkReply::finished, this, [reply, serial, lastDevice] {
         reply->deleteLater();
         if (reply->error() != QNetworkReply::NoError)
             return;
@@ -355,70 +401,76 @@ void ActivityService::readWatchSteps(int productId, const QString &serial)
         // Testing mode's sample days are never stored: they would mix into the real history.
         if (!root.value(QStringLiteral("ok")).toBool() || root.value(QStringLiteral("demo")).toBool())
             return;
-        // health/watchSteps = [{date, value}], one entry per day, kept beyond the watch's own
-        // 30 days. A newer read of a day replaces the older one (today's count grows; past days
-        // don't change on the watch).
+        // Which watch this read is: the serial asked for (cable), the backend's "device" (its
+        // serial over Bluetooth), else the watch the activity read just named.
+        QString watch = !serial.isEmpty() ? serial
+                                          : root.value(QStringLiteral("device")).toString();
+        if (watch.isEmpty())
+            watch = !lastDevice.isEmpty() ? lastDevice : QStringLiteral("watch");
         QSettings s;
-        QMap<QString, double> byDate;
-        for (const auto &v : QJsonDocument::fromJson(
-                 s.value(QStringLiteral("health/watchSteps")).toString().toUtf8()).array()) {
-            const auto o = v.toObject();
-            byDate.insert(o.value(QStringLiteral("date")).toString(),
-                          o.value(QStringLiteral("value")).toDouble());
-        }
+
+        // health/watchSteps: one count per day, kept beyond the watch's own 30 days.
+        QMap<QString, double> steps;
         for (const auto &v : root.value(QStringLiteral("days")).toArray()) {
             const auto o = v.toObject();
             const QString d = o.value(QStringLiteral("date")).toString();
             if (!d.isEmpty() && o.value(QStringLiteral("steps")).isDouble())
-                byDate.insert(d, o.value(QStringLiteral("steps")).toDouble());
+                steps.insert(d, o.value(QStringLiteral("steps")).toDouble());
         }
-        QJsonArray out;
-        for (auto it = byDate.constBegin(); it != byDate.constEnd(); ++it)
-            out.append(QJsonObject{{QStringLiteral("date"), it.key()},
-                                   {QStringLiteral("value"), it.value()}});
-        s.setValue(QStringLiteral("health/watchSteps"),
-                   QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)));
+        const QJsonObject stepsByWatch = storeByWatch(
+            s, QStringLiteral("health/watchStepsByWatch"), QStringLiteral("health/watchSteps"),
+            watch, steps);
 
         // The same read carries the watch's "Activity" display (tools/ambit_steps.py):
-        // health/watchActivity = [{date, value kcal}], one per day, kept like the steps (the
-        // watch keeps 7 days); health/watchRecovery = the latest recovery snapshot
-        // {time, hours, peak} (time = the watch's newest quarter-hour sample).
+        // health/watchActivity = [{date, value kcal}], one per day (the watch keeps 7 days).
+        QMap<QString, double> kcal;
         const auto activity = root.value(QStringLiteral("activity")).toObject();
-        QMap<QString, double> kcalByDate;
-        for (const auto &v : QJsonDocument::fromJson(
-                 s.value(QStringLiteral("health/watchActivity")).toString().toUtf8()).array()) {
-            const auto o = v.toObject();
-            kcalByDate.insert(o.value(QStringLiteral("date")).toString(),
-                              o.value(QStringLiteral("value")).toDouble());
-        }
         for (const auto &v : activity.value(QStringLiteral("week")).toArray()) {
             const auto o = v.toObject();
             const QString d = o.value(QStringLiteral("date")).toString();
             if (!d.isEmpty() && o.value(QStringLiteral("kcal")).isDouble())
-                kcalByDate.insert(d, o.value(QStringLiteral("kcal")).toDouble());
+                kcal.insert(d, o.value(QStringLiteral("kcal")).toDouble());
         }
-        QJsonArray kcalOut;
-        for (auto it = kcalByDate.constBegin(); it != kcalByDate.constEnd(); ++it)
-            kcalOut.append(QJsonObject{{QStringLiteral("date"), it.key()},
-                                       {QStringLiteral("value"), it.value()}});
-        s.setValue(QStringLiteral("health/watchActivity"),
-                   QString::fromUtf8(QJsonDocument(kcalOut).toJson(QJsonDocument::Compact)));
+        storeByWatch(s, QStringLiteral("health/watchActivityByWatch"),
+                     QStringLiteral("health/watchActivity"), watch, kcal);
 
+        // health/watchRecovery = a recovery snapshot {time, hours, peak, spanHours} (time = the
+        // watch's newest quarter-hour sample), kept per watch. Health shows the one from the
+        // watch with the most steps on its snapshot's day - the one that was worn, not one left
+        // on the desk at 0 h - and the newest on a tie.
         const auto recovery = root.value(QStringLiteral("recovery")).toObject();
         const auto samples = recovery.value(QStringLiteral("samples")).toArray();
+        QJsonObject snaps = QJsonDocument::fromJson(
+            s.value(QStringLiteral("health/watchRecoveryByWatch")).toString().toUtf8()).object();
         if (recovery.value(QStringLiteral("hours")).isDouble() && !samples.isEmpty()) {
             double peak = 0;
             for (const auto &v : samples)
                 peak = qMax(peak, v.toObject().value(QStringLiteral("hours")).toDouble());
-            const QJsonObject snap{
+            snaps.insert(watch, QJsonObject{
                 {QStringLiteral("time"),
                  samples.last().toObject().value(QStringLiteral("time")).toString()},
                 {QStringLiteral("hours"), recovery.value(QStringLiteral("hours")).toDouble()},
                 {QStringLiteral("peak"), peak},
-                {QStringLiteral("spanHours"), samples.size() * 0.25}};
-            s.setValue(QStringLiteral("health/watchRecovery"),
-                       QString::fromUtf8(QJsonDocument(snap).toJson(QJsonDocument::Compact)));
+                {QStringLiteral("spanHours"), samples.size() * 0.25}});
+            s.setValue(QStringLiteral("health/watchRecoveryByWatch"),
+                       QString::fromUtf8(QJsonDocument(snaps).toJson(QJsonDocument::Compact)));
         }
+        QJsonObject best;
+        double bestSteps = -1;
+        for (auto it = snaps.constBegin(); it != snaps.constEnd(); ++it) {
+            const QJsonObject snap = it.value().toObject();
+            const QString time = snap.value(QStringLiteral("time")).toString();
+            const double daySteps = stepsByWatch.value(it.key()).toObject()
+                                        .value(time.left(10)).toDouble();
+            if (daySteps > bestSteps || (daySteps == bestSteps
+                    && time > best.value(QStringLiteral("time")).toString())) {
+                best = snap;
+                bestSteps = daySteps;
+            }
+        }
+        if (!best.isEmpty())
+            s.setValue(QStringLiteral("health/watchRecovery"),
+                       QString::fromUtf8(QJsonDocument(best).toJson(QJsonDocument::Compact)));
     });
 }
 
