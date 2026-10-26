@@ -207,6 +207,12 @@ On macOS and Windows, start the backend yourself before launching the binary:
 `cd desktop/backend && python3 server.py` (use `python` on Windows). Only the **Linux**
 build is confirmed on real hardware so far.
 
+### Linux: a Bluetooth watch that won't reconnect after sleep
+
+With Linux's default Bluetooth settings, the watch pairs and syncs, then refuses the computer
+after it sleeps. Sommet can fix this itself, or you can turn on Bluetooth privacy once - see
+[Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md) for the commands.
+
 ### macOS: the "Input Monitoring" permission
 
 On recent macOS, the first time you sync a watch the system may ask you to **allow the app to
