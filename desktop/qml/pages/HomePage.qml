@@ -1148,7 +1148,12 @@ PageFlickable {
                                     { kind: "watch", label: qsTr("Suunto watch"),
                                       hint: DeviceService.bleHandshakeDone
                                             ? qsTr("A watch is already connected by Bluetooth")
-                                            : qsTr("Start “Pair Mobile App” or “Sync now” on the watch"),
+                                            // Linux: a first pairing asks for the password
+                                            // (Bluetooth privacy, tools/bt_privacy.py) BEFORE the
+                                            // watch should start pairing - its window is short.
+                                            : Qt.platform.os === "linux"
+                                              ? qsTr("Type your password if asked, then “Pair with app” (first time) or “Sync now” on the watch")
+                                              : qsTr("Start “Pair with app” or “Sync now” on the watch"),
                                       // Only blocked while a watch is ALREADY connected over
                                       // Bluetooth - a watch on USB doesn't stop pairing one (André,
                                       // 2026-09-26: "greyed out even if the watch is in pair mode").
@@ -1164,12 +1169,13 @@ PageFlickable {
                                             : BikeDevices.brytonBleShown)
                                 delegate: Rectangle {
                                     required property var modelData
-                                    width: 388; height: 64
+                                    width: 388; height: Math.max(64, choiceRow.implicitHeight + Theme.spacingMedium)
                                     radius: Theme.radiusSmall
                                     color: choiceHover.hovered && modelData.enabled ? Theme.cardNested : "transparent"
                                     border.width: 1; border.color: Theme.border
                                     opacity: modelData.enabled ? 1 : 0.45
                                     Row {
+                                        id: choiceRow
                                         anchors.verticalCenter: parent.verticalCenter
                                         x: Theme.spacingMedium
                                         spacing: Theme.spacingMedium
@@ -1185,7 +1191,10 @@ PageFlickable {
                                             anchors.verticalCenter: parent.verticalCenter
                                             Text { text: modelData.label; color: Theme.text
                                                    font.pixelSize: Theme.fontSizeBody; font.bold: true }
+                                            // Wraps: the Linux hint (password first) is two lines.
                                             Text { text: modelData.hint; color: Theme.mutedText
+                                                   width: 388 - Theme.spacingMedium * 3 - 32
+                                                   wrapMode: Text.WordWrap
                                                    font.pixelSize: Theme.fontSizeCaption }
                                         }
                                     }
@@ -1217,8 +1226,14 @@ PageFlickable {
                     // Shared status line for both flows (only one runs at a time).
                     Text {
                         visible: DeviceService.bleAttempting && !DeviceService.bleSubscribed
-                        text: qsTr("Trigger \"Pair Mobile App\" or \"Sync now\" on the watch " +
-                                   "now — its window is short")
+                        text: Qt.platform.os === "linux"
+                              ? qsTr("Type your password first if Sommet asks for it, then choose " +
+                                     "“Pair with app” (first time) or “Sync now” on the watch — " +
+                                     "its window is short")
+                              : qsTr("Choose “Pair with app” (first time) or “Sync now” on the " +
+                                     "watch now — its window is short")
+                        wrapMode: Text.WordWrap
+                        width: parent.width
                         color: Theme.mutedText
                         font.pixelSize: Theme.fontSizeLabel
                     }
@@ -1753,7 +1768,7 @@ PageFlickable {
                         ? qsTr("Forget the Wahoo ELEMNT in Sommet? It comes back the next time you plug it in.")
                       : forgetConfirm.device.kind === "magene"
                         ? qsTr("Forget the Magene C406? It goes back to its pair screen - pair it again from “Pair another device by Bluetooth”.")
-                        : qsTr("Forget %1? To use it over Bluetooth again, pair it from the watch's own menu (“Pair Mobile App”).")
+                        : qsTr("Forget %1? To use it over Bluetooth again, pair it from the watch's own menu (“Pair with app”).")
                               .arg(forgetConfirm.device.name || qsTr("this watch"))
             }
             onAccepted: root.forgetBtDevice(device)
