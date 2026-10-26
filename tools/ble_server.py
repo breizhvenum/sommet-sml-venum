@@ -1340,6 +1340,12 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
     def on_removed(path, interfaces):
         # Forgotten in Sommet (RemoveDevice) before a fresh pairing: no long wait for it.
         if "org.bluez.Device1" in interfaces:
+            # A watch that linked without pairing is a temporary device: when its link ends,
+            # BlueZ deletes it without a Connected=false first (seen 2026-10-26 14:21, after
+            # a fresh connect with no pairing). Treat that as the disconnect it is, or the
+            # daemon keeps thinking it is linked and never scans again.
+            if state.path == path and path in seen:
+                on_connection_state("org.bluez.Device1", {"Connected": False}, [], path=path)
             last_attempt_at.pop(path, None)
             seen.discard(path)
             state.forgotten(path)
