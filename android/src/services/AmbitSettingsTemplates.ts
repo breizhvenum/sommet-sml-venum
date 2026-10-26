@@ -1813,6 +1813,706 @@ export const KAILASH_FIELDS: SettingField[] = [
   }
 ];
 
+/** Ambit3 Vertical: its own entry numbers (28 of the Peak's 33 differ), from a descriptor rebuilt
+ *  from the firmware. Read only: no write has been seen on a Vertical. */
+export const VERTICAL_FIELDS: SettingField[] = [
+  {
+    "key": "language",
+    "entryId": 18,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Dansk"
+      },
+      {
+        "value": 1,
+        "label": "Deutsch"
+      },
+      {
+        "value": 2,
+        "label": "English"
+      },
+      {
+        "value": 3,
+        "label": "Espanol"
+      },
+      {
+        "value": 4,
+        "label": "Francais"
+      },
+      {
+        "value": 5,
+        "label": "Italiano"
+      },
+      {
+        "value": 6,
+        "label": "Nederlands"
+      },
+      {
+        "value": 7,
+        "label": "Norsk"
+      },
+      {
+        "value": 8,
+        "label": "Portugues"
+      },
+      {
+        "value": 9,
+        "label": "Suomi"
+      },
+      {
+        "value": 10,
+        "label": "Svenska"
+      },
+      {
+        "value": 11,
+        "label": "Chinese"
+      },
+      {
+        "value": 12,
+        "label": "Japanese"
+      },
+      {
+        "value": 13,
+        "label": "Korean"
+      },
+      {
+        "value": 14,
+        "label": "Cestina"
+      },
+      {
+        "value": 15,
+        "label": "Polski"
+      },
+      {
+        "value": 16,
+        "label": "Russian"
+      }
+    ],
+    "label": "Language",
+    "control": "dropdown",
+    "screen": "general"
+  },
+  {
+    "key": "date_format",
+    "entryId": 1,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "DD.MM."
+      },
+      {
+        "value": 1,
+        "label": "MM/DD"
+      }
+    ],
+    "label": "Date",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "time_format",
+    "entryId": 20,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "24 hours"
+      },
+      {
+        "value": 1,
+        "label": "12 hours"
+      }
+    ],
+    "label": "Time",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "gps_time_keeping",
+    "entryId": 21,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "On"
+      },
+      {
+        "value": 1,
+        "label": "Off"
+      }
+    ],
+    "label": "GPS time keeping",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "units_mode",
+    "entryId": 8,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Metric"
+      },
+      {
+        "value": 1,
+        "label": "Imperial"
+      },
+      {
+        "value": 2,
+        "label": "Advanced"
+      }
+    ],
+    "label": "Units",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "distance_unit",
+    "entryId": 11,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "km"
+      },
+      {
+        "value": 1,
+        "label": "miles"
+      }
+    ],
+    "label": "Distance",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "gps_position_format",
+    "entryId": 4,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "WGS84 Hd.d\u00b0"
+      },
+      {
+        "value": 1,
+        "label": "WGS84 Hd\u00b0m.m'"
+      },
+      {
+        "value": 2,
+        "label": "WGS84 Hd\u00b0m's.s"
+      },
+      {
+        "value": 3,
+        "label": "UTM"
+      },
+      {
+        "value": 4,
+        "label": "MGRS"
+      },
+      {
+        "value": 5,
+        "label": "British (BNG)"
+      },
+      {
+        "value": 6,
+        "label": "Finnish (ETRS-TM35FIN)"
+      },
+      {
+        "value": 7,
+        "label": "Finnish (KKJ)"
+      },
+      {
+        "value": 8,
+        "label": "Irish (IG)"
+      },
+      {
+        "value": 9,
+        "label": "Swedish (RT90)"
+      },
+      {
+        "value": 10,
+        "label": "Swiss (CH1903)"
+      },
+      {
+        "value": 11,
+        "label": "UTM - NAD27 Alaska"
+      },
+      {
+        "value": 12,
+        "label": "UTM - NAD27 Conus"
+      },
+      {
+        "value": 13,
+        "label": "UTM - NAD83"
+      },
+      {
+        "value": 14,
+        "label": "New Zealand (NZTM2000)"
+      }
+    ],
+    "label": "GPS position format",
+    "control": "dropdown",
+    "screen": "general"
+  },
+  {
+    "key": "compass_declination",
+    "entryId": 5,
+    "byteWidth": 4,
+    "kind": "number",
+    "float": true,
+    "scale": 0.017453292519943295,
+    "label": "Compass declination",
+    "control": "declination",
+    "unit": "\u00b0",
+    "screen": "general",
+    "min": -90.0,
+    "max": 90.0
+  },
+  {
+    "key": "button_lock_time_mode",
+    "entryId": 7,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "All buttons"
+      },
+      {
+        "value": 1,
+        "label": "Actions only"
+      }
+    ],
+    "label": "Button lock, time mode",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "button_lock_sport_mode",
+    "entryId": 6,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "All buttons"
+      },
+      {
+        "value": 1,
+        "label": "Actions only"
+      }
+    ],
+    "label": "Button lock, sport mode",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "tones",
+    "entryId": 2,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Buttons off"
+      },
+      {
+        "value": 1,
+        "label": "All on"
+      },
+      {
+        "value": 2,
+        "label": "All off"
+      }
+    ],
+    "label": "Tones",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "display_dark",
+    "entryId": 39,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Light"
+      },
+      {
+        "value": 1,
+        "label": "Dark"
+      }
+    ],
+    "label": "Display",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "backlight_mode",
+    "entryId": 33,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Normal"
+      },
+      {
+        "value": 1,
+        "label": "Off"
+      },
+      {
+        "value": 2,
+        "label": "Night"
+      },
+      {
+        "value": 3,
+        "label": "Toggle"
+      }
+    ],
+    "label": "Backlight mode",
+    "control": "dropdown",
+    "screen": "general"
+  },
+  {
+    "key": "backlight_brightness",
+    "entryId": 34,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Backlight brightness",
+    "control": "slider",
+    "unit": "%",
+    "screen": "general",
+    "min": 5,
+    "max": 100
+  },
+  {
+    "key": "units_orientation",
+    "entryId": 19,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Heading up"
+      },
+      {
+        "value": 1,
+        "label": "North up"
+      }
+    ],
+    "label": "Orientation",
+    "control": "radio",
+    "screen": "general"
+  },
+  {
+    "key": "air_pressure_unit",
+    "entryId": 9,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "hPa"
+      },
+      {
+        "value": 1,
+        "label": "inHg"
+      }
+    ],
+    "label": "Air pressure",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "altitude_unit",
+    "entryId": 10,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "m"
+      },
+      {
+        "value": 1,
+        "label": "ft"
+      }
+    ],
+    "label": "Altitude",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "compass_unit",
+    "entryId": 16,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "degree"
+      },
+      {
+        "value": 1,
+        "label": "mil"
+      }
+    ],
+    "label": "Compass",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "heartrate_unit",
+    "entryId": 17,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "bpm"
+      },
+      {
+        "value": 1,
+        "label": "%"
+      }
+    ],
+    "label": "Heart rate",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "height_unit",
+    "entryId": 12,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "cm"
+      },
+      {
+        "value": 1,
+        "label": "ft"
+      }
+    ],
+    "label": "Height",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "temperature_unit",
+    "entryId": 13,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "\u00b0C"
+      },
+      {
+        "value": 1,
+        "label": "\u00b0F"
+      }
+    ],
+    "label": "Temperature",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "vertical_speed_unit",
+    "entryId": 14,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "m/min"
+      },
+      {
+        "value": 1,
+        "label": "ft/min"
+      }
+    ],
+    "label": "Vertical speed",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "weight_unit",
+    "entryId": 15,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "kg"
+      },
+      {
+        "value": 1,
+        "label": "lbs"
+      }
+    ],
+    "label": "Weight",
+    "control": "radio",
+    "screen": "units"
+  },
+  {
+    "key": "gender",
+    "entryId": 25,
+    "byteWidth": 1,
+    "kind": "enum",
+    "choices": [
+      {
+        "value": 0,
+        "label": "Female"
+      },
+      {
+        "value": 1,
+        "label": "Male"
+      }
+    ],
+    "label": "Gender",
+    "control": "radio",
+    "screen": "personal"
+  },
+  {
+    "key": "birth_date",
+    "entryId": 31,
+    "byteWidth": 1,
+    "kind": "year",
+    "label": "Birth year",
+    "control": "year",
+    "screen": "personal",
+    "min": 1900,
+    "max": 2026
+  },
+  {
+    "key": "body_height",
+    "entryId": 30,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Height",
+    "control": "number",
+    "unit": "cm",
+    "screen": "personal",
+    "min": 89,
+    "max": 241
+  },
+  {
+    "key": "body_weight",
+    "entryId": 26,
+    "byteWidth": 2,
+    "kind": "number",
+    "scale": 100,
+    "label": "Weight",
+    "control": "number",
+    "unit": "kg",
+    "screen": "personal",
+    "min": 30.0,
+    "max": 250.0
+  },
+  {
+    "key": "max_hr",
+    "entryId": 27,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Max heart rate",
+    "control": "number",
+    "unit": "bpm",
+    "screen": "personal",
+    "min": 30,
+    "max": 240
+  },
+  {
+    "key": "rest_hr",
+    "entryId": 28,
+    "byteWidth": 1,
+    "kind": "number",
+    "label": "Rest heart rate",
+    "control": "number",
+    "unit": "bpm",
+    "screen": "personal",
+    "min": 30,
+    "max": 240
+  },
+  {
+    "key": "activity_level",
+    "entryId": 29,
+    "byteWidth": 1,
+    "kind": "number",
+    "scale": 10,
+    "choices": [
+      {
+        "value": 2.0,
+        "label": "2 - less than 1 hour"
+      },
+      {
+        "value": 3.0,
+        "label": "3 - more than 1 hour"
+      },
+      {
+        "value": 4.0,
+        "label": "4 - under 30 minutes per week"
+      },
+      {
+        "value": 5.0,
+        "label": "5 - 30-60 minutes per week"
+      },
+      {
+        "value": 6.0,
+        "label": "6 - 1-3 hours per week"
+      },
+      {
+        "value": 7.0,
+        "label": "7 - over 3 hours per week"
+      },
+      {
+        "value": 7.5,
+        "label": "7.5 - 5-7 hours"
+      },
+      {
+        "value": 8.0,
+        "label": "8 - 7-9 hours"
+      },
+      {
+        "value": 8.5,
+        "label": "8.5 - 9-11 hours"
+      },
+      {
+        "value": 9.0,
+        "label": "9 - 11-13 hours"
+      },
+      {
+        "value": 9.5,
+        "label": "9.5 - 13-15 hours"
+      },
+      {
+        "value": 10.0,
+        "label": "10 - over 15 hours"
+      }
+    ],
+    "label": "Activity class",
+    "control": "dropdown",
+    "step": 1.0,
+    "screen": "personal",
+    "min": 1.0,
+    "max": 10.0
+  }
+];
+
 /** Entry ids each screen's write carries, in the order the watch expects - per device. */
 export const WRITE_TEMPLATES: Record<string, Record<string, number[]>> = {
   "ambit3": {

@@ -35,6 +35,9 @@ _MODEL_PRODUCT_ID = {
     # mistake fixed for the cable on 2026-08-16 (write_nav.descriptor_for_product_id).
     "Jabiru": 0x002B,
     "Loon": 0x002D,
+    # Ambit3 Vertical: its own entry numbers (ticket 06), read from a descriptor rebuilt from
+    # the firmware. The Peak's would decode other settings' bytes.
+    "Kaka": 0x002C,
 }
 
 

@@ -737,6 +737,13 @@ def descriptor_for_product_id(product_id):
         path = (sbem_schema.ASSETS / "WIndows apps" / "Suuntolink"
                 / "descr+A30E115119001200+2.0.22")
         return path if path.exists() else None
+    if product_id == 0x002C:
+        # Ambit3 Vertical (Kaka) fw 1.1.22: no SuuntoLink descriptor was ever captured, so this
+        # one is REBUILT FROM THE FIRMWARE (assets/Firmware/re-out/sfi2_descriptor.py, ticket 06,
+        # proven byte for byte on the Peak, Traverse and Kailash). The Peak's descriptor is wrong
+        # for it: 28 of the 33 settings the app reads sit under other entry numbers.
+        path = sbem_schema.ASSETS / "descr+FROM-FIRMWARE-Kaka+1.1.22"
+        return path if path.exists() else None
     return None
 
 

@@ -363,7 +363,7 @@ export function variantLimits(variant = SPORT_MODE_ROWS.defaultVariant): Limits 
     maxSportModes: v.maxSportModes, maxMultisportModes: v.maxMultisportModes,
     supportsMultisportModes: v.supportsMultisportModes,
     minLegs: SPORT_MODE_ROWS.limits.minMultisportLegs, maxLegs: SPORT_MODE_ROWS.limits.maxMultisportLegs,
-    maxNameLength: 63,
+    maxNameLength: variant === 'Jabiru' || variant === 'Loon' ? 16 : 63, // getMaxNameLength (ticket 08)
   };
 }
 function activityDefaults(activityId: number, variant: string): ActivityDefault {

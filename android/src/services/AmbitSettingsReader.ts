@@ -88,7 +88,7 @@ export interface SettingField {
 // schema family - the Traverse shifts nearly every id off the Ambit3's, so ONE hardcoded table
 // decoded a Traverse's Personal fields off the wrong bytes (verified live 2026-08-16). Both apps
 // now derive ids from the connected watch's own schema. See AmbitSettingsTemplates.ts.
-export { AMBIT3_FIELDS as AMBIT3_SETTINGS_FIELDS, TRAVERSE_FIELDS as TRAVERSE_SETTINGS_FIELDS } from './AmbitSettingsTemplates';
+export { AMBIT3_FIELDS as AMBIT3_SETTINGS_FIELDS, TRAVERSE_FIELDS as TRAVERSE_SETTINGS_FIELDS, VERTICAL_FIELDS as VERTICAL_SETTINGS_FIELDS } from './AmbitSettingsTemplates';
 
 // Kailash's own real, smaller schema (41 entries total vs. the Ambit3's ~324) - every
 // field here is exactly what the real 7R iOS app's own settings screen shows (see this

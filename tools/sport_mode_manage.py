@@ -182,6 +182,11 @@ def load_catalogue():
     return activities, rows
 
 
+# sport_mode.js getMaxNameLength: 16 for Traverse and Traverse Alpha, 63 for the rest (ticket 08).
+_MAX_NAME_BYTES = {"Jabiru": 16, "Loon": 16}
+_DEFAULT_MAX_NAME_BYTES = 63
+
+
 def variant_limits(rows, variant=DEFAULT_VARIANT):
     """What this watch allows. Falls back to the Ambit3 Peak's row for an unknown code."""
     v = rows["variants"].get(variant) or rows["variants"][DEFAULT_VARIANT]
@@ -191,7 +196,7 @@ def variant_limits(rows, variant=DEFAULT_VARIANT):
         "supportsMultisportModes": v["supportsMultisportModes"],
         "minLegs": rows["limits"]["minMultisportLegs"],
         "maxLegs": rows["limits"]["maxMultisportLegs"],
-        "maxNameLength": 63,                 # sport_mode.js getMaxNameLength, whole family
+        "maxNameLength": _MAX_NAME_BYTES.get(variant, _DEFAULT_MAX_NAME_BYTES),
     }
 
 

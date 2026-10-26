@@ -69,9 +69,22 @@ KAILASH_PRODUCT_ID = 0x002A
 # instead, not yet threaded through there.
 AMBIT3_SPORT_PRODUCT_ID = 0x001C
 AMBIT3_RUN_PRODUCT_ID = 0x001E
+AMBIT3_VERTICAL_PRODUCT_ID = 0x002C
+# Real, 2026-10-26: the Vertical (Kaka 1.1.22) has a barometric sensor (altitude, FusedAlti) but no
+# Alti-baro profile and no storm alarm. SuuntoLink's supportsAltiBaroProfile(Kaka) is false, the
+# firmware has no appSettingsAltiBaroProfileView, appStormAlarm.c, appStormAlarmView or
+# appSettingsStormAlarmOnOffView (Peak 2.4.17 has all four), and the Ambit3 Vertical User Guide 1.2
+# has no Alti-baro chapter and no "storm" at all (the Peak guide has both). Ticket 08.
 _UNSUPPORTED_ON_MODEL = {
-    "alti_baro_profile": {AMBIT3_SPORT_PRODUCT_ID, AMBIT3_RUN_PRODUCT_ID},
+    "alti_baro_profile": {AMBIT3_SPORT_PRODUCT_ID, AMBIT3_RUN_PRODUCT_ID,
+                          AMBIT3_VERTICAL_PRODUCT_ID},
+    "storm_alarm": {AMBIT3_VERTICAL_PRODUCT_ID},
 }
+# Models whose settings are read with their own numbers but never written: no SuuntoLink capture
+# and no watch has shown what a settings write looks like there (CLAUDE.md: a change to what is
+# written to a watch is not finished until it was seen working on a real watch). Lift per model
+# when a Vertical has taken a write.
+_WRITES_UNVERIFIED = {AMBIT3_VERTICAL_PRODUCT_ID}
 
 # key -> a unique suffix of the real schema path (matched via .endswith(), so
 # "Display.Invert" only ever matches sml.DeviceSettings.Display.Invert, not some other
@@ -852,6 +865,8 @@ def read_all(payload, descriptor, product_id=None):
         # as any other field this watch's own firmware doesn't back.
         if key in _UNSUPPORTED_ON_MODEL and product_id in _UNSUPPORTED_ON_MODEL[key]:
             writable = False
+        if product_id in _WRITES_UNVERIFIED:
+            writable = False
         if product_id != KAILASH_PRODUCT_ID and _display_range(key) is not None:
             desc = dict(desc)
             desc["min"], desc["max"] = _display_range(key)
@@ -1332,6 +1347,9 @@ def write_one(link, descriptor, key, new_value, product_id=None):
     # _UNSUPPORTED_ON_MODEL comment) - real, 2026-08-22: write_one() never checked this on
     # its own read_all() only marked the field non-writable in the DESCRIPTION, this
     # function had no matching refusal, so a real write would have gone out anyway.
+    if product_id in _WRITES_UNVERIFIED:
+        return {"ok": False, "error": "settings of this watch model are read only until a write "
+                "has been seen working on one (no capture and no watch has confirmed it yet)"}
     if key in _UNSUPPORTED_ON_MODEL and product_id in _UNSUPPORTED_ON_MODEL[key]:
         return {"ok": False, "error": f"{key} is not supported on this watch model "
                 "(SuuntoLink's own supports*(variant) reports it unavailable - no "

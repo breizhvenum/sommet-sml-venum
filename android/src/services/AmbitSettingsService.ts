@@ -1,7 +1,7 @@
 import { connect, disconnect, getDeviceInfo, readSettingsRaw, readPersonalSettings, isBleTransportActive } from '../native/AmbitUsbModule';
 import { writePersonalField } from './AmbitPersonalSettingsWriter';
 import {
-  AMBIT3_SETTINGS_FIELDS, TRAVERSE_SETTINGS_FIELDS, KAILASH_SETTINGS_FIELDS, SettingField,
+  AMBIT3_SETTINGS_FIELDS, TRAVERSE_SETTINGS_FIELDS, KAILASH_SETTINGS_FIELDS, VERTICAL_SETTINGS_FIELDS, SettingField,
   decodeSettings, DecodedSetting,
 } from './AmbitSettingsReader';
 import { decodePersonalSettings } from './AmbitPersonalSettingsReader';
@@ -85,16 +85,26 @@ export async function readAmbitSettings(report: (s: ReadSettingsState) => void):
   onState({ phase: 'reading' });
   try {
     let isKailash = false;
+    let isVertical = false;
     let deviceName: string | undefined;
     try {
       const info = await getDeviceInfo();
       isKailash = info.model === 'Hoopoe';
+      isVertical = info.model === 'Kaka';
       deviceName = info.name || undefined;
     } catch { /* non-fatal - assume Ambit3 */ }
 
     // Ambit 1/2 family: legacy personal-settings read, read-only (no `fields` -> no write).
     if (isAmbit12(deviceName)) {
       const settings = decodePersonalSettings(await readPersonalSettings());
+      onState({ phase: 'done', settings, deviceName, readOnly: true });
+      return;
+    }
+
+    // Ambit3 Vertical: its own entry numbers (28 of the Peak's 33 differ, ticket 06), read only
+    // until a settings write has been seen working on one (desktop settings_write._WRITES_UNVERIFIED).
+    if (isVertical) {
+      const settings = decodeSettings(await readSettingsRaw(), VERTICAL_SETTINGS_FIELDS);
       onState({ phase: 'done', settings, deviceName, readOnly: true });
       return;
     }

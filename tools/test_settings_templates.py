@@ -54,7 +54,8 @@ class Tables(unittest.TestCase):
         self.assertEqual(ble_settings.product_id_from_model("Jabiru"), TRAVERSE)
         self.assertEqual(ble_settings.product_id_from_model("Loon"), TRAVERSE_ALPHA)
         self.assertEqual(ble_settings.product_id_from_model("Hoopoe"), S.KAILASH_PRODUCT_ID)
-        for model in ("Emu", "Finch", "Ibisbill", "Kaka", None):
+        self.assertEqual(ble_settings.product_id_from_model("Kaka"), 0x002C)
+        for model in ("Emu", "Finch", "Ibisbill", None):
             self.assertIsNone(ble_settings.product_id_from_model(model))
 
     def test_every_key_rides_in_the_template_of_its_screen(self):
@@ -255,6 +256,47 @@ class Captures(unittest.TestCase):
         done = subprocess.run([sys.executable, str(HERE / "gen_android_settings_templates.py"),
                                "--check"], capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_vertical_has_no_barometer_settings_or_storm_alarm(self):
+        for key in ("alti_baro_profile", "storm_alarm"):
+            self.assertIn(0x002C, S._UNSUPPORTED_ON_MODEL[key], key)
+            self.assertNotIn(AMBIT3, S._UNSUPPORTED_ON_MODEL[key], key)
+
+    def test_vertical_reads_with_its_own_numbers_and_never_writes(self):
+        import sbem_schema
+        import write_nav
+        peak = sbem_schema.load(write_nav.descriptor_for_product_id(0x001B)
+                                or sbem_schema.default_descriptor())
+        path = write_nav.descriptor_for_product_id(0x002C)
+        if path is None:      # assets/ is not in git: rebuild it with assets/Firmware/re-out/sfi2_descriptor.py
+            self.skipTest("descr+FROM-FIRMWARE-Kaka+1.1.22 is not in assets/")
+        vertical = sbem_schema.load(path)
+        eid = lambda sch, suffix: S._find_field(sch, suffix).fid
+        # Units.Language is entry 17 on the Peak but 18 on the Vertical (ticket 06)
+        self.assertEqual(eid(peak, "Units.Language"), 17)
+        self.assertEqual(eid(vertical, "Units.Language"), 18)
+        self.assertEqual(len(vertical.fields) + len(vertical.groups) + len(vertical.queries), 336)
+        self.assertIn(0x002C, S._WRITES_UNVERIFIED)
+        # A reply laid out by the Vertical's own numbers: language English (18), units Imperial (8)
+        ent = lambda i, d: bytes([i, len(d)]) + d
+        reply = b"SBEM0102" + ent(18, b"\x02") + ent(8, b"\x01")
+        got = S.read_all(reply, path, 0x002C)["settings"]
+        self.assertEqual((got["language"]["value"], got["units_mode"]["value"]), (2, 1))
+        self.assertFalse(got["language"]["writable"])
+        self.assertFalse(got["storm_alarm"]["ok"])
+        self.assertFalse(got["alti_baro_profile"]["ok"])
+        # the old behaviour, for the record: the Peak's numbers read the same bytes as other settings
+        old = S.read_all(reply, write_nav.descriptor_for_product_id(0x001B)
+                         or sbem_schema.default_descriptor(), 0x001B)["settings"]
+        self.assertNotEqual(old["language"].get("value"), 2)
+
+    def test_sport_mode_name_limit_follows_the_model(self):
+        import sport_mode_manage as M
+        rows = M.load_catalogue()[1]
+        self.assertEqual(M.variant_limits(rows, "Jabiru")["maxNameLength"], 16)
+        self.assertEqual(M.variant_limits(rows, "Loon")["maxNameLength"], 16)
+        for v in ("Emu", "Kaka", "Hoopoe"):
+            self.assertEqual(M.variant_limits(rows, v)["maxNameLength"], 63)
 
 
 if __name__ == "__main__":

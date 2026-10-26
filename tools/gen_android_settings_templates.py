@@ -36,6 +36,9 @@ DESCRIPTORS = {
     "traverse": sbem_schema.ASSETS / "WIndows apps" / "Suuntolink" / "descr+A30E115119001200+2.0.22",
     "kailash":  sbem_schema.ASSETS / "APK" / "kailash" / "Suunto 7R" / "Container" / "Documents"
                 / "descr+79DC39510E000100+2.0.5",
+    # Ambit3 Vertical fw 1.1.22: no real descriptor exists, this one is rebuilt from the firmware
+    # (assets/Firmware/re-out/sfi2_descriptor.py, ticket 06). Read only until a write is seen.
+    "vertical": sbem_schema.ASSETS / "descr+FROM-FIRMWARE-Kaka+1.1.22",
 }
 
 _WIDTH = {"uint8": 1, "int8": 1, "bool": 1, "enum": 1,
@@ -157,7 +160,7 @@ def device_tables(device, product_id):
             # A key not present in this device's schema is simply skipped (missing != broken).
             continue
 
-    if device == "kailash":
+    if device in ("kailash", "vertical"):
         return {"fields": fields}
 
     # Ambit3-family write plumbing: per-screen ordered entry ids, key->screen, enum value sets.
@@ -186,6 +189,7 @@ def main():
     ambit3 = device_tables("ambit3", 0x001B)
     traverse = device_tables("traverse", 0x002B)
     kailash = device_tables("kailash", S.KAILASH_PRODUCT_ID)
+    vertical = device_tables("vertical", S.AMBIT3_VERTICAL_PRODUCT_ID)
 
     def js(obj):
         return json.dumps(obj, indent=2)
@@ -206,6 +210,10 @@ export const AMBIT3_FIELDS: SettingField[] = {js(ambit3["fields"])};
 export const TRAVERSE_FIELDS: SettingField[] = {js(traverse["fields"])};
 
 export const KAILASH_FIELDS: SettingField[] = {js(kailash["fields"])};
+
+/** Ambit3 Vertical: its own entry numbers (28 of the Peak's 33 differ), from a descriptor rebuilt
+ *  from the firmware. Read only: no write has been seen on a Vertical. */
+export const VERTICAL_FIELDS: SettingField[] = {js(vertical["fields"])};
 
 /** Entry ids each screen's write carries, in the order the watch expects - per device. */
 export const WRITE_TEMPLATES: Record<string, Record<string, number[]>> = {{
@@ -247,7 +255,8 @@ export const MODE_OWNED_UNITS: string[] = {js(list(S._MODE_OWNED_UNITS))};
     with open(path, "w") as fh:
         fh.write(body)
     print(f"wrote {os.path.relpath(path)}: ambit3={len(ambit3['fields'])} fields, "
-          f"traverse={len(traverse['fields'])} fields, kailash={len(kailash['fields'])} fields")
+          f"traverse={len(traverse['fields'])} fields, kailash={len(kailash['fields'])} fields, "
+          f"vertical={len(vertical['fields'])} fields")
     return 0
 
 
