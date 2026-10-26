@@ -1090,6 +1090,7 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
     """
     adapter_obj = dbus.Interface(bus.get_object(BLUEZ, adapter), ADAPTER_IFACE)
     seen = set()
+    logged_others = set()   # foreign devices already logged once (they advertise many times a second)
     last_attempt_at = {}
     state = state if state is not None else LinkState()
     retry_now = set()                  # paths the watchdog dropped: no backoff on their next call
@@ -1251,12 +1252,13 @@ def start_discovery(bus, dbus, glib, adapter, verbose, on_disconnect=None, agent
         # never would). Only a device with NO advertised name at all still falls back to
         # solicits/OUI - the one case a name-only check can't rule anything out for.
         if name and not named:
-            if verbose:
-                print(f"  seen {path.split('/')[-1]} {name} (named, not ours - ignoring "
-                      "despite NSP/OUI match)")
+            if verbose and path not in logged_others:
+                logged_others.add(path)
+                print(f"  seen {path.split('/')[-1]} {name} (named, not a Suunto watch - ignoring)")
             return
         if not solicits and not named and not addressed:
-            if verbose:
+            if verbose and path not in logged_others:
+                logged_others.add(path)
                 print(f"  seen {path.split('/')[-1]} {name or '(no name)'}")
             return
         # Backoff floor - see CONNECT_RETRY_BACKOFF_S's own comment. Checked, not just

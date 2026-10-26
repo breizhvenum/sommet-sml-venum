@@ -36,6 +36,8 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
 PYTHON = sys.executable
 
+LOG_ROLL_BYTES = 5 * 1024 * 1024
+
 # Must match tools/ble_server.py's SOCKET_PATH exactly - not re-derived, so the two can never
 # drift apart.
 SOCKET_PATH = Path.home() / ".cache" / "AmbitApp" / "ble.sock"
@@ -111,6 +113,13 @@ class BleBridge:
             if self._proc is not None and self._proc.poll() is None:
                 return
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            # Keep the log from growing for ever (it reached 130 MB): past 5 MB the old one
+            # becomes ble_daemon.log.1, replacing any older .1.
+            try:
+                if self._log_path.stat().st_size > LOG_ROLL_BYTES:
+                    self._log_path.replace(self._log_path.with_suffix(".log.1"))
+            except OSError:
+                pass
             # "-u": unbuffered. Real bug caught while testing this on hardware, 2026-08-11 -
             # a Python child process with stdout redirected to a real file (not a tty) is
             # fully block-buffered by default, so `ble_server.py`'s own progress prints
