@@ -48,7 +48,7 @@ import urllib.request
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from zoneinfo import available_timezones
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 import ble_bridge
 
@@ -975,6 +975,19 @@ def autopin_if_needed():
         pass
 
 
+# Ambit3 tools that also run over Bluetooth (🟣79, 2026-10-27): with the watch on Bluetooth and
+# not on the cable, run_tool() gives them AMBIT_TRANSPORT=ble and write_nav.Link talks to the
+# Bluetooth daemon instead of USB (refusing any watch other than the pinned one). Sport modes,
+# Apps and guided workouts: the same region reads and send_plan() writes the plan sync and the
+# route/POI writes already do over Bluetooth. Never firmware, never the Ambit1/2 tools.
+BLE_LINK_TOOLS = {
+    "custom_modes.py", "sport_mode_manage.py", "custom_modes_rename_test.py",
+    "custom_modes_field_write_test.py", "interval_timer.py",
+    "custom_modes_display_field_write_test.py", "custom_modes_edit.py",
+    "apps.py", "app_logging.py", "guided_workout.py", "workout_install.py", "training_plan.py",
+}
+
+
 def run_tool(script, args, timeout=180, stdin=None, product_id=None, serial=None):
     """Runs one of tools/*.py exactly as a person at a terminal would. Returns
     (returncode, stdout, stderr); never raises for a nonzero exit, the caller decides what
@@ -1006,6 +1019,14 @@ def run_tool(script, args, timeout=180, stdin=None, product_id=None, serial=None
         env["AMBIT_SERIAL"] = serial
     else:
         env.pop("AMBIT_SERIAL", None)
+    env.pop("AMBIT_TRANSPORT", None)
+    over_ble = script in BLE_LINK_TOOLS and use_ble()
+    if over_ble:
+        env["AMBIT_TRANSPORT"] = "ble"
+        # Pin to the watch on the Bluetooth link: its hello's serial, so Link refuses any other.
+        hello = (ble_bridge.bridge.status().get("device_info") or {})
+        if hello.get("serial"):
+            env["AMBIT_SERIAL"] = hello["serial"]
     # WATCH_LOCK serialises access to the watch's USB HID bus. The MTP tools (Edge/Karoo import
     # and FIT decoding) don't touch that bus at all - they read the phone/gvfs filesystem - so
     # holding the watch lock across a multi-minute ride pull needlessly blocked every watch poll
@@ -1041,11 +1062,18 @@ def run_tool(script, args, timeout=180, stdin=None, product_id=None, serial=None
         # with a "--tool" sentinel (frozen_entry.py) that runpy-runs the requested script.
         cmd = ([PYTHON, "--tool", str(TOOLS_DIR / script), *args] if FROZEN
                else [PYTHON, str(TOOLS_DIR / script), *args])
+        if over_ble:
+            ble_bridge.bridge.set_dry_run(False)   # the tool's own --write decides what is sent
         proc = subprocess.run(
             cmd, cwd=TOOLS_DIR, capture_output=True, text=True, timeout=timeout, env=env,
             input=stdin)
         return proc.returncode, proc.stdout, proc.stderr
     finally:
+        if over_ble:
+            try:
+                ble_bridge.bridge.set_dry_run(True)
+            except Exception:  # noqa: BLE001 - best effort back to the safe default
+                pass
         if lock is not None:
             lock.release()
 
@@ -5576,11 +5604,10 @@ class Handler(BaseHTTPRequestHandler):
         """POST /api/intervals/stats-to-watch. Body: {athlete_id, api_key, confirm, device?}.
         Write the FULL personal profile (weight, height, gender, max/rest HR, and the derived
         activity class) from intervals.icu to the watch - the "Import my stats -> watch" sync
-        toggle (André, 2026-08-18). USB only for now: it reuses stats_to_watch.py's proven
-        Personal.* write path (idempotent, dry-run without confirm). BLE writes only the
-        activity class today (see /api/intervals/activity-level); the static fields need the
-        per-field BLE settings path wired before this can run over Bluetooth, so we say so
-        rather than half-writing."""
+        toggle (André, 2026-08-18). Cable: stats_to_watch.py's Personal.* write path
+        (idempotent, dry-run without confirm). Bluetooth (🟣78, 2026-10-27): the same fields
+        through stats_to_watch.sync_over_link on ble_bridge.bridge - one settings read, then a
+        confirmed write only for each field that differs."""
         athlete_id = body.get("athlete_id")
         api_key = body.get("api_key")
         if not athlete_id or not api_key:
@@ -5589,12 +5616,30 @@ class Handler(BaseHTTPRequestHandler):
         if demo_ambit():
             self._send_json(200, {"ok": True, "wrote": False, "demo": True})
             return
-        if use_ble():
-            self._send_json(501, {"ok": False, "error": "Writing the full profile over Bluetooth "
-                                  "isn't supported yet - connect the watch by cable for this. "
-                                  "(Activity level does sync over Bluetooth.)"})
-            return
         confirm = bool(body.get("confirm", False))
+        if use_ble():
+            sys.path.insert(0, str(TOOLS_DIR))
+            import intervals_stats                           # noqa: PLC0415
+            import stats_to_watch                            # noqa: PLC0415
+            try:
+                stats = intervals_stats.fetch_watch_stats(str(athlete_id), str(api_key))
+            except Exception as exc:  # noqa: BLE001 - network / intervals.icu errors
+                self._send_json(502, {"ok": False, "error": f"intervals.icu: {exc}"[:200]})
+                return
+            model = ble_bridge.bridge.status().get("device_info", {}).get("model")
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                info = stats_to_watch.sync_over_link(ble_bridge.bridge, model, stats, confirm)
+            except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError, OSError) as exc:
+                self._send_json(502, {"ok": False, "transport": "ble", "error": str(exc)})
+                return
+            finally:
+                try:
+                    ble_bridge.bridge.set_dry_run(True)
+                except Exception:  # noqa: BLE001 - best effort back to the safe default
+                    pass
+            self._send_json(200 if info.get("ok") else 502, {"transport": "ble", **info})
+            return
         # No --only: stats_to_watch considers every mapped field and writes just the ones that
         # differ from the watch. --json gives the app the machine-readable preview/result.
         args = [str(athlete_id), str(api_key), "--json"]
@@ -6056,9 +6101,32 @@ class Handler(BaseHTTPRequestHandler):
         different timezone", real 2026-08-10 request). No rehearsal step here unlike every
         other write in this backend - set_time.py's own docstring explains why (two plain,
         always-safe clock-set commands, no flash/PMEM involved) - this always sends --write
-        for real."""
-        args = ["--write", "--json"]
+        for real. Over Bluetooth (2026-10-27) the same set_time.set_clock() runs on the bridge,
+        as the activity sync's _sync_clock_ble() already does."""
         tz = body.get("timezone")
+        if use_ble():
+            sys.path.insert(0, str(TOOLS_DIR))
+            import set_time                                  # noqa: PLC0415
+            try:
+                now = datetime.now(ZoneInfo(tz)) if tz else datetime.now().astimezone()
+            except ZoneInfoNotFoundError:
+                self._send_json(400, {"ok": False, "error": f"unknown timezone {tz!r}"})
+                return
+            model = (ble_bridge.bridge.status().get("device_info") or {}).get("model")
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                when = set_time.set_clock(ble_bridge.bridge, set_time.clock_family(model), now)
+            except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError, OSError) as exc:
+                self._send_json(502, {"ok": False, "transport": "ble", "error": str(exc)})
+                return
+            finally:
+                try:
+                    ble_bridge.bridge.set_dry_run(True)
+                except Exception:  # noqa: BLE001 - best effort back to the safe default
+                    pass
+            self._send_json(200, {"ok": True, "dry_run": False, "time": when, "transport": "ble"})
+            return
+        args = ["--write", "--json"]
         if tz:
             args += ["--timezone", tz]
         code, out, err = run_tool("set_time.py", args)

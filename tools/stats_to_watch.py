@@ -105,6 +105,57 @@ def run_settings_write(field: str, value: str, device: str | None, write: bool) 
     return result
 
 
+def typed_value(field: str, info: dict):
+    """The logical value settings_write.write_one() takes (what read_all() reports): a number,
+    the year for birth_date, 1/0 for gender. Same values the cable path sends as text."""
+    raw = settings_value(field, info)
+    if field in ("body_weight", "activity_level"):
+        return float(raw)
+    return int(float(raw))
+
+
+def plan_fields(stats: dict, only=None) -> list:
+    """The fields to consider, in WRITE_ORDER: [{field, display, raw, source}]."""
+    fields = []
+    for field in WRITE_ORDER:
+        if field not in stats or (only and field not in only):
+            continue
+        fields.append({"field": field, "display": stats[field]["value"],
+                       "raw": settings_value(field, stats[field]),
+                       "typed": typed_value(field, stats[field]),
+                       "source": stats[field]["source"]})
+    return fields
+
+
+def sync_over_link(link, model, stats: dict, write: bool, only=None) -> dict:
+    """The same sync on an already-open link - the Bluetooth one (ble_bridge.bridge): one
+    settings read for the current values, then a write (re-read and confirmed by write_one)
+    only for the fields that differ. Returns main()'s --json shape."""
+    import ble_settings                                    # noqa: PLC0415
+    current = (ble_settings.read_settings(link, model) or {}).get("settings", {})
+    results = []
+    for f in plan_fields(stats, only):
+        entry = current.get(f["field"])
+        if not isinstance(entry, dict) or not entry.get("ok", True):
+            results.append({"field": f["field"], "value": f["display"], "ok": False,
+                            "error": "not in this watch's settings", "wrote": False, "changed": False})
+            continue
+        cur = entry.get("value")
+        changed = not _same(cur, f["raw"])
+        res = {"field": f["field"], "value": f["display"], "ok": True, "current": cur,
+               "wrote": False, "changed": changed}
+        if write and changed:
+            real = ble_settings.write_setting(link, f["field"], f["typed"], model)
+            res["ok"] = bool(real.get("ok"))
+            res["wrote"] = res["ok"]
+            if not res["ok"]:
+                res["error"] = real.get("error")
+        results.append(res)
+    ok = all(r.get("ok") is not False for r in results)
+    return {"ok": ok, "wrote": any(r.get("wrote") for r in results),
+            "changed": any(r.get("changed") for r in results), "fields": results}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Write intervals.icu personal stats to the watch.")
     ap.add_argument("athlete_id")

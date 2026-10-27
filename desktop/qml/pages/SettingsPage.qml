@@ -1890,7 +1890,7 @@ PageFlickable {
                         onToggled: (checked) => ConnectionsService.syncActivityLevel = checked
                     }
                     SyncToggle {
-                        label: qsTr("Write my profile to the watch (weight, height, HR, class) — cable only")
+                        label: qsTr("Write my profile to the watch (weight, height, HR, class)")
                         value: ConnectionsService.syncStatsToWatch
                         onToggled: (checked) => ConnectionsService.syncStatsToWatch = checked
                     }

@@ -195,8 +195,24 @@ def open_hid(hid, path):
     return device
 
 
+class _BleHandle:
+    """Stands in for the HID device when Link talks over Bluetooth: tools that only check
+    `link.device is not None` or close it keep working; raw HID access is refused (firmware
+    flashing never runs over Bluetooth)."""
+
+    def close(self):
+        pass
+
+    def read(self, *_a, **_k):
+        raise RuntimeError("raw HID reads are not available over Bluetooth")
+
+    def write(self, *_a, **_k):
+        raise RuntimeError("raw HID writes are not available over Bluetooth")
+
+
 class Link:
-    """HID transport. In dry-run no device is opened."""
+    """HID transport (or, with AMBIT_TRANSPORT=ble, the Bluetooth daemon). In dry-run no
+    device is opened."""
 
     def __init__(self, dry_run=True, verbose=False, product_id=None, serial=None):
         self.dry_run = dry_run
@@ -237,6 +253,12 @@ class Link:
         self.sequence = 0
         self.device = None
         self.sent = []
+        # AMBIT_TRANSPORT=ble (2026-10-27, 🟣79): the desktop backend sets this for the Ambit3
+        # sport-mode / app tools when the watch is on Bluetooth and not on the cable. open() then
+        # talks to the Bluetooth daemon's control socket (desktop/backend/ble_bridge.py) instead
+        # of USB HID; every command() goes through it. Same tool code, other transport.
+        self.ble = os.environ.get("AMBIT_TRANSPORT") == "ble"
+        self._bridge = None
 
     def open(self):
         """Listing a USB device needs no privilege, opening it does, so the two failures
@@ -257,6 +279,8 @@ class Link:
         """
         if self.dry_run:
             return None
+        if self.ble:
+            return self._open_ble()
         import hid  # imported only when a device is really opened
         import time
 
@@ -324,7 +348,45 @@ class Link:
             "fix (this transport doesn't use hidraw).\n"
             "  The backend said: " + "; ".join(failures))
 
+    def _open_ble(self):
+        """The Bluetooth side of open(): a client of the running daemon, refused unless the
+        watch on the Bluetooth link is the one this call was pinned to (model and serial) - a
+        write must never land on another watch than the one picked."""
+        try:
+            import ble_bridge                                # frozen build: bundled
+        except ImportError:
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "desktop" / "backend"))
+            import ble_bridge                                # noqa: PLC0415
+        from ble_settings import product_id_from_model       # noqa: PLC0415
+        bridge = ble_bridge.BleBridge()                      # client only: the backend owns the daemon
+        status = bridge.status()
+        if not status.get("handshake_done"):
+            raise RuntimeError("the watch isn't connected over Bluetooth")
+        info = status.get("device_info") or {}
+        pid = product_id_from_model(info.get("model"))
+        if self.product_id is not None and pid is not None and pid != self.product_id:
+            raise RuntimeError(f"the watch on Bluetooth is a {PRODUCT_IDS.get(pid, info.get('model'))}, "
+                               f"not the selected {PRODUCT_IDS.get(self.product_id)}")
+        if self.serial and info.get("serial") and info["serial"] != self.serial:
+            raise RuntimeError(f"the watch on Bluetooth is serial {info['serial']}, "
+                               f"not the selected {self.serial}")
+        self._bridge = bridge
+        self.device = _BleHandle()
+        self.opened_product_id = pid
+        self.opened_serial = info.get("serial")
+        label = PRODUCT_IDS.get(pid, info.get("model") or "watch")
+        print(f"  watch: {label} (Bluetooth)")
+        return label
+
     def command(self, command, payload=b"", expect_reply=True, quiet=False):
+        if self._bridge is not None:
+            name = CMD_NAMES.get(command, f"0x{command:04x}")
+            if not quiet:
+                print(f"  -> 0x{command:04x} {name:22} {len(payload):5} B  (Bluetooth)")
+            self.sequence += 1
+            reply = self._bridge.command(command, payload, expect_reply=expect_reply, timeout=30.0)
+            self.sent.append((command, payload, reply))
+            return reply if expect_reply else b""
         reports = encode_message(command, payload, self.sequence)
         name = CMD_NAMES.get(command, f"0x{command:04x}")
         if not quiet:
