@@ -7,6 +7,13 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-27: Windows build fixed (desktop 0.2.52)
+
+- 0.2.50 and 0.2.51 have no Windows download: one lambda in the activity-weather code used
+  `[=, this]`, which MSVC rejects in C++17. Same app as 0.2.51 otherwise.
+
+---
+
 ## 2026-10-27: Routes show their distance and climb; "Training day on the watch" stays off (desktop 0.2.51)
 
 Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-27.

@@ -123,7 +123,7 @@ QVariantMap ActivityWeatherService::request(const QString &key, const QString &s
     QNetworkRequest req(url);
     req.setRawHeader("User-Agent", "Sommet/1.0");
     QNetworkReply *reply = m_net.get(req);
-    connect(reply, &QNetworkReply::finished, this, [=, this]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, key, startSecs, endSecs, track, archived]() {
         reply->deleteLater();
         m_inFlight.remove(key);
         if (reply->error() != QNetworkReply::NoError) return;   // offline: the strip just stays hidden
