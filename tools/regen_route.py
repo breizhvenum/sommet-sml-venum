@@ -33,7 +33,8 @@ OWN_NAME = re.compile(r"<(?:rte|trk)>\s*<name>(.*?)</name>", re.S)
 def read_gpx(path):
     """Export from the Suunto app: <metadata><name> carries the route name, the
     <wpt> carry the waypoints, the <rtept> the track."""
-    raw = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as f:
+        raw = f.read()
     points = [(float(lat), float(lon), float(ele) if ele else None)
               for lat, lon, ele in RTEPT.findall(raw)]
     waypoints = []

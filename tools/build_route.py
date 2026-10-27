@@ -73,6 +73,14 @@ def route_from_gpx(path, distance, ascent, descent, stamp, max_points=None):
             forced.append(i)
             tagged.append((i, lat, lon, wname))
 
+    # None: worked out from the GPX itself, as SuuntoLink does when the Suunto app gives no total
+    # (before 2026-10-27 a written route showed 0 m and 0 m climb on the watch).
+    if distance is None:
+        distance = F.route_total_distance_m(gpx)
+    if ascent is None or descent is None:
+        up, down = F.route_elevation_m(gpx)
+        ascent = up if ascent is None else ascent
+        descent = down if descent is None else descent
     kept = simplify_route(gpx, max_points, forced)
     if kept is None:
         raise ValueError(f"route {name!r} cannot be simplified below {max_points} points")

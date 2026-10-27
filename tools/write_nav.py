@@ -1533,9 +1533,8 @@ def build_routes(gpx_paths, meta_capture, wpt_size=F.WAYPOINT_SIZE):
         stamps = [stamp_from_capture(reference, msgs, i)
                   for i in range(len(gpx_paths))]
     else:
-        # Neutral values: the watch does not seem to validate them, but that is not
-        # verified on hardware yet.
-        stamps = [(0, 0, 0, (1, 1, 0, 0, 0, 0)) for _ in gpx_paths]
+        # Distance and climb worked out from each GPX (route_from_gpx); the date stays neutral.
+        stamps = [(None, None, None, (1, 1, 0, 0, 0, 0)) for _ in gpx_paths]
     routes = [route_from_gpx(path, *stamp) for path, stamp in zip(gpx_paths, stamps)]
     routes = replace_same_name(routes)
     for route in routes:

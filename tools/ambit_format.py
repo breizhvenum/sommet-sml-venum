@@ -548,6 +548,37 @@ def cumulative_distance_m(points, radius=EARTH_RADIUS_RELDIST_M):
     return total, steps
 
 
+# The route's total distance in its descriptor: the full GPX (before simplification) summed with
+# the 6371 km mean radius. Exact on Movescount's LyricanTrail (21440 m, A3.Routes.and.POIs.from.MC)
+# and within 2 m / 5 m of the Suunto app's own totals on route12km / route128km (2026-10-27).
+EARTH_RADIUS_ROUTE_TOTAL_M = 6371000.0
+
+
+def route_total_distance_m(points):
+    """Whole metres, for the descriptor's distance field. (lat, lon, ...) tuples."""
+    return int(round(cumulative_distance_m(points, EARTH_RADIUS_ROUTE_TOTAL_M)[0]))
+
+
+def route_elevation_m(points):
+    """(ascent, descent) in whole metres: every rise and every drop between points that have an
+    altitude, as SuuntoLink's calculateElevation() in route.js. Its descent is exact on
+    route128km (634 m). SuuntoLink takes the ascent from the Suunto app instead (530 m there,
+    681 m this way), which a GPX doesn't carry. (0, 0) without altitudes, as SuuntoLink."""
+    up = down = 0.0
+    prev = None
+    for p in points:
+        alt = p[2] if len(p) > 2 else None
+        if alt is None:
+            continue
+        if prev is not None:
+            if alt > prev:
+                up += alt - prev
+            else:
+                down += prev - alt
+        prev = alt
+    return min(int(up), 0xFFFF), min(int(down), 0xFFFF)
+
+
 def relative_distances(points):
     """The records' rel_distance field: the travelled fraction, rounded to 4
     significant digits the way route.js does (toPrecision(4)), then scaled to 16
