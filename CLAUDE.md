@@ -83,3 +83,26 @@ The five default labels plus `done`, written as a `**Status:**` line in each tic
 
 Single-context: `CONTEXT.md` at the repo root and decisions in `docs/adr/`. See
 `docs/agents/domain.md`.
+
+### Which skill for which job
+
+Use these without being asked when the job matches:
+
+| Job | Use |
+| --- | --- |
+| Something is broken, a sync fails, the watch shows wrong data | `/diagnosing-bugs` |
+| A parser or encoder (routes, waypoints, sport modes, GPX) | `/tdd`, with a test built from a real capture first |
+| A new word, or a decision worth keeping | `/domain-modeling` (updates `CONTEXT.md` or `docs/adr/`) |
+| Before a release | `/code-review` against the last tag |
+| A big new feature or a new watch family | `/grilling` before writing code |
+| Steps only the owner can do (plug in a watch, pair a phone) | `/wizard` |
+| A new screen or a layout change | `ux-ui-agent-skills` (`/design-tokens`, `/design-review`, `/a11y-audit`) |
+| Desktop/Android parity | Compare screenshots of the same page at 720p, 1080p, tablet and phone, then list every difference in colour, font, capitals and spacing |
+| Android flows | Maestro flows (YAML), with a screenshot at each step |
+| Docs, README, changelog, UI text | Harper grammar check (English) |
+| Landing page and launch posts | `marketing-skills` (copywriting, page review, launch), then `humanizer` |
+| Images for the landing page or socials | `canvas-design`; check the page with `webapp-testing` |
+
+The `ux-ui-agent-skills` plugin has checks that run when a `.tsx`, `.css` or `.html` file is
+saved. When a session ends, it asks for proof that each edited screen was measured. If you can't
+measure it, say so plainly; never claim it was checked.

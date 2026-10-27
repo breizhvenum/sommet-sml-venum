@@ -175,3 +175,6 @@ tools/.compile_key
 # CLAUDE.md is tracked again since 2026-10-13: it is the public rules file that was added as
 # claude.md on 2026-08-27 (Linux only loads the capital-letter name). The file purged on
 # 2026-08-17 had other content. Private facts belong in CLAUDE.local.md, never in CLAUDE.md.
+
+# design-plugin run receipts (local paths)
+.ds-receipts/
