@@ -45,6 +45,11 @@ class WeightService : public QObject
     // Percentage points added to the estimated body fat, for one person to line the estimate up
     // with a reference they trust (a DXA scan, calipers). 0 by default.
     Q_PROPERTY(double bodyFatOffset READ bodyFatOffset WRITE setBodyFatOffset NOTIFY changed)
+    // Send Sommet's own weigh-ins (Bluetooth scale, typed by hand) to intervals.icu wellness when
+    // it is connected (🟣76, 2026-10-27). Weight on by default; body fat is a second opt-in
+    // because the scale's number is an estimate and intervals.icu doesn't mark it as one.
+    Q_PROPERTY(bool sendToIntervals READ sendToIntervals WRITE setSendToIntervals NOTIFY changed)
+    Q_PROPERTY(bool sendBodyFatToIntervals READ sendBodyFatToIntervals WRITE setSendBodyFatToIntervals NOTIFY changed)
 
 public:
     explicit WeightService(QObject *parent = nullptr);
@@ -67,6 +72,10 @@ public:
     QVariantMap bodyProfile() const;
     double bodyFatOffset() const;
     void setBodyFatOffset(double v);
+    bool sendToIntervals() const;
+    void setSendToIntervals(bool on);
+    bool sendBodyFatToIntervals() const;
+    void setSendBodyFatToIntervals(bool on);
 
     // Re-pull every connected source (intervals + Garmin) and re-merge with manual entries.
     Q_INVOKABLE void refresh(int days = 365);
@@ -98,6 +107,9 @@ signals:
     void newScaleWeighIn(const QString &date, double weightKg);
 
 private:
+    // PUT one day's weigh-in to intervals.icu wellness (a merge: only weight / bodyFat change).
+    void sendWeighInToIntervals(const QString &date, double weightKg, double bodyFatPct);
+
     QNetworkAccessManager m_network;
     bool m_loading = false;
     bool m_garminNeedsLogin = false;

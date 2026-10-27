@@ -2,6 +2,7 @@ import { NativeEventEmitter, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAthleteThresholds } from './ApiIntervalsIcu';
 import { decodeScale, estimateBodyComp, ScaleReading, Settle } from './ScaleDecode';
+import { sendWeighInToIntervals } from './IntervalsWeighIn';
 
 // Local Bluetooth scale (Etekcity FIT 8S) on the phone/tablet: the Android twin of the desktop's
 // tools/scale_service.py. The native ScaleBle module forwards each broadcast; this file decodes it,
@@ -19,7 +20,7 @@ const PROFILE_KEY = 'scale.profile';        // { manual?: {heightCm, sex}, cache
 const OFFSET_KEY = 'scale.bodyFatOffset';
 
 export interface WeighIn { t: number; weightKg: number; impedanceOhm: number | null; address: string }
-export interface BodyProfile { heightCm: number; sex: 'M' | 'F'; source: 'manual' | 'intervals' }
+export interface BodyProfile { heightCm: number; sex: 'M' | 'F'; source: 'manual' | 'intervals' | 'watch' }
 export interface ScalePoint {
   date: string; weightKg: number; source: 'scale'; t: number;
   bmi?: number; impedanceOhm?: number;
@@ -68,7 +69,21 @@ export async function getBodyProfile(): Promise<BodyProfile | null> {
     return { heightCm: p.manual.heightCm, sex: p.manual.sex, source: 'manual' };
   if (p.cached?.heightCm > 0 && (p.cached.sex === 'M' || p.cached.sex === 'F'))
     return { heightCm: p.cached.heightCm, sex: p.cached.sex, source: 'intervals' };
+  if (p.watch?.heightCm > 0 && (p.watch.sex === 'M' || p.watch.sex === 'F'))
+    return { heightCm: p.watch.heightCm, sex: p.watch.sex, source: 'watch' };
   return null;
+}
+/** Remember the watch's own height and sex from a settings read, for when intervals.icu doesn't
+ *  give them (2026-10-27: no asking for what the watch already has). Best effort. */
+export async function rememberWatchBody(settings: { key: string; value: unknown }[]): Promise<void> {
+  const h = settings.find(x => x.key === 'body_height')?.value;
+  const g = settings.find(x => x.key === 'gender' || x.key === 'is_male')?.value;   // 1 = Male
+  if (typeof h !== 'number' || h < 100 || h > 230 || (g !== 0 && g !== 1)) return;
+  try {
+    const p = await readJson<any>(PROFILE_KEY, {});
+    p.watch = { heightCm: h, sex: g === 1 ? 'M' : 'F' };
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+  } catch { /* best effort */ }
 }
 export async function setBodyProfile(heightCm: number | null, sex: 'M' | 'F' | null): Promise<void> {
   const p = await readJson<any>(PROFILE_KEY, {});
@@ -156,6 +171,10 @@ async function handleAdvert(ev: { address: string; rssi: number; hex: string }) 
   if (res) {
     await appendWeighIn({ t: Math.floor(now), weightKg: res.weightKg, impedanceOhm: res.impedanceOhm, address: res.address });
     notify();
+    // The day's reading (with its estimated body fat) to intervals.icu, if switched on.
+    const day = localDay(now);
+    const point = (await loadScaleSeries()).find(p => p.date === day);
+    if (point) sendWeighInToIntervals(day, point.weightKg, point.bodyFatPct).catch(() => {});
   }
 }
 

@@ -875,6 +875,29 @@ PageFlickable {
                                    "more detail (body fat, muscle…) wins, so there are no duplicates. " +
                                    "Your Bluetooth scale, when set up, wins for the days it has a reading.")
                     }
+                    // 🟣76 (2026-10-27): Sommet's own weigh-ins go to intervals.icu; devices never do.
+                    RoundedSwitch {
+                        id: sendWeightSwitch
+                        text: qsTr("Send my weigh-ins to intervals.icu")
+                        enabled: ConnectionsService.intervalsIcuConnected
+                        checked: WeightService.sendToIntervals
+                        onToggled: WeightService.sendToIntervals = checked
+                    }
+                    RoundedSwitch {
+                        text: qsTr("Also send the estimated body fat")
+                        enabled: ConnectionsService.intervalsIcuConnected && sendWeightSwitch.checked
+                        checked: WeightService.sendBodyFatToIntervals
+                        onToggled: WeightService.sendBodyFatToIntervals = checked
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: ConnectionsService.intervalsIcuConnected
+                            ? qsTr("Each new weigh-in from your Bluetooth scale, or typed on the Weight page, " +
+                                   "is added to that day in intervals.icu. Body fat from the scale is an " +
+                                   "estimate, and intervals.icu won't show it as one.")
+                            : qsTr("Connect intervals.icu under Connections to send weigh-ins there.")
+                    }
                     // Estimated body fat from the Bluetooth scale: shift it to a reference you trust
                     // (a DXA scan, calipers). Applies to the whole history, on read.
                     Row {

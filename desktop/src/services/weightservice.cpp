@@ -323,6 +323,7 @@ void WeightService::addManualWeight(const QString &date, double weightKg, double
     QSettings().setValue(QStringLiteral("weight/manual"),
                          QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
     rebuild();
+    sendWeighInToIntervals(date, weightKg, bodyFatPct);
 }
 
 void WeightService::removeManualWeight(const QString &date)
@@ -353,6 +354,12 @@ QVariantMap WeightService::bodyProfile() const
     if (ih > 0 && !is.isEmpty())
         return {{QStringLiteral("heightCm"), ih}, {QStringLiteral("sex"), is},
                 {QStringLiteral("source"), QStringLiteral("intervals")}};
+    // Last read off the watch (SettingsWriteService caches it on every settings read).
+    const double wh = s.value(QStringLiteral("weight/profile/watchHeightCm"), 0.0).toDouble();
+    const QString ws = s.value(QStringLiteral("weight/profile/watchSex")).toString();
+    if (wh > 0 && !ws.isEmpty())
+        return {{QStringLiteral("heightCm"), wh}, {QStringLiteral("sex"), ws},
+                {QStringLiteral("source"), QStringLiteral("watch")}};
     return {{QStringLiteral("heightCm"), 0.0}, {QStringLiteral("sex"), QString()},
             {QStringLiteral("source"), QString()}};
 }
@@ -366,6 +373,59 @@ void WeightService::setBodyProfile(double heightCm, const QString &sex)
     s.setValue(QStringLiteral("weight/profile/manualSex"), ok ? sx : QString());
     emit changed();
     refresh();
+}
+
+bool WeightService::sendToIntervals() const
+{
+    return QSettings().value(QStringLiteral("weight/sendToIntervals"), true).toBool();
+}
+
+void WeightService::setSendToIntervals(bool on)
+{
+    QSettings().setValue(QStringLiteral("weight/sendToIntervals"), on);
+    emit changed();
+}
+
+bool WeightService::sendBodyFatToIntervals() const
+{
+    return QSettings().value(QStringLiteral("weight/sendBodyFatToIntervals"), false).toBool();
+}
+
+void WeightService::setSendBodyFatToIntervals(bool on)
+{
+    QSettings().setValue(QStringLiteral("weight/sendBodyFatToIntervals"), on);
+    emit changed();
+}
+
+void WeightService::sendWeighInToIntervals(const QString &date, double weightKg, double bodyFatPct)
+{
+    if (!sendToIntervals() || weightKg <= 0 || date.isEmpty())
+        return;
+    const QSettings s;
+    const QString athlete =
+        s.value(QStringLiteral("connections/intervals_icu/athleteId")).toString();
+    const QString key = s.value(QStringLiteral("connections/intervals_icu/apiKey")).toString();
+    if (athlete.isEmpty() || key.isEmpty())
+        return;                                   // not connected: nothing to send
+    QJsonObject body{{QStringLiteral("weight"), qRound(weightKg * 100.0) / 100.0}};
+    if (bodyFatPct > 0 && sendBodyFatToIntervals())
+        body.insert(QStringLiteral("bodyFat"), qRound(bodyFatPct * 10.0) / 10.0);
+    QNetworkRequest req(QUrl(QStringLiteral("https://intervals.icu/api/v1/athlete/%1/wellness/%2")
+                                 .arg(athlete, date)));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setRawHeader("Authorization",
+                     "Basic " + (QByteArrayLiteral("API_KEY:") + key.toUtf8()).toBase64());
+    req.setRawHeader("User-Agent",
+                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Sommet/1.0");
+    QNetworkReply *reply = m_network.put(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, date]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            m_lastError = tr("Couldn't send the %1 weigh-in to intervals.icu: %2")
+                              .arg(date, reply->errorString());
+            emit changed();
+        }
+    });
 }
 
 double WeightService::bodyFatOffset() const
@@ -446,6 +506,9 @@ void WeightService::fetchScale(bool poll)
                 const QVariantMap last = list.last().toMap();
                 emit newScaleWeighIn(last.value(QStringLiteral("date")).toString(),
                                      last.value(QStringLiteral("weightKg")).toDouble());
+                sendWeighInToIntervals(last.value(QStringLiteral("date")).toString(),
+                                       last.value(QStringLiteral("weightKg")).toDouble(),
+                                       last.value(QStringLiteral("bodyFatPct")).toDouble());
             }
             m_scaleLastT = qMax(m_scaleLastT, newest);
             m_scaleSeen = true;

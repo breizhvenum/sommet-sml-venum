@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { computeSleepScore } from './SleepScore';
 import { getIntervalsIcuCredentials } from './ApiIntervalsIcu';
 import { loadScaleSeries, refreshProfileFromIntervals } from './ScaleService';
+import { sendWeighInToIntervals } from './IntervalsWeighIn';
 
 // intervals.icu wellness feed — the single source behind BOTH the Weight and Health screens
 // (André, 2026-08-26: "port everything to android"). The desktop equivalents are C++ services
@@ -135,6 +136,7 @@ export async function addManualWeight(date: string, weightKg: number): Promise<v
   next.push({ date, weightKg, source: 'manual' });
   next.sort((a, b) => a.date.localeCompare(b.date));
   await AsyncStorage.setItem(MANUAL_KEY, JSON.stringify(next));
+  sendWeighInToIntervals(date, weightKg).catch(() => {});      // if switched on (🟣76)
 }
 
 export async function removeManualWeight(date: string): Promise<void> {

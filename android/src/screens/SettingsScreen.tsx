@@ -58,6 +58,7 @@ import {
   isAuthenticated as stravaIsAuth, getAuthorizationUrl as stravaAuthUrl, logout as stravaLogout,
 } from '../services/ApiStrava';
 import { getScaleAddress, scaleStatus } from '../services/ScaleService';
+import { getSendWeighIns, setSendWeighIns, getSendBodyFat, setSendBodyFat } from '../services/IntervalsWeighIn';
 import { ScaleSetupModal } from '../components/ScaleSetupModal';
 import {
   getMapProvider, setMapProvider, MapProvider, MAP_PROVIDER_LABELS,
@@ -249,6 +250,8 @@ export default function SettingsScreen() {
   const [stravaAuth, setStravaAuth]       = useState(false);
   const [scaleAddr, setScaleAddr]         = useState<string | null>(null);
   const [scaleOpen, setScaleOpen]         = useState(false);
+  const [sendWeighIns, setSendWeighInsState] = useState(true);
+  const [sendBodyFat, setSendBodyFatState]   = useState(false);
 
   const [intervalsAthleteId, setIntervalsAthleteId] = useState('');
   const [intervalsApiKey, setIntervalsApiKey]       = useState('');
@@ -420,6 +423,8 @@ export default function SettingsScreen() {
     });
     stravaIsAuth().then(setStravaAuth);
     getScaleAddress().then(setScaleAddr);
+    getSendWeighIns().then(setSendWeighInsState);
+    getSendBodyFat().then(setSendBodyFatState);
     getIntervalsIcuCredentials().then(creds => {
       setIntervalsSaved(!!creds);
       setIntervalsAthleteId(creds?.athleteId ?? '');
@@ -815,6 +820,19 @@ export default function SettingsScreen() {
                 <Text style={styles.sectionDesc}>
                   Pulls every activity from intervals.icu into the app (list, Totals, Calendar).
                   Already-synced watch moves are skipped, so nothing double-counts.
+                </Text>
+                {/* 🟣76 (2026-10-27): Sommet's own weigh-ins go to intervals.icu; devices never do. */}
+                <Text style={[styles.cardTitle, { marginTop: 16 }]}>Weigh-ins</Text>
+                <SwitchLine value={sendWeighIns} label="Send my weigh-ins to intervals.icu"
+                  onValueChange={v => { setSendWeighInsState(v); setSendWeighIns(v); }} />
+                {sendWeighIns && (
+                  <SwitchLine value={sendBodyFat} label="Also send the estimated body fat"
+                    onValueChange={v => { setSendBodyFatState(v); setSendBodyFat(v); }} />
+                )}
+                <Text style={styles.sectionDesc}>
+                  Each new weigh-in from your Bluetooth scale, or typed on the Weight screen, is added to
+                  that day in intervals.icu. Body fat from the scale is an estimate, and intervals.icu
+                  won't show it as one.
                 </Text>
               </>
             )}

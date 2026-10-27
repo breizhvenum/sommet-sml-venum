@@ -136,6 +136,16 @@ void SettingsWriteService::refresh()
                 QSettings().setValue(QStringLiteral("hrProfile/") + key,
                                      entry.value(QStringLiteral("value")).toDouble());
             }
+            // Height and sex for the scale's body-fat estimate (2026-10-27: "kinda dumb" to ask
+            // for what the watch already has). Used when intervals.icu doesn't give them.
+            if (entry.value(QStringLiteral("value")).isDouble()) {
+                const double v = entry.value(QStringLiteral("value")).toDouble();
+                if (it.key() == QStringLiteral("body_height") && v >= 100 && v <= 230)
+                    QSettings().setValue(QStringLiteral("weight/profile/watchHeightCm"), v);
+                else if (it.key() == QStringLiteral("gender") || it.key() == QStringLiteral("is_male"))
+                    QSettings().setValue(QStringLiteral("weight/profile/watchSex"),
+                                         v == 1 ? QStringLiteral("M") : QStringLiteral("F"));
+            }
 
             rows.append(row);
         }

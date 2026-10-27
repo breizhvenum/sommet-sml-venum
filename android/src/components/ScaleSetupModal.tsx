@@ -9,7 +9,7 @@ import {
 // Bluetooth scale: set-up and manage. The Android twin of desktop/qml/components/ScaleSetupDialog.qml
 // (same steps, same words). The scale (Etekcity FIT 8S) only broadcasts while someone stands on it,
 // so there is no pairing: 1 step on it, 2 pick what was heard, 3 check the display against the
-// number shown, 4 height and sex for the body-fat estimate.
+// number shown, 4 height and sex - only when neither intervals.icu nor the watch has them.
 
 type Step = 0 | 1 | 2 | 3 | 4;   // 0 = manage (already set up)
 
@@ -109,7 +109,9 @@ export function ScaleSetupModal({ visible, onClose, onChanged }: {
             </Text>
             <TouchableOpacity style={btn} onPress={async () => {
               await setScaleAddress(chosen.address); setAddress(chosen.address);
-              await startListening(); onChanged(); setStep(4);
+              await startListening(); onChanged();
+              // Height and sex already known (intervals.icu or the watch): nothing to ask.
+              if (await getBodyProfile()) onClose(); else setStep(4);
             }}><Text style={txt}>Yes, it matches</Text></TouchableOpacity>
             <TouchableOpacity style={btn} onPress={() => setStep(2)}><Text style={txt}>No</Text></TouchableOpacity>
           </>)}
@@ -117,11 +119,11 @@ export function ScaleSetupModal({ visible, onClose, onChanged }: {
           {step === 4 && (<>
             <Text style={muted}>Step 4 of 4</Text>
             <Text style={body}>
-              Body fat and water are estimated from height and sex. Taken from intervals.icu when connected; you can type them instead.
+              Body fat and water are estimated from height and sex. They come from intervals.icu or your watch when either has them; type them only to override.
             </Text>
             {profile && (
               <Text style={muted}>
-                Now: {profile.heightCm} cm, {profile.sex === 'M' ? 'male' : 'female'} ({profile.source === 'manual' ? 'typed by hand' : 'from intervals.icu'})
+                Now: {profile.heightCm} cm, {profile.sex === 'M' ? 'male' : 'female'} ({profile.source === 'manual' ? 'typed by hand' : profile.source === 'watch' ? 'from your watch' : 'from intervals.icu'})
               </Text>
             )}
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: v3Spacing.small }}>

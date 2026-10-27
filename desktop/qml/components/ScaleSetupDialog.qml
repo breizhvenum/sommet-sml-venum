@@ -5,8 +5,8 @@ import AmbitApp
 // Bluetooth scale: set-up and manage (ticket weight-sources/03). The scale is an Etekcity FIT 8S,
 // which only broadcasts its reading while someone stands on it - no pairing, no app, no account.
 // Four steps, one per screen: 1 step on it, 2 pick what was heard, 3 check the display against
-// the number shown, 4 height and sex for the body-fat estimate. Opened from the Weight page and
-// from Settings → Connections.
+// the number shown, 4 height and sex - only when neither intervals.icu nor the watch has them.
+// Opened from the Weight page and from Settings → Connections.
 ThemedDialog {
     id: root
     title: qsTr("Bluetooth scale")
@@ -163,7 +163,9 @@ ThemedDialog {
                 spacing: Theme.spacingSmall
                 RoundedButton {
                     text: qsTr("Yes, it matches")
-                    onClicked: { WeightService.scaleStart(root.chosen.address); root.step = 4 }
+                    // Height and sex already known (intervals.icu or the watch): nothing to ask.
+                    onClicked: { WeightService.scaleStart(root.chosen.address)
+                                 if (WeightService.bodyProfile.source) root.close(); else root.step = 4 }
                 }
                 RoundedButton { text: qsTr("No"); onClicked: root.step = 2 }
             }
@@ -178,8 +180,8 @@ ThemedDialog {
             Text {
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.text
                 font.pixelSize: Theme.fontSizeBody
-                text: qsTr("Body fat and water are estimated from height and sex. Taken from " +
-                           "intervals.icu when connected; you can type them instead.")
+                text: qsTr("Body fat and water are estimated from height and sex. They come from " +
+                           "intervals.icu or your watch when either has them; type them only to override.")
             }
             Text {
                 width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
@@ -188,7 +190,8 @@ ThemedDialog {
                 text: qsTr("Now: %1 cm, %2 (%3)").arg(WeightService.bodyProfile.heightCm)
                       .arg(WeightService.bodyProfile.sex === "M" ? qsTr("male") : qsTr("female"))
                       .arg(WeightService.bodyProfile.source === "manual" ? qsTr("typed by hand")
-                                                                         : qsTr("from intervals.icu"))
+                           : WeightService.bodyProfile.source === "watch" ? qsTr("from your watch")
+                           : qsTr("from intervals.icu"))
             }
             Row {
                 spacing: Theme.spacingSmall

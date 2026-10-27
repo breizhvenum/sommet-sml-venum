@@ -8,6 +8,7 @@ import { decodePersonalSettings } from './AmbitPersonalSettingsReader';
 import { writeSetting as writeSettingRaw, WriteSettingResult, WriteDevice } from './AmbitSettingsWriter';
 import { computeActivityClass } from './IntervalsStats';
 import { rememberHrProfile } from './CoachService';
+import { rememberWatchBody } from './ScaleService';
 
 // The Ambit 1 / Ambit 2 family (Ambit, Ambit2, Ambit2 S, Ambit2 R) uses the older legacy
 // personal-settings mechanism, not the Ambit3/Kailash SBEM 0x1100 - a different read path
@@ -66,7 +67,10 @@ export async function readAmbitSettings(report: (s: ReadSettingsState) => void):
   // Every successful read also remembers max/rest HR + sex for the Coach's on-device load
   // estimate (CoachService.rememberHrProfile), which runs without a watch attached.
   const onState = (s: ReadSettingsState) => {
-    if (s.phase === 'done' && s.settings) rememberHrProfile(s.settings).catch(() => {});
+    if (s.phase === 'done' && s.settings) {
+      rememberHrProfile(s.settings).catch(() => {});
+      rememberWatchBody(s.settings).catch(() => {});        // height + sex for the scale estimate
+    }
     report(s);
   };
   // Over BLE the link is already open (HomeScreen owns it); the USB connect() would pop the
