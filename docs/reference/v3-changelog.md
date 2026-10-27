@@ -7,6 +7,42 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-27: Bluetooth sync that holds, POIs and routes you can remove, Settings split (desktop 0.2.50)
+
+Checked on André's Ambit3 Peak (fw 2.4.17) over Bluetooth and USB, 2026-10-20 to 2026-10-27.
+
+- **Bluetooth on the desktop:** the link holds and the watch's own questions get answers; a sync
+  starts when the watch asks for one; every sync sets the watch clock to this computer's time.
+  The watch is named by the same serial over Bluetooth as on the cable, so it's one watch in the
+  list. A watch that vanishes mid-link is a disconnect; a refusing watch isn't hammered.
+- **Pairing on Linux:** Sommet turns Bluetooth privacy on while a watch pairs (one password
+  prompt), and turns it off again if the Bluetooth helper fails to start. New how-to: keep a
+  Bluetooth watch paired on Linux.
+- **POIs and routes:** remove a POI or a route from the watch. Sending or removing a route keeps
+  every POI: they're saved to `~/AmbitAppBackups/POIs/<serial>/` first and put back, with one
+  retry from an empty list. A route goes to a watch with no POIs over Bluetooth. A new route
+  replaces the one of the same name. POI names are cut to the watch's 15-byte limit. A removal
+  over Bluetooth is refused if another watch connected since the list was read.
+- **Routes over Bluetooth** get the same direction pins as on the cable, and a GPX with no
+  `<metadata><name>` takes the route's or track's own name instead of failing.
+- **Settings** is split: a few cards open, the rest one click away. Watch settings and POIs work
+  without SuuntoLink installed (the schema comes from the watch). A failed change keeps its
+  message until you switch watches or open the page again.
+- **Health:** every watch's days merged, a This week activity card, steps per weekday, the
+  watch's own activity calories and recovery time (the recovery tile reads the newest day only).
+- **Training calendar:** an edited workout reaches the watch and keeps its own rule id, so a new
+  workout can't take it; a slow compiler stops after 3 minutes and the rest go at the next sync.
+- **Sport modes:** only your own displays are counted, and a copy is saved before every write.
+- **Testing mode** never writes to a real watch, and the browser tools say so. The Workout
+  Builder never hangs on "creating workout..." and installs while Sommet is running.
+- **Errors** say what went wrong ("the watch isn't connected"), not "Bad Gateway".
+- **intervals.icu:** workouts carry a description (so Wahoo takes them); indoor activities get no
+  map track and are left out of outdoor totals.
+- Known: a route written by Sommet still shows 0 m distance and ascent in the watch's list (the
+  values SuuntoLink computes are not worked out yet); the route itself is complete.
+
+---
+
 ## 2026-10-19: Card-started workouts play the step melody and show "Workout ended" (firmware patch, desktop 0.2.49)
 
 Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-19, hardware-confirmed.
