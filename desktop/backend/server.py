@@ -1050,6 +1050,19 @@ def run_tool(script, args, timeout=180, stdin=None, product_id=None, serial=None
             lock.release()
 
 
+_SCALE_LISTENER = None
+
+
+def scale_listener():
+    """The one local-scale listener (tools/scale_service.py), created on first use."""
+    global _SCALE_LISTENER
+    if _SCALE_LISTENER is None:
+        sys.path.insert(0, str(TOOLS_DIR))
+        import scale_service                                   # noqa: PLC0415
+        _SCALE_LISTENER = scale_service.ScaleListener()
+    return _SCALE_LISTENER
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # keep stdout clean; errors still surface via response bodies
@@ -1425,6 +1438,10 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_magene_import()
         elif self.path == "/api/garmin/weight" or self.path.startswith("/api/garmin/weight?"):
             self._handle_garmin_weight()
+        elif self.path == "/api/scale/status":
+            self._send_json(200, scale_listener().status())
+        elif self.path == "/api/scale/weighins" or self.path.startswith("/api/scale/weighins?"):
+            self._handle_scale_weighins()
         elif self.path.startswith("/api/garmin/activities"):
             self._handle_garmin_sync("activities")
         elif self.path.startswith("/api/garmin/health"):
@@ -1655,6 +1672,14 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_ember_log(body)
         elif self.path == "/api/garmin/weight/login":
             self._handle_garmin_weight_login(body)
+        elif self.path == "/api/scale/start":
+            self._handle_scale_control("start", body)
+        elif self.path == "/api/scale/stop":
+            self._handle_scale_control("stop", body)
+        elif self.path == "/api/scale/forget":
+            self._handle_scale_control("forget", body)
+        elif self.path == "/api/scale/find":
+            self._handle_scale_find(body)
         elif self.path == "/api/garmin/upload":
             self._handle_garmin_upload(body)
         elif self.path == "/api/device/select":
@@ -5846,6 +5871,54 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200 if info.get("ok") else 200, info)  # needLogin is a 200 with ok:false
 
+    def _handle_scale_weighins(self):
+        """GET /api/scale/weighins?height=CM&sex=M|F&offset=PCT - one reading per day from the local
+        Bluetooth scale (tools/scale_service.py). Body fat / water are ESTIMATED from the impedance
+        (Sun et al. 2003) and only present when height, sex and impedance are all known."""
+        import scale_service                                   # noqa: PLC0415
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+
+        def num(name):
+            try:
+                return float(q.get(name, [""])[0])
+            except ValueError:
+                return None
+        sex = q.get("sex", [None])[0]
+        self._send_json(200, {"ok": True, "source": "scale",
+                              "series": scale_service.series(num("height"), sex, num("offset") or 0.0)})
+
+    def _handle_scale_control(self, what, body):
+        """POST /api/scale/{start,stop,forget}. start takes an optional {address} to pin the scale."""
+        listener = scale_listener()
+        if what == "start":
+            listener.start((body or {}).get("address"))
+        elif what == "stop":
+            listener.stop()
+        else:
+            listener.stop()
+            import scale_service                               # noqa: PLC0415
+            scale_service.forget()
+        self._send_json(200, listener.status())
+
+    def _handle_scale_find(self, body):
+        """POST /api/scale/find {seconds?} - listen for scales for the set-up wizard (blocks)."""
+        import scale_service                                   # noqa: PLC0415
+        if not scale_service.ScaleListener.available():
+            self._send_json(200, {"ok": False, "error": "bleak is not installed (pip install bleak)"})
+            return
+        listener = scale_listener()
+        was_listening = listener.listening()
+        listener.stop()                                        # one scanner at a time
+        try:
+            seconds = max(3, min(int((body or {}).get("seconds", 15)), 60))
+            found = scale_service.find_scales(seconds)
+            self._send_json(200, {"ok": True, "found": found})
+        except Exception as e:                                 # noqa: BLE001 - Bluetooth off, busy ...
+            self._send_json(200, {"ok": False, "error": str(e) or e.__class__.__name__})
+        finally:
+            if was_listening:
+                listener.start()
+
     def _handle_garmin_sync(self, what):
         """GET /api/garmin/{activities,health}?days=N via tools/garmin_sync.py (cached login)."""
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -9257,6 +9330,13 @@ def main():
     ap.add_argument("--port", type=int, default=8766)
     args = ap.parse_args()
 
+    try:                                                  # a scale set up earlier listens from the start
+        sys.path.insert(0, str(TOOLS_DIR))
+        import scale_service                              # noqa: PLC0415
+        if scale_service.load_config().get("address") and scale_service.ScaleListener.available():
+            scale_listener().start()
+    except Exception as exc:                              # noqa: BLE001 - never block the backend
+        print(f"scale listener not started: {exc}")
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"AmbitApp backend bridge running at http://{args.host}:{args.port}/ "
           f"(Ctrl+C to stop)")

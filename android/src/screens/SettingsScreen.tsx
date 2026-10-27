@@ -57,6 +57,8 @@ import { getSleepScoreSource, setSleepScoreSource } from '../services/WellnessSe
 import {
   isAuthenticated as stravaIsAuth, getAuthorizationUrl as stravaAuthUrl, logout as stravaLogout,
 } from '../services/ApiStrava';
+import { getScaleAddress, scaleStatus } from '../services/ScaleService';
+import { ScaleSetupModal } from '../components/ScaleSetupModal';
 import {
   getMapProvider, setMapProvider, MapProvider, MAP_PROVIDER_LABELS,
 } from '../services/MapProviderService';
@@ -245,6 +247,8 @@ export default function SettingsScreen() {
   const [savedKey, setSavedKey]           = useState<string | null>(null);
   const [saving, setSaving]               = useState(false);
   const [stravaAuth, setStravaAuth]       = useState(false);
+  const [scaleAddr, setScaleAddr]         = useState<string | null>(null);
+  const [scaleOpen, setScaleOpen]         = useState(false);
 
   const [intervalsAthleteId, setIntervalsAthleteId] = useState('');
   const [intervalsApiKey, setIntervalsApiKey]       = useState('');
@@ -415,6 +419,7 @@ export default function SettingsScreen() {
       setRunalyzeKey(k ?? '');
     });
     stravaIsAuth().then(setStravaAuth);
+    getScaleAddress().then(setScaleAddr);
     getIntervalsIcuCredentials().then(creds => {
       setIntervalsSaved(!!creds);
       setIntervalsAthleteId(creds?.athleteId ?? '');
@@ -691,6 +696,16 @@ export default function SettingsScreen() {
           action={stravaAuth ? 'Manage' : 'Connect'}
           onPress={() => setOpenConnection('strava')}
         />
+        {/* Bluetooth body scale (Etekcity FIT 8S): listened to directly, no account. */}
+        <ConnectionRow
+          name="Bluetooth scale"
+          connected={!!scaleAddr && scaleStatus().listening}
+          status={!scaleAddr ? 'not set up' : scaleStatus().listening ? 'listening' : 'not listening'}
+          action={scaleAddr ? 'Manage' : 'Set up'}
+          onPress={() => setScaleOpen(true)}
+        />
+        <ScaleSetupModal visible={scaleOpen} onClose={() => setScaleOpen(false)}
+          onChanged={async () => setScaleAddr(await getScaleAddress())} />
         {/* Dropbox / Google Drive / OneDrive rows removed (André, 2026-08-16): cloud backup is
             now just "save to a folder" on the Backup screen (point it at a cloud sync folder),
             so there's no OAuth "connection" to set up here anymore. */}

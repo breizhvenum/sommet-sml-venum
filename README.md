@@ -368,6 +368,9 @@ Built on the real work of others:
 - **marguslt** — firmware-download recipe, gists, Movescount knowledge.
 - **Pavel Samokha** — the community App Zone / workout compiler every scheduled workout is compiled on, and the SuuntoLink app-catalogue method (Suunto forum).
 - **Emil Ljungdahl** — original author of `libambit`.
+- **[openScale](https://github.com/oliexdev/openScale)** (GPLv3) and
+  **[etekcity_esf551_ble](https://github.com/ronnnnnnnnnnnnn/etekcity_esf551_ble)** — Etekcity
+  scale broadcast layout, and a cross-check of the published Sun et al. (2003) body-fat equations.
 - **sebchastang** — published Suunto App Zone interval-training scripts.
 - **[bwaldvogel/openmoves](https://github.com/bwaldvogel/openmoves)** — Openmoves.
 - **[iwanders/gps_track_pod](https://github.com/iwanders/gps_track_pod)** — Suunto GPS Track Pod

@@ -45,8 +45,20 @@ A cycling head unit from another maker (Garmin Edge, Bryton, Wahoo ELEMNT, Magen
 _Avoid_: head unit, GPS, watch
 
 **Source**:
-Where an Activity came from: a watch, a bike computer, a file, or intervals.icu.
+Where an Activity or a Weigh-in came from: a watch, a bike computer, a file, a Scale, Garmin Connect, intervals.icu, or typed by hand (Manual).
 _Avoid_: origin, provider, device (when intervals.icu or a file can be meant)
+
+**Scale**:
+A Bluetooth body scale that Sommet listens to directly, with no account and no pairing. Today the Etekcity FIT 8S, which broadcasts its reading while someone stands on it.
+_Avoid_: smart scale, balance
+
+**Weigh-in**:
+One reading of body weight from a Source, for one day. When a day has several, the Scale or a Manual one wins; among cloud sources the one with the most detail wins.
+_Avoid_: measurement, weighing, entry
+
+**Estimated**:
+A body-fat or body-water number worked out from the impedance of a Scale (Sun et al. 2003), not measured. It always carries this word on screen; follow the trend, not one reading.
+_Avoid_: calculated, accurate, real
 
 ### What the user sees
 

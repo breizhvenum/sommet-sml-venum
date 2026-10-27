@@ -219,3 +219,17 @@ actually gates the write.
 
 The manual is Suunto Oy's document, reproduced here only as a reference for interoperability
 work; this project is not affiliated with or endorsed by Suunto Oy.
+
+- **[openScale](https://github.com/oliexdev/openScale)** and its contributors (GPL-3.0) - the open
+  Bluetooth-scale app. Its `EtekcityFit8SHandler` confirmed the FIT 8S broadcast layout that
+  `tools/etekcity_scale.py` decodes (weight in grams, impedance in ohms), and its
+  `StandardImpedanceLib` gave an independent check of the Sun et al. (2003) coefficients used in
+  `tools/body_composition.py`. That file is our own implementation of the published equations, not a
+  copy of openScale's code.
+
+- **[ronnnnnnnnnnnnn/etekcity_esf551_ble](https://github.com/ronnnnnnnnnnnnn/etekcity_esf551_ble)** -
+  documents the Etekcity scale Bluetooth broadcast format that openScale's handler cites; our own
+  capture agrees with it byte for byte.
+
+- **Sun SS, Chumlea WC, Heymsfield SB, et al.**, *Am J Clin Nutr* 2003;77:331-340 - the published
+  bioimpedance equations behind the estimated body fat and water (`tools/body_composition.py`).

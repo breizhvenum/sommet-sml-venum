@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 #include <QMap>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -30,7 +31,8 @@ static int fieldCount(const QVariantMap &m)
 
 static int sourcePriority(const QString &s)
 {
-    if (s == QStringLiteral("manual")) return 3;   // you typed it - wins ties
+    if (s == QStringLiteral("manual")) return 4;   // you typed it - wins ties
+    if (s == QStringLiteral("scale")) return 3;    // your own scale, read locally
     if (s == QStringLiteral("garmin")) return 2;
     return 1;                                       // intervals
 }
@@ -41,6 +43,15 @@ WeightService::WeightService(QObject *parent) : QObject(parent)
     // is exactly the merge-everything behaviour this service had before the setting existed.
     const QSettings settings;
     m_source = settings.value(QStringLiteral("weight/source"), QStringLiteral("all")).toString();
+
+    // Poll the local backend every few seconds while a scale is set up, so a weigh-in appears on
+    // the page by itself (no refresh press). Nothing leaves the machine.
+    m_scaleTimer.setInterval(4000);
+    connect(&m_scaleTimer, &QTimer::timeout, this, &WeightService::pollScale);
+    if (settings.value(QStringLiteral("weight/scale/enabled"), false).toBool())
+        m_scaleTimer.start();
+    // Learn the backend's scale state once at start (it remembers the scale between runs).
+    QTimer::singleShot(1500, this, &WeightService::pollScale);
 }
 
 void WeightService::setSource(const QString &s)
@@ -71,7 +82,8 @@ bool WeightService::connected() const
         !s.value(QStringLiteral("connections/intervals_icu/athleteId")).toString().isEmpty()
         && !s.value(QStringLiteral("connections/intervals_icu/apiKey")).toString().isEmpty();
     const bool garmin = s.value(QStringLiteral("connections/garmin/connected"), false).toBool();
-    return intervals || garmin || !loadManual().isEmpty();
+    const bool scale = s.value(QStringLiteral("weight/scale/enabled"), false).toBool();
+    return intervals || garmin || scale || !loadManual().isEmpty();
 }
 
 double WeightService::latestWeightKg() const
@@ -117,7 +129,10 @@ void WeightService::refresh(int days)
         && !s.value(QStringLiteral("connections/intervals_icu/apiKey")).toString().isEmpty();
     const bool haveGarmin = s.value(QStringLiteral("connections/garmin/connected"), false).toBool();
 
-    m_pending = (haveIntervals ? 1 : 0) + (haveGarmin ? 1 : 0);
+    const bool haveScale = s.value(QStringLiteral("weight/scale/enabled"), false).toBool();
+    m_scaleSeries.clear();
+
+    m_pending = (haveIntervals ? 1 : 0) + (haveGarmin ? 1 : 0) + (haveScale ? 1 : 0);
     if (m_pending == 0) {          // manual-only (or nothing) - merge immediately
         rebuild();
         return;
@@ -125,6 +140,11 @@ void WeightService::refresh(int days)
     setLoading(true);
     if (haveIntervals) fetchIntervals(days);
     if (haveGarmin) fetchGarmin(days);
+    if (haveScale) {
+        // The scale's body-fat estimate needs the height: fetch the profile first when
+        // intervals.icu is connected (it refreshes the cached value), else use what is cached.
+        if (haveIntervals) fetchProfile(); else fetchScale();
+    }
 }
 
 void WeightService::oneSourceDone()
@@ -151,10 +171,18 @@ void WeightService::rebuild()
                 continue;
             }
             const QVariantMap cur = best.value(date);
+            const int pm = sourcePriority(m.value(QStringLiteral("source")).toString());
+            const int pc = sourcePriority(cur.value(QStringLiteral("source")).toString());
+            // Your own scale and your own typing beat a cloud reading of the same day, even one
+            // with more fields (André, 2026-10-16: "prefer the scale"); among the cloud sources
+            // the richest reading still wins.
+            if (pm >= 3 || pc >= 3) {
+                if (pm > pc)
+                    best.insert(date, m);
+                continue;
+            }
             const int a = fieldCount(m), b = fieldCount(cur);
-            if (a > b || (a == b
-                    && sourcePriority(m.value(QStringLiteral("source")).toString())
-                       > sourcePriority(cur.value(QStringLiteral("source")).toString())))
+            if (a > b || (a == b && pm > pc))
                 best.insert(date, m);
         }
     };
@@ -164,6 +192,7 @@ void WeightService::rebuild()
         consider(m_intervalsSeries);
     if (m_source != QLatin1String("intervals"))
         consider(m_garminSeries);
+    consider(m_scaleSeries);
     consider(loadManual());
 
     m_series.clear();
@@ -305,5 +334,214 @@ void WeightService::removeManualWeight(const QString &date)
             arr.append(QJsonObject::fromVariantMap(v.toMap()));
     QSettings().setValue(QStringLiteral("weight/manual"),
                          QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
+    rebuild();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Body profile (height, sex) for the body-fat estimate
+
+QVariantMap WeightService::bodyProfile() const
+{
+    const QSettings s;
+    const double mh = s.value(QStringLiteral("weight/profile/manualHeightCm"), 0.0).toDouble();
+    const QString ms = s.value(QStringLiteral("weight/profile/manualSex")).toString();
+    if (mh > 0 && !ms.isEmpty())
+        return {{QStringLiteral("heightCm"), mh}, {QStringLiteral("sex"), ms},
+                {QStringLiteral("source"), QStringLiteral("manual")}};
+    const double ih = s.value(QStringLiteral("weight/profile/heightCm"), 0.0).toDouble();
+    const QString is = s.value(QStringLiteral("weight/profile/sex")).toString();
+    if (ih > 0 && !is.isEmpty())
+        return {{QStringLiteral("heightCm"), ih}, {QStringLiteral("sex"), is},
+                {QStringLiteral("source"), QStringLiteral("intervals")}};
+    return {{QStringLiteral("heightCm"), 0.0}, {QStringLiteral("sex"), QString()},
+            {QStringLiteral("source"), QString()}};
+}
+
+void WeightService::setBodyProfile(double heightCm, const QString &sex)
+{
+    QSettings s;
+    const QString sx = sex.left(1).toUpper();
+    const bool ok = heightCm >= 100 && heightCm <= 230 && (sx == QLatin1String("M") || sx == QLatin1String("F"));
+    s.setValue(QStringLiteral("weight/profile/manualHeightCm"), ok ? heightCm : 0.0);
+    s.setValue(QStringLiteral("weight/profile/manualSex"), ok ? sx : QString());
+    emit changed();
+    refresh();
+}
+
+double WeightService::bodyFatOffset() const
+{
+    return QSettings().value(QStringLiteral("weight/bodyFatOffset"), 0.0).toDouble();
+}
+
+void WeightService::setBodyFatOffset(double v)
+{
+    if (qFuzzyCompare(1.0 + bodyFatOffset(), 1.0 + v))
+        return;
+    QSettings().setValue(QStringLiteral("weight/bodyFatOffset"), qBound(-20.0, v, 20.0));
+    emit changed();
+    fetchScale(true);              // the offset applies to the whole history, on read
+}
+
+void WeightService::fetchProfile()
+{
+    const QSettings s;
+    const QString athlete =
+        s.value(QStringLiteral("connections/intervals_icu/athleteId")).toString();
+    const QString key = s.value(QStringLiteral("connections/intervals_icu/apiKey")).toString();
+    QNetworkRequest req(QUrl(QStringLiteral("https://intervals.icu/api/v1/athlete/%1").arg(athlete)));
+    req.setRawHeader("Authorization",
+                     "Basic " + (QByteArrayLiteral("API_KEY:") + key.toUtf8()).toBase64());
+    req.setRawHeader("User-Agent",
+                     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Sommet/1.0");
+    QNetworkReply *reply = m_network.get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        if (reply->error() == QNetworkReply::NoError) {
+            const auto doc = QJsonDocument::fromJson(reply->readAll());
+            const QJsonObject o = doc.isArray() ? doc.array().first().toObject() : doc.object();
+            const double hm = o.value(QStringLiteral("height")).toDouble();          // metres
+            const QString sex = o.value(QStringLiteral("sex")).toString();
+            QSettings s;
+            if (hm > 0.5 && (sex == QLatin1String("M") || sex == QLatin1String("F"))) {
+                s.setValue(QStringLiteral("weight/profile/heightCm"), qRound(hm * 100.0));
+                s.setValue(QStringLiteral("weight/profile/sex"), sex);
+            }
+        }                                      // on failure the cached profile is used
+        fetchScale();
+    });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Local Bluetooth scale (backend: tools/scale_service.py)
+
+void WeightService::fetchScale(bool poll)
+{
+    const QVariantMap prof = bodyProfile();
+    QUrl url(kBackendBase + QStringLiteral("/api/scale/weighins"));
+    QUrlQuery q;
+    if (prof.value(QStringLiteral("heightCm")).toDouble() > 0) {
+        q.addQueryItem(QStringLiteral("height"), QString::number(prof.value(QStringLiteral("heightCm")).toDouble()));
+        q.addQueryItem(QStringLiteral("sex"), prof.value(QStringLiteral("sex")).toString());
+    }
+    q.addQueryItem(QStringLiteral("offset"), QString::number(bodyFatOffset()));
+    url.setQuery(q);
+    QNetworkReply *reply = m_network.get(QNetworkRequest(url));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, poll]() {
+        reply->deleteLater();
+        QVariantList list;
+        bool ok = false;
+        if (reply->error() == QNetworkReply::NoError) {
+            const auto o = QJsonDocument::fromJson(reply->readAll()).object();
+            ok = o.value(QStringLiteral("ok")).toBool(false);
+            for (const auto &v : o.value(QStringLiteral("series")).toArray())
+                list.append(v.toObject().toVariantMap());
+        } else if (!poll && m_lastError.isEmpty()) {
+            m_lastError = reply->errorString();
+        }
+        if (ok) {
+            qint64 newest = 0;
+            for (const QVariant &v : list)
+                newest = qMax(newest, v.toMap().value(QStringLiteral("t")).toLongLong());
+            if (m_scaleSeen && newest > m_scaleLastT && !list.isEmpty()) {
+                const QVariantMap last = list.last().toMap();
+                emit newScaleWeighIn(last.value(QStringLiteral("date")).toString(),
+                                     last.value(QStringLiteral("weightKg")).toDouble());
+            }
+            m_scaleLastT = qMax(m_scaleLastT, newest);
+            m_scaleSeen = true;
+            if (poll && list == m_scaleSeries)
+                return;                          // nothing changed: no repaint
+            m_scaleSeries = list;
+        }
+        if (poll)
+            rebuild();
+        else
+            oneSourceDone();
+    });
+}
+
+void WeightService::pollScale()
+{
+    QNetworkReply *reply = m_network.get(QNetworkRequest(QUrl(kBackendBase + QStringLiteral("/api/scale/status"))));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        QVariantMap st;
+        if (reply->error() == QNetworkReply::NoError) {
+            st = QJsonDocument::fromJson(reply->readAll()).object().toVariantMap();
+        } else {
+            st.insert(QStringLiteral("error"), tr("The Sommet backend is not reachable."));
+        }
+        if (st != m_scaleStatus) {
+            m_scaleStatus = st;
+            emit scaleChanged();
+        }
+        // A scale the backend already knows and is listening to (set up earlier, or by another
+        // run) is a source here too: remember that, and keep the page live.
+        if (!st.value(QStringLiteral("address")).toString().isEmpty()
+                && st.value(QStringLiteral("listening")).toBool()
+                && !QSettings().value(QStringLiteral("weight/scale/enabled"), false).toBool()) {
+            QSettings().setValue(QStringLiteral("weight/scale/enabled"), true);
+            m_scaleTimer.start();
+            emit changed();
+            refresh();
+            return;
+        }
+        fetchScale(true);
+    });
+}
+
+void WeightService::scalePost(const QString &path, const QJsonObject &body)
+{
+    QNetworkRequest req(QUrl(kBackendBase + QStringLiteral("/api/scale/") + path));
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+    req.setTransferTimeout(90000);
+    QNetworkReply *reply = m_network.post(req, QJsonDocument(body).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, path]() {
+        reply->deleteLater();
+        const auto o = QJsonDocument::fromJson(reply->readAll()).object();
+        if (path == QLatin1String("find")) {
+            const bool ok = reply->error() == QNetworkReply::NoError && o.value(QStringLiteral("ok")).toBool();
+            emit scaleFound(ok ? o.value(QStringLiteral("found")).toArray().toVariantList() : QVariantList{},
+                            ok ? QString() : o.value(QStringLiteral("error")).toString(reply->errorString()));
+            return;
+        }
+        m_scaleStatus = o.toVariantMap();
+        emit scaleChanged();
+        pollScale();
+    });
+}
+
+void WeightService::scaleFind(int seconds)
+{
+    scalePost(QStringLiteral("find"), {{QStringLiteral("seconds"), seconds}});
+}
+
+void WeightService::scaleStart(const QString &address)
+{
+    QSettings().setValue(QStringLiteral("weight/scale/enabled"), true);
+    m_scaleSeen = false;
+    m_scaleTimer.start();
+    QJsonObject body;
+    if (!address.isEmpty())
+        body.insert(QStringLiteral("address"), address);
+    scalePost(QStringLiteral("start"), body);
+    emit changed();
+}
+
+void WeightService::scaleStop()
+{
+    QSettings().setValue(QStringLiteral("weight/scale/enabled"), false);
+    m_scaleTimer.stop();
+    scalePost(QStringLiteral("stop"), {});
+    emit changed();
+}
+
+void WeightService::scaleForget()
+{
+    QSettings().setValue(QStringLiteral("weight/scale/enabled"), false);
+    m_scaleTimer.stop();
+    m_scaleSeries.clear();
+    m_scaleLastT = 0;
+    scalePost(QStringLiteral("forget"), {});
     rebuild();
 }

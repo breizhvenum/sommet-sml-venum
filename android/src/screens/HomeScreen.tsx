@@ -524,7 +524,7 @@ export default function HomeScreen() {
         // Refresh cabled + paired watches so the switcher shows every one you can pick.
         refreshWatchLists();
         setPhase('connected');
-        handleSyncRef.current(); // preserve existing auto-sync-on-connect behavior
+        autoSyncOnConnectRef.current(); // auto-sync activities + clock + GPS orbit on connect (desktop parity)
       } catch (e: any) {
         setConnectError(e?.message ?? t.unknownError);
         setPhase('connect-error');
@@ -640,7 +640,7 @@ export default function HomeScreen() {
       // Sync in the app often missed that window ("activities didn't sync"), so we spend the
       // freshly-open link immediately, the same convenience USB attach already has. handleSync
       // is transport-aware (uses the BLE provider here), so this reads over the live link.
-      handleSyncRef.current();
+      autoSyncOnConnectRef.current(); // ...and the clock + GPS orbit too (desktop parity, see autoSyncOnConnect)
     } catch (e: any) {
       setBleConnected(false);
       bleConnectedRef.current = false;
@@ -951,6 +951,27 @@ export default function HomeScreen() {
   // below is subscribed once on mount, not re-subscribed on every render.
   const handleSyncRef = useRef(handleSync);
   handleSyncRef.current = handleSync;
+  // Desktop parity (deviceservice.cpp, André 2026-08-11: "sync upon connection of the watch if
+  // connected to internet... and the same for the GPS orbit"): on every connect, also sync the
+  // clock and refresh the GPS orbit (SGEE), not just activities. Both are self-correcting,
+  // low-risk writes - the same rationale desktop uses to exempt them from this app's "explicit
+  // tap for any write" rule. Android had them as manual buttons only, so a phone-only user's
+  // SGEE/clock could silently go stale. Sequential, never concurrent: each op does its own USB
+  // connect/disconnect (or reuses the BLE session), so firing them in parallel collides on the
+  // link. Activities stay first (priority on the short, watch-driven BLE window); the clock is
+  // offline-safe (set from the phone), and the orbit refresh runs silently (it needs the network
+  // and fails quietly offline - the orbit field still shows its status).
+  const handleSyncTimeRef = useRef(handleSyncTime);
+  handleSyncTimeRef.current = handleSyncTime;
+  const handleOrbitalRef = useRef(handleOrbital);
+  handleOrbitalRef.current = handleOrbital;
+  async function autoSyncOnConnect() {
+    try { await handleSyncRef.current(); } catch { /* surfaced in the sync card */ }
+    try { await handleSyncTimeRef.current(); } catch { /* surfaced in the time field */ }
+    try { await handleOrbitalRef.current(true); } catch { /* silent; surfaced in the orbit field */ }
+  }
+  const autoSyncOnConnectRef = useRef(autoSyncOnConnect);
+  autoSyncOnConnectRef.current = autoSyncOnConnect;
 
   // v2.3 beta: USB_DEVICE_ATTACHED now also fires for Garmin devices
   // (device_filter.xml) — it no longer implies "the Ambit was plugged in" by
@@ -974,8 +995,13 @@ export default function HomeScreen() {
     return onUsbAttached(onAttach);
   }, []);
 
-  async function handleOrbital() {
-    if (isBusy) return;
+  // `silent` is set only by autoSyncOnConnect's unattended call: it skips the Alert (being offline
+  // is a normal non-event for an auto-refresh - the orbit field still shows the status) and the
+  // isBusy guard (the orchestrator already sequences activities -> time -> orbit, so there's
+  // nothing to collide with, and reading isBusy here would race React's not-yet-flushed
+  // syncBusy=false from the just-awaited activity sync).
+  async function handleOrbital(silent = false) {
+    if (!silent && isBusy) return;
     setLastActive('orbital');
     try {
       // Over BLE the GATT session is already open - hand updateOrbitalData the BLE provider so
@@ -984,7 +1010,7 @@ export default function HomeScreen() {
       const provider = bleConnectedRef.current ? ambitBleDeviceProvider : undefined;
       await updateOrbitalData(setOrbital, provider);
     } catch (e: any) {
-      Alert.alert(t.error, e?.message ?? t.unknownError);
+      if (!silent) Alert.alert(t.error, e?.message ?? t.unknownError);
       setOrbital({ phase: 'error', error: e?.message });
     }
   }
@@ -1474,7 +1500,7 @@ export default function HomeScreen() {
             <TouchableOpacity
               style={styles.deviceLink}
               disabled={isBusy}
-              onPress={handleOrbital}
+              onPress={() => handleOrbital()}
             >
               <Icon name="satellite" size={14} color={theme.primary} />
               <Text style={[styles.timeSyncText, { color: theme.primary }]}>

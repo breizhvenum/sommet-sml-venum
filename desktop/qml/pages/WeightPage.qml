@@ -12,6 +12,19 @@ Item {
 
     readonly property var series: WeightService.series
 
+    // Where a reading came from, in the words used everywhere (glossary: "source").
+    function sourceLabel(s) {
+        return s === "scale" ? qsTr("Scale") : s === "garmin" ? qsTr("Garmin")
+             : s === "intervals" ? qsTr("intervals.icu") : s === "manual" ? qsTr("Manual") : ""
+    }
+    property string newWeighIn: ""      // "74.6 kg" for a few seconds after the scale reports
+    Timer { id: newTimer; interval: 10000; onTriggered: root.newWeighIn = "" }
+    Connections {
+        target: WeightService
+        function onNewScaleWeighIn(date, kg) { root.newWeighIn = kg.toFixed(1) + qsTr(" kg"); newTimer.restart() }
+    }
+    ScaleSetupDialog { id: scaleDialog }
+
     Component.onCompleted: if (WeightService.connected) WeightService.refresh()
     Connections {
         target: WeightService
@@ -35,6 +48,30 @@ Item {
                 font.pixelSize: Theme.fontSizeLargeTitle
                 font.bold: true
                 color: Theme.text
+            }
+
+            // --- Bluetooth scale status ---
+            Row {
+                width: parent.width
+                spacing: 6
+                TapHandler { onTapped: scaleDialog.open() }
+                Rectangle {
+                    width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter
+                    color: WeightService.scale.listening ? Theme.success : Theme.mutedText
+                }
+                Text {
+                    color: Theme.text; font.pixelSize: Theme.fontSizeBody
+                    text: !WeightService.scale.address ? qsTr("Bluetooth scale — tap to set up")
+                        : WeightService.scale.listening
+                          ? qsTr("Bluetooth scale — listening, last weigh-in %1")
+                                .arg(scaleDialog.timeAgo(WeightService.scale.lastWeighIn ? WeightService.scale.lastWeighIn.t : 0))
+                          : qsTr("Bluetooth scale — not listening")
+                }
+                Text {
+                    visible: root.newWeighIn.length > 0
+                    text: qsTr("New weigh-in: %1").arg(root.newWeighIn)
+                    color: Theme.success; font.bold: true; font.pixelSize: Theme.fontSizeBody
+                }
             }
 
             // --- Add a manual weigh-in ---
@@ -130,8 +167,10 @@ Item {
                             font.pixelSize: Theme.fontSizeDisplay
                             font.bold: true
                         }
-                        Text { text: String(WeightService.latestDate).split("-").reverse().join("/"); color: Theme.mutedText
-                               font.pixelSize: Theme.fontSizeCaption }
+                        Text { text: String(WeightService.latestDate).split("-").reverse().join("/")
+                                      + (root.sourceLabel(WeightService.latest.source).length > 0
+                                         ? "  ·  " + root.sourceLabel(WeightService.latest.source) : "")
+                               color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption }
                     }
                     Column {
                         spacing: 2
@@ -159,7 +198,9 @@ Item {
                 Column {
                     width: parent.width
                     spacing: Theme.spacingSmall
-                    Text { text: qsTr("Body composition"); font.bold: true; color: Theme.text
+                    Text { text: WeightService.latest.estimated ? qsTr("Body composition (estimated)")
+                                                                : qsTr("Body composition")
+                           font.bold: true; color: Theme.text
                            font.pixelSize: Theme.fontSizeBody }
                     Grid {
                         width: parent.width
@@ -189,6 +230,16 @@ Item {
                         }
                     }
                 }
+            }
+
+            Text {
+                width: parent.width
+                visible: WeightService.hasBodyComp && !!WeightService.latest.estimated
+                wrapMode: Text.WordWrap
+                color: Theme.mutedText
+                font.pixelSize: Theme.fontSizeCaption
+                text: qsTr("Estimated from the scale's impedance (Sun et al. 2003). A foot-to-foot " +
+                           "scale can be off by several points, so follow the trend, not one reading.")
             }
 
             // --- Chart (hover/tap a point to see that day's reading) ---
@@ -314,6 +365,10 @@ Item {
                                    color: Theme.mutedText; font.pixelSize: Theme.fontSizeTiny }
                             Text { text: tipCol.p ? tipCol.p.weightKg.toFixed(1) + qsTr(" kg") : ""
                                    color: Theme.text; font.pixelSize: Theme.fontSizeCaption; font.bold: true }
+                            Text { visible: tipCol.p && root.sourceLabel(tipCol.p.source).length > 0
+                                   text: tipCol.p ? root.sourceLabel(tipCol.p.source)
+                                                    + (tipCol.p.estimated ? qsTr(" · estimated") : "") : ""
+                                   color: Theme.mutedText; font.pixelSize: Theme.fontSizeTiny }
                             // Every body-composition field the reading carries (Garmin days have
                             // them; intervals/manual days may not).
                             Repeater {
@@ -355,9 +410,9 @@ Item {
                 wrapMode: Text.WordWrap
                 color: Theme.mutedText
                 font.pixelSize: Theme.fontSizeCaption
-                text: qsTr("Merged from intervals.icu, Garmin Connect and manual entries — for " +
-                           "each day the reading with the most detail wins. Body composition " +
-                           "(fat, muscle, water) comes from Garmin.")
+                text: qsTr("Merged from your Bluetooth scale, intervals.icu, Garmin Connect and manual " +
+                           "entries. For a day your scale (or you, by hand) has a reading, that one " +
+                           "is shown; otherwise the reading with the most detail wins.")
             }
         }
     }

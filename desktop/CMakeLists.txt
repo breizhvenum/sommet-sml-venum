@@ -267,6 +267,7 @@ qt_add_qml_module(ambitapp
         qml/components/KarooIcon.qml
         qml/components/MageneIcon.qml
         qml/components/ProfileSyncPrompt.qml
+        qml/components/ScaleSetupDialog.qml
         qml/components/MageneSettingsPanel.qml
         qml/components/BrytonBleSettingsPanel.qml
         qml/components/MageneScreensPanel.qml

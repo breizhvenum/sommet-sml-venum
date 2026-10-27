@@ -10,17 +10,32 @@ import { fmtDate } from '../i18n';
 import {
   loadWeightSeries, addManualWeight, removeManualWeight, WeightPoint,
 } from '../services/WellnessService';
+import { getScaleAddress, onScaleChange, resumeIfConfigured, scaleStatus } from '../services/ScaleService';
+import { ScaleSetupModal } from '../components/ScaleSetupModal';
+
+// Where a reading came from, in the words used everywhere (glossary: "source").
+const SOURCE_LABEL: Record<string, string> = {
+  scale: 'Scale', intervals: 'intervals.icu', manual: 'Manual', garmin: 'Garmin',
+};
+function timeAgo(tSec: number | null): string {
+  if (!tSec) return 'none yet';
+  const s = Math.max(0, Math.round(Date.now() / 1000 - tSec));
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
 
 // Weight — the Android counterpart of desktop/qml/pages/WeightPage.qml (André, 2026-08-26:
 // "port everything to android"). Body-weight history from intervals.icu, merged with manual
 // weigh-ins typed here.
 //
-// Two honest differences from the desktop version, both forced by what Android can reach:
-//   - No Garmin Index scale feed, and so no body-composition rows (fat/muscle/water). The
-//     desktop gets those through the Python backend's python-garminconnect; Android has no
-//     backend and no Garmin Connect cloud client (its GarminModule is the USB eTrex).
-//   - No source picker, because with Garmin unavailable there is only one remote provider to
-//     pick. See WellnessService.ts's header for the full reasoning.
+// Differences from the desktop version, all forced by what Android can reach:
+//   - No Garmin Connect feed (Android has no backend and no Garmin cloud client; its GarminModule
+//     is the USB eTrex). Body composition here comes ONLY from a Bluetooth scale (estimated).
+//   - No source picker, because there is only one remote provider (intervals.icu) to pick.
+//     See WellnessService.ts's header for the full reasoning.
+//   - The scale is heard while the app is open (no background service yet).
 
 export default function WeightScreen() {
   const t = useV3Theme();
@@ -31,6 +46,10 @@ export default function WeightScreen() {
   const [showAdd, setShowAdd] = useState(false);
   const [dateInput, setDateInput] = useState('');
   const [kgInput, setKgInput] = useState('');
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const [scaleAddr, setScaleAddr] = useState<string | null>(null);
+  const [scaleTick, setScaleTick] = useState(0);          // re-render when the scale reports
+  const [fresh, setFresh] = useState('');                 // "74.6 kg" for a few seconds
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -45,6 +64,32 @@ export default function WeightScreen() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // The scale reports by itself: a new weigh-in appears with a short highlight, no pull to refresh.
+  useEffect(() => {
+    getScaleAddress().then(setScaleAddr);
+    resumeIfConfigured().catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = onScaleChange(async () => {
+      setScaleTick(n => n + 1);
+      setScaleAddr(await getScaleAddress());
+      const s = await loadWeightSeries();
+      setSeries(s);
+      {
+        const last = s[s.length - 1] as (WeightPoint & { t?: number }) | undefined;
+        // Highlight only a weigh-in that just arrived, not one that was already there.
+        if (last?.source === 'scale' && last.t && Date.now() / 1000 - last.t < 60) {
+          setFresh(`${last.weightKg.toFixed(1)} kg`);
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => setFresh(''), 10000);
+        }
+      }
+    });
+    return () => { off(); if (timer) clearTimeout(timer); };
+  }, []);
+  const sc = scaleStatus();
+  void scaleTick;
+  const lastScale = [...series].reverse().find(p => p.source === 'scale') as (WeightPoint & { t?: number }) | undefined;
 
   const latest = series.length > 0 ? series[series.length - 1] : null;
   // Change across the whole loaded window - the same "over N weigh-ins" figure the desktop
@@ -79,6 +124,24 @@ export default function WeightScreen() {
       contentContainerStyle={{ padding: v3Spacing.medium }}
       refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={t.primary} />}
     >
+      {/* Bluetooth scale status - tap to set up or manage */}
+      <TouchableOpacity onPress={() => setScaleOpen(true)} style={[styles.row, { marginBottom: v3Spacing.medium }]}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, marginRight: 6,
+                       backgroundColor: sc.listening ? t.success : t.mutedText }} />
+        <Text style={{ color: t.text, fontSize: v3Type.body }}>
+          {!scaleAddr ? 'Bluetooth scale — tap to set up'
+            : sc.listening ? `Bluetooth scale — listening, last weigh-in ${timeAgo(lastScale?.t ?? null)}`
+            : 'Bluetooth scale — not listening'}
+        </Text>
+        {fresh.length > 0 && (
+          <Text style={{ color: t.success, fontSize: v3Type.body, fontWeight: '700', marginLeft: v3Spacing.small }}>
+            New weigh-in: {fresh}
+          </Text>
+        )}
+      </TouchableOpacity>
+      <ScaleSetupModal visible={scaleOpen} onClose={() => setScaleOpen(false)}
+        onChanged={async () => { setScaleAddr(await getScaleAddress()); setScaleTick(n => n + 1); refresh(); }} />
+
       {loading && series.length === 0 && (
         <ActivityIndicator color={t.primary} style={{ marginVertical: v3Spacing.large }} />
       )}
@@ -111,7 +174,9 @@ export default function WeightScreen() {
             <View>
               <Text style={[styles.label, { color: t.mutedText }]}>Latest</Text>
               <Text style={[styles.big, { color: t.text }]}>{latest.weightKg.toFixed(1)} kg</Text>
-              <Text style={[styles.caption, { color: t.mutedText }]}>{fmtDate(latest.date) || latest.date}</Text>
+              <Text style={[styles.caption, { color: t.mutedText }]}>
+                {fmtDate(latest.date) || latest.date}{SOURCE_LABEL[latest.source] ? `  ·  ${SOURCE_LABEL[latest.source]}` : ''}
+              </Text>
             </View>
             {change !== null && (
               <View style={{ marginLeft: v3Spacing.large * 2 }}>
@@ -126,6 +191,30 @@ export default function WeightScreen() {
             )}
           </View>
         </View>
+      )}
+
+      {/* Body composition: only from the Bluetooth scale, and always an estimate */}
+      {latest?.bodyFatPct !== undefined && (
+        <View style={[styles.card, { backgroundColor: t.card, borderColor: t.border, borderRadius: v3Radius.card }]}>
+          <Text style={{ color: t.text, fontSize: v3Type.body, fontWeight: '700', marginBottom: v3Spacing.small }}>
+            {latest.estimated ? 'Body composition (estimated)' : 'Body composition'}
+          </Text>
+          <View style={[styles.row, { flexWrap: 'wrap' }]}>
+            {([['Body fat', latest.bodyFatPct, '%'], ['Body water', latest.bodyWaterPct, '%'], ['BMI', latest.bmi, '']] as const)
+              .filter(([, v]) => v !== undefined)
+              .map(([label, v, unit]) => (
+                <View key={label} style={{ marginRight: v3Spacing.large, marginBottom: v3Spacing.small }}>
+                  <Text style={[styles.label, { color: t.mutedText }]}>{label}</Text>
+                  <Text style={{ color: t.text, fontSize: v3Type.subtitle, fontWeight: '700' }}>{v}{unit}</Text>
+                </View>
+              ))}
+          </View>
+        </View>
+      )}
+      {latest?.bodyFatPct !== undefined && latest.estimated && (
+        <Text style={[styles.caption, { color: t.mutedText, marginBottom: v3Spacing.medium }]}>
+          Estimated from the scale's impedance (Sun et al. 2003). A foot-to-foot scale can be off by several points, so follow the trend, not one reading.
+        </Text>
       )}
 
       {series.length > 1 && (
@@ -202,8 +291,8 @@ export default function WeightScreen() {
       )}
 
       <Text style={[styles.caption, { color: t.mutedText, marginTop: v3Spacing.small }]}>
-        From intervals.icu plus your own manual weigh-ins. Body composition (fat, muscle) needs a
-        Garmin Index scale, which only the desktop app can read.
+        Merged from your Bluetooth scale, intervals.icu and manual entries. For a day your scale (or
+        you, by hand) has a reading, that one is shown; otherwise the intervals.icu reading.
       </Text>
     </ScrollView>
   );

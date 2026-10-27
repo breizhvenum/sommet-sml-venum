@@ -3,6 +3,7 @@
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QQmlEngine>
+#include <QTimer>
 #include <QVariantList>
 
 // Body-weight & composition for the Weight page (André, 2026-08-24). MERGES every available
@@ -34,6 +35,16 @@ class WeightService : public QObject
     Q_PROPERTY(double latestWeightKg READ latestWeightKg NOTIFY changed)
     Q_PROPERTY(QString latestDate READ latestDate NOTIFY changed)
     Q_PROPERTY(double changeKg READ changeKg NOTIFY changed)
+    // Local Bluetooth scale (Etekcity FIT 8S broadcast, no cloud, no pairing): the backend's
+    // tools/scale_service.py listens and stores weigh-ins; this is its state for the UI.
+    // {available, listening, address, lastSeen, error, lastWeighInT}
+    Q_PROPERTY(QVariantMap scale READ scale NOTIFY scaleChanged)
+    // Height (cm) and sex ("M"/"F") for the body-fat estimate: from the intervals.icu profile,
+    // overridable by hand. {heightCm, sex, source: "intervals"|"manual"|""}
+    Q_PROPERTY(QVariantMap bodyProfile READ bodyProfile NOTIFY changed)
+    // Percentage points added to the estimated body fat, for one person to line the estimate up
+    // with a reference they trust (a DXA scan, calipers). 0 by default.
+    Q_PROPERTY(double bodyFatOffset READ bodyFatOffset WRITE setBodyFatOffset NOTIFY changed)
 
 public:
     explicit WeightService(QObject *parent = nullptr);
@@ -52,6 +63,10 @@ public:
     double latestWeightKg() const;
     QString latestDate() const;
     double changeKg() const;
+    QVariantMap scale() const { return m_scaleStatus; }
+    QVariantMap bodyProfile() const;
+    double bodyFatOffset() const;
+    void setBodyFatOffset(double v);
 
     // Re-pull every connected source (intervals + Garmin) and re-merge with manual entries.
     Q_INVOKABLE void refresh(int days = 365);
@@ -63,9 +78,24 @@ public:
     Q_INVOKABLE void addManualWeight(const QString &date, double weightKg, double bodyFatPct);
     Q_INVOKABLE void removeManualWeight(const QString &date);
 
+    // --- local Bluetooth scale ---
+    // Listen for scales for `seconds` (set-up wizard); the answer comes as scaleFound.
+    Q_INVOKABLE void scaleFind(int seconds = 15);
+    // Start listening (remember `address` as THE scale when given). Stop / forget it again.
+    Q_INVOKABLE void scaleStart(const QString &address = QString());
+    Q_INVOKABLE void scaleStop();
+    Q_INVOKABLE void scaleForget();
+    // Height / sex typed by hand (used when intervals.icu is not connected or has none).
+    Q_INVOKABLE void setBodyProfile(double heightCm, const QString &sex);
+
 signals:
     void changed();
     void garminLoggedIn(const QString &email);
+    void scaleChanged();
+    // The wizard's answer: [{address, weightKg, rssi}], or an error text.
+    void scaleFound(const QVariantList &found, const QString &error);
+    // A weigh-in that was not there a moment ago (the page highlights it).
+    void newScaleWeighIn(const QString &date, double weightKg);
 
 private:
     QNetworkAccessManager m_network;
@@ -76,11 +106,20 @@ private:
     QVariantList m_series;                 // the merged result the UI reads
     QVariantList m_intervalsSeries;        // per-source buffers, refilled on each refresh
     QVariantList m_garminSeries;
+    QVariantList m_scaleSeries;
+    QVariantMap m_scaleStatus;
+    QTimer m_scaleTimer;                   // polls the backend while a scale is set up
+    qint64 m_scaleLastT = 0;               // newest scale weigh-in seen, to spot a new one
+    bool m_scaleSeen = false;              // first poll after start is not "new"
     QString m_source;                      // "all" | "intervals" | "garmin" (see the property)
 
     void setLoading(bool v);
     void fetchIntervals(int days);
     void fetchGarmin(int days);
+    void fetchProfile();                   // height + sex from intervals.icu, cached
+    void fetchScale(bool poll = false);    // local scale weigh-ins from the backend
+    void pollScale();                      // status + weigh-ins; cheap, local
+    void scalePost(const QString &path, const QJsonObject &body);
     void oneSourceDone();
     void rebuild();                        // merge the three buffers -> m_series
     QVariantList loadManual() const;

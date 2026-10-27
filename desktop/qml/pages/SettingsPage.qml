@@ -377,6 +377,16 @@ PageFlickable {
                     actionText: connected ? qsTr("Manage") : qsTr("Connect")
                     onActivated: stravaDialog.open()
                 }
+                // Bluetooth body scale (Etekcity FIT 8S): listened to directly, no account.
+                ConnectionRow {
+                    name: qsTr("Bluetooth scale")
+                    connected: !!WeightService.scale.listening
+                    status: !WeightService.scale.address ? qsTr("not set up")
+                        : connected ? qsTr("listening") : qsTr("not listening")
+                    actionText: WeightService.scale.address ? qsTr("Manage") : qsTr("Set up")
+                    onActivated: scaleSetupDialog.open()
+                }
+                ScaleSetupDialog { id: scaleSetupDialog }
                 // Cloud storage (Dropbox/Google Drive/OneDrive) used to live here as OAuth
                 // "connections"; backup now just saves to a folder you pick (point it at a cloud
                 // sync folder), so those rows and their key dialogs were removed - André 2026-08-16.
@@ -862,7 +872,29 @@ PageFlickable {
                         font.pixelSize: Theme.fontSizeCaption
                         visible: WeightService.source === "all"
                         text: qsTr("Merging: if both have a reading for the same day, the one with " +
-                                   "more detail (body fat, muscle…) wins, so there are no duplicates.")
+                                   "more detail (body fat, muscle…) wins, so there are no duplicates. " +
+                                   "Your Bluetooth scale, when set up, wins for the days it has a reading.")
+                    }
+                    // Estimated body fat from the Bluetooth scale: shift it to a reference you trust
+                    // (a DXA scan, calipers). Applies to the whole history, on read.
+                    Row {
+                        spacing: Theme.spacingSmall
+                        Text { text: qsTr("Body-fat offset (points)"); color: Theme.text
+                               font.pixelSize: Theme.fontSizeBody; anchors.verticalCenter: parent.verticalCenter }
+                        RoundedTextField {
+                            width: 80
+                            text: String(WeightService.bodyFatOffset)
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                            Accessible.name: qsTr("Body-fat offset in points")
+                            onEditingFinished: { var v = parseFloat(text.replace(",", "."))
+                                                 WeightService.bodyFatOffset = isNaN(v) ? 0 : v }
+                        }
+                    }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap; color: Theme.mutedText
+                        font.pixelSize: Theme.fontSizeCaption
+                        text: qsTr("Added to the estimated body fat from the Bluetooth scale, for example " +
+                                   "-2 to line it up with a DXA scan. 0 leaves the estimate as it is.")
                     }
                 }
 

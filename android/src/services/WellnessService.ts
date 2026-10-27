@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { computeSleepScore } from './SleepScore';
 import { getIntervalsIcuCredentials } from './ApiIntervalsIcu';
+import { loadScaleSeries, refreshProfileFromIntervals } from './ScaleService';
 
 // intervals.icu wellness feed — the single source behind BOTH the Weight and Health screens
 // (André, 2026-08-26: "port everything to android"). The desktop equivalents are C++ services
@@ -38,7 +39,13 @@ export interface WellnessDay {
 export interface WeightPoint {
   date: string;
   weightKg: number;
-  source: 'intervals' | 'manual';
+  source: 'intervals' | 'manual' | 'scale';
+  // Only a reading from the Bluetooth scale carries these, and they are ESTIMATES (Sun et al. 2003).
+  bmi?: number;
+  bodyFatPct?: number;
+  bodyWaterPct?: number;
+  fatFreeKg?: number;
+  estimated?: boolean;
 }
 
 function ymd(d: Date): string {
@@ -137,8 +144,8 @@ export async function removeManualWeight(date: string): Promise<void> {
 
 // ---- merged weight series ---------------------------------------------------------------
 
-// One point per day, oldest first. A manual entry always wins over intervals for the same day:
-// you typed it here, on purpose, so it is the more deliberate reading - the same precedence the
+// One point per day, oldest first. A manual entry wins over everything for the same day (you typed
+// it here, on purpose), then your own Bluetooth scale, then intervals.icu - the same precedence the
 // desktop uses.
 //
 // Deliberately NO source picker here, unlike the desktop's Settings toggle: that toggle exists
@@ -156,6 +163,8 @@ export async function loadWeightSeries(days = 365): Promise<WeightPoint[]> {
     // Offline or API failure: fall through to whatever manual entries exist rather than
     // showing nothing at all.
   }
+  await refreshProfileFromIntervals();          // height + sex for the body-fat estimate (cached)
+  for (const sp of await loadScaleSeries()) byDate.set(sp.date, sp);
   for (const m of await loadManualWeights()) byDate.set(m.date, m);
 
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));

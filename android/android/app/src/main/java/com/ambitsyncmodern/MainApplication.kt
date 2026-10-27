@@ -33,6 +33,7 @@ class MainApplication : Application(), ReactApplication {
           add(AmbitCatalogPackage())
           add(BrytonUsbPackage())
           add(com.ambitsyncmodern.magene.MagenePackage())
+          add(com.ambitsyncmodern.scale.ScaleBlePackage())
         },
     )
   }
