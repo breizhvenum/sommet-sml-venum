@@ -68,6 +68,18 @@ class FakeWatch:
         raise AssertionError(f"unexpected command 0x{command:04x}")
 
 
+class BleFakeWatch(FakeWatch):
+    """The same store answering like the Bluetooth link: a refused read raises."""
+
+    refuse_reads = False
+
+    def command(self, command, payload=b"", **kw):
+        if command == W.CMD_POI_READ and (not self.records or self.refuse_reads):
+            self.sent.append(command)
+            raise RuntimeError("the watch refused 0x0b24 (error flags 0x01)")
+        return super().command(command, payload, **kw)
+
+
 def names(reply):
     return [r.split(b"\0")[0].decode() for e, r in W.F.sbem_entries(reply) if e == W.POI_ENTRY]
 
@@ -94,6 +106,63 @@ class PoiStore(unittest.TestCase):
 
     def test_empty_store_reads_as_nothing(self):
         self.assertEqual(W.read_pois(FakeWatch()), b"")
+
+    def test_empty_store_over_bluetooth_reads_as_nothing(self):
+        # Over Bluetooth the refusal of an empty store arrives as an error, not b"".
+        watch = BleFakeWatch()
+        self.assertEqual(W.read_pois(watch), b"")
+        self.assertTrue(ble_pois.add_poi(watch, "A", 50.6, 3.0)["ok"])
+        self.assertEqual(names(W.read_pois(watch)), ["A"])
+
+    def test_a_refusal_with_pois_held_is_still_an_error(self):
+        watch = BleFakeWatch()
+        ble_pois.add_poi(watch, "A", 50.6, 3.0)
+        watch.refuse_reads = True
+        with self.assertRaises(RuntimeError):
+            W.read_pois(watch)
+
+    def test_route_write_pois_survive_a_put_back_that_breaks_halfway(self):
+        # The routes commit empties the store; the first put-back dies after one 0x0b25.
+        import tempfile
+        watch = FakeWatch()
+        for i in range(12):
+            ble_pois.add_poi(watch, f"Point number {i}", 50.0 + i / 100, 3.0)
+        before = W.read_pois(watch)
+        with tempfile.TemporaryDirectory() as d:
+            backup = W.backup_pois_before_route_write(watch, before, "SERIAL1", d)
+            self.assertEqual(pathlib.Path(backup).read_bytes(), before)
+            watch.records.clear()                       # what the 0x0b04 commit does
+            real, writes = watch.command, [0]
+
+            def flaky(command, payload=b"", **kw):
+                if command == W.CMD_POI_WRITE:
+                    writes[0] += 1
+                    if writes[0] == 2:
+                        raise TimeoutError("no reply to 0x0b25 within 20s")
+                return real(command, payload, **kw)
+            watch.command = flaky
+            back, err = W.put_pois_back_safely(watch, before, backup)
+        self.assertIsNone(err)
+        self.assertEqual(back, 12)
+        self.assertEqual(sorted(names(W.read_pois(watch))), sorted(names(before)))
+
+    def test_route_write_put_back_failing_twice_names_the_backup(self):
+        watch = FakeWatch()
+        ble_pois.add_poi(watch, "A", 50.6, 3.0)
+        before = W.read_pois(watch)
+        watch.records.clear()
+        real = watch.command
+        watch.command = lambda c, p=b"", **k: ((_ for _ in ()).throw(TimeoutError("gone"))
+                                               if c == W.CMD_POI_WRITE else real(c, p, **k))
+        back, err = W.put_pois_back_safely(watch, before, "/x/POIs_pre_1.bin")
+        self.assertIsNone(back)
+        self.assertIn("/x/POIs_pre_1.bin", err)
+
+    def test_no_backup_without_pois_or_in_a_dry_run(self):
+        self.assertIsNone(W.backup_pois_before_route_write(FakeWatch(), b"", "S", "/nonexistent"))
+        dry = FakeWatch()
+        dry.dry_run = True
+        self.assertIsNone(W.backup_pois_before_route_write(dry, b"x", "S", "/nonexistent"))
 
     def test_a_long_list_is_read_page_by_page(self):
         watch = FakeWatch(page_data=60)          # a few POIs per page

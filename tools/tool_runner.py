@@ -25,7 +25,20 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-TOOLS_DIR = Path(__file__).resolve().parent
+
+
+def _tools_dir():
+    """tools/ itself. In the packaged app this module may be loaded from the bundle's archive
+    (every tools/*.py is a hidden import there), so __file__ is not in tools/; the .py files
+    are unpacked under sys._MEIPASS/tools (ambit_backend.spec, same rule as frozen_entry.py)."""
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "tools"
+        if bundled.is_dir():
+            return bundled
+    return Path(__file__).resolve().parent
+
+
+TOOLS_DIR = _tools_dir()
 BACKEND = "http://127.0.0.1:8766"
 # The tools these pages run that open the watch over USB.
 WATCH_TOOLS = {"custom_modes.py", "guided_workout.py", "workout_install.py", "training_calendar.py"}

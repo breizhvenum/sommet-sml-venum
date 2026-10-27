@@ -227,6 +227,7 @@ class SyncReinstallsEdits(unittest.TestCase):
         self.apps = bytes([0, 0, 2, 0, 8, 0, 0, 0]) + b"\xff" * 64   # an empty Apps directory
         self.compiled = []
         self.fail_compile = False
+        self.fail_names = set()
 
         def send(link, fi, parts, commit=False):
             for name, base, blob in parts:
@@ -234,7 +235,7 @@ class SyncReinstallsEdits(unittest.TestCase):
                     self.apps = bytes(blob)
 
         def compile_workout(workout, lang=None):
-            if self.fail_compile:
+            if self.fail_compile or workout["name"] in self.fail_names:
                 raise SystemExit("compiler unreachable")
             self.compiled.append(workout["steps"])
             body = json.dumps(workout["steps"]).encode()
@@ -291,6 +292,32 @@ class SyncReinstallsEdits(unittest.TestCase):
         self.assertIn(b'"s": 600', binary)          # still there, not erased
         self.fail_compile = False
         self.assertEqual(self.sync([{"s": 10}])["edited"], [label])   # retried next time
+
+    def test_a_failed_edit_and_a_new_workout_never_share_a_rule_id(self):
+        # Two installed workouts with one rule id: the watch runs the first, whichever is picked.
+        def sync(entries):
+            plan = {"entries": [{"date": d, "mode": "Running",
+                                 "workout": {"name": n, "steps": st}} for d, n, st in entries]}
+            with contextlib.redirect_stdout(io.StringIO()):
+                return TC.sync(None, plan, self.TODAY, write=True, json_out=True)
+        sync([("2026-10-24", "A", [{"s": 600}])])
+        self.fail_names = {"A"}                     # the edit of A won't compile (offline)
+        r = sync([("2026-10-24", "A", [{"s": 10}]), ("2026-10-25", "B", [{"s": 300}])])
+        self.assertEqual([f["name"] for f in r["failed"]], [TC.entry_label("2026-10-24", "A")])
+        ids = [e["ruleId"] for e in apps.decode(self.apps)]
+        self.assertEqual(len(ids), 2)
+        self.assertEqual(len(set(ids)), 2, f"rule ids {ids}")
+
+    def test_past_the_compile_budget_entries_wait_for_the_next_sync(self):
+        label = TC.entry_label("2026-10-24", "Test")
+        self.sync([{"s": 600}])
+        self.addCleanup(setattr, TC, "COMPILE_BUDGET_S", TC.COMPILE_BUDGET_S)
+        TC.COMPILE_BUDGET_S = -1                    # every compile is already too late
+        r = self.sync([{"s": 10}])
+        self.assertEqual([f["name"] for f in r["failed"]], [label])
+        self.assertIn("next sync", r["failed"][0]["error"])
+        [(_name, binary)] = self.on_watch()
+        self.assertIn(b'"s": 600', binary)          # the old version stays on the watch
 
     def test_first_sync_without_a_record_trusts_the_watch(self):
         self.sync([{"s": 600}])

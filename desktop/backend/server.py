@@ -456,6 +456,8 @@ LEGACY_PRODUCT_IDS = {0x0010, 0x0019, 0x001A, 0x001D}  # Bluebird, Duck, Colibri
 # The watches that get direction pins on their routes: Ambit3 Peak / Sport / Run / Vertical and
 # Traverse / Traverse Alpha (route waypoints of 54 bytes there; write_nav.py writes that layout).
 AMBIT3_PIN_PRODUCT_IDS = {0x001B, 0x001C, 0x001E, 0x002C, 0x002B, 0x002D}
+# Ambit3 codenames as the Bluetooth hello gives them (Peak, Sport, Run, Vertical).
+BLE_AMBIT3_MODELS = {"Emu", "Finch", "Ibisbill", "Kaka"}
 
 
 def device_key():
@@ -472,6 +474,7 @@ def device_key():
 # why: without it the watch files the pairing under 00:00:00:00:00:00 and won't reconnect).
 # "state": idle | not needed: <reason> | on | already | failed | declined | unavailable | off.
 _BT_PRIVACY = {"window": None, "state": "idle"}
+_BT_PRIVACY_LOCK = threading.Lock()   # two connects at once: one password prompt, not two
 
 
 def _ble_log(message):
@@ -486,18 +489,32 @@ def _ble_log(message):
 def _open_bt_privacy_window():
     """Before the daemon starts: on a fresh pairing on Linux, one password prompt turns
     privacy on. Blocks while the prompt is up; never fails the connect."""
-    if _BT_PRIVACY["window"] is not None:
-        return
-    sys.path.insert(0, str(TOOLS_DIR))
-    import bt_privacy                                        # noqa: PLC0415
-    needed, reason = bt_privacy.check()
-    if not needed:
-        _BT_PRIVACY["state"] = f"not needed: {reason}"
-        return
-    window = bt_privacy.PrivacyWindow(log=_ble_log)
-    _BT_PRIVACY["state"] = window.open()
-    if window.proc is not None:
-        _BT_PRIVACY["window"] = window
+    if not _BT_PRIVACY_LOCK.acquire(blocking=False):
+        return                      # another connect is already showing the prompt
+    try:
+        if _BT_PRIVACY["window"] is not None:
+            return
+        sys.path.insert(0, str(TOOLS_DIR))
+        import bt_privacy                                    # noqa: PLC0415
+        needed, reason = bt_privacy.check()
+        if not needed:
+            _BT_PRIVACY["state"] = f"not needed: {reason}"
+            return
+        window = bt_privacy.PrivacyWindow(log=_ble_log)
+        _BT_PRIVACY["state"] = window.open()
+        if window.proc is not None:
+            _BT_PRIVACY["window"] = window
+    finally:
+        _BT_PRIVACY_LOCK.release()
+
+
+def _close_bt_privacy_window():
+    """The daemon didn't start after privacy went on: turn it off now rather than leave it on
+    until the root script's own 30-minute limit."""
+    window, _BT_PRIVACY["window"] = _BT_PRIVACY["window"], None
+    if window is not None:
+        window.close()
+        _BT_PRIVACY["state"] = "off"
 
 
 def _watch_bt_privacy_window():
@@ -522,6 +539,21 @@ def _watch_bt_privacy_window():
         _BT_PRIVACY["state"] = "off"
 
     bt_privacy.run_window(window, ble_bridge.bridge.status, restart, on_done=done)
+
+
+# Which Bluetooth watch each list on screen was read from. The daemon links whichever watch
+# calls next, so a list read from one watch must not drive a removal on another.
+_BLE_LIST_FROM = {"pois": None, "routes": None}
+
+
+def _ble_other_watch(kind):
+    """An error text when the Bluetooth watch now linked is not the one `kind`'s list was read
+    from, else None (also None when that list was never read over Bluetooth here)."""
+    read_from, now = _BLE_LIST_FROM.get(kind), ble_device_key()
+    if read_from and now and read_from != now:
+        return (f"Another watch is connected now ({now}); this list was read from {read_from}. "
+                "Open the list again, then remove.")
+    return None
 
 
 def ble_device_key():
@@ -1914,6 +1946,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             ble_bridge.bridge.set_dry_run(False)
             summary = ble_routes.read_nav_summary(ble_bridge.bridge)
+            _BLE_LIST_FROM["routes"] = ble_device_key()
         except ble_bridge.BleBridgeError as exc:
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
@@ -3624,6 +3657,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             ble_bridge.bridge.set_dry_run(False)
             raw_output = ble_pois.read_pois_summary(ble_bridge.bridge)
+            _BLE_LIST_FROM["pois"] = ble_device_key()
         except ble_bridge.BleBridgeError as exc:
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
@@ -4123,6 +4157,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if use_ble():
+            other = _ble_other_watch("pois")
+            if other:
+                self._send_json(409, {"ok": False, "error": other})
+                return
             sys.path.insert(0, str(TOOLS_DIR))
             import ble_pois                                  # noqa: PLC0415
             try:
@@ -4157,11 +4195,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if use_ble():
+            other = _ble_other_watch("routes")
+            if other:
+                self._send_json(409, {"ok": False, "error": other})
+                return
             sys.path.insert(0, str(TOOLS_DIR))
             import ble_routes                                # noqa: PLC0415
             try:
                 ble_bridge.bridge.set_dry_run(False)
-                result = ble_routes.delete_route(ble_bridge.bridge, name)
+                result = ble_routes.delete_route(ble_bridge.bridge, name,
+                                                 serial=ble_device_key(), backup_dir=BACKUP_DIR)
             except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError) as exc:
                 self._send_json(502, {"ok": False, "error": str(exc)})
                 return
@@ -4215,6 +4258,13 @@ class Handler(BaseHTTPRequestHandler):
         autopin_if_needed()
         target_pid = body.get("productId")
         target_pid = int(target_pid) if str(target_pid or "").isdigit() else SELECTED_PRODUCT_ID
+        # Over Bluetooth the app sends no product id and none is pinned, so an Ambit3 lost its
+        # pins on that path only (found 2026-10-27). The hello names the model: the Ambit3
+        # codenames get them like on the cable; anything else (Traverse, Kailash) as before.
+        if target_pid is None and use_ble() and not body.get("productId"):
+            model = ((ble_bridge.bridge.status().get("device_info") or {}).get("model") or "").strip()
+            if model in BLE_AMBIT3_MODELS:
+                target_pid = 0x001B          # any Ambit3 id: only the pin check reads it here
         def route_pins(extra):
             with tempfile.NamedTemporaryFile("w", suffix=".gpx", delete=False) as f:
                 f.write(gpx_text)
@@ -4350,12 +4400,16 @@ class Handler(BaseHTTPRequestHandler):
         import ble_routes                                    # noqa: PLC0415
         try:
             ble_bridge.bridge.set_dry_run(not confirm)
-            result = ble_routes.write_route(ble_bridge.bridge, [gpx_path])
+            result = ble_routes.write_route(ble_bridge.bridge, [gpx_path],
+                                            serial=ble_device_key(), backup_dir=BACKUP_DIR)
         except ble_bridge.BleBridgeError as exc:
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
         except (RuntimeError, TimeoutError) as exc:
             self._send_json(502, {"ok": False, "error": str(exc)})
+            return
+        except (ValueError, OSError) as exc:   # a GPX it can't read (no points, odd file)
+            self._send_json(400, {"ok": False, "error": f"couldn't read this GPX: {exc}"})
             return
         self._send_json(200, {"transport": "ble", "wrote": confirm, **result})
 
@@ -4754,6 +4808,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             ble_bridge.bridge.start(forget=bool(body.get("forget", False)))
         except ble_bridge.BleBridgeError as exc:
+            if fresh:
+                _close_bt_privacy_window()
             self._send_json(502, {"ok": False, "error": str(exc)})
             return
         if fresh:

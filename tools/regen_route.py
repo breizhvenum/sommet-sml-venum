@@ -25,6 +25,9 @@ RTEPT = re.compile(r'<rtept\s+lat="([-\d.]+)"\s+lon="([-\d.]+)"\s*'
 WPT = re.compile(r'<wpt\s+lat="([-\d.]+)"\s+lon="([-\d.]+)"\s*>(.*?)</wpt>', re.S)
 TAG = re.compile(r"<(name|type)>(.*?)</\1>", re.S)
 META_NAME = re.compile(r"<metadata>.*?<name>(.*?)</name>", re.S)
+# Fallback when there's no <metadata><name> (most GPX outside the Suunto app): the route's or the
+# track's own <name>. Before 2026-10-27 the name came back None and the route write crashed.
+OWN_NAME = re.compile(r"<(?:rte|trk)>\s*<name>(.*?)</name>", re.S)
 
 
 def read_gpx(path):
@@ -38,8 +41,9 @@ def read_gpx(path):
         fields = dict(TAG.findall(body))
         waypoints.append((float(lat), float(lon),
                           fields.get("name", "").strip(), fields.get("type", "").strip()))
-    name = META_NAME.search(raw)
-    return (name.group(1).strip() if name else None), points, waypoints
+    name = META_NAME.search(raw) or OWN_NAME.search(raw)
+    name = name.group(1).strip() if name else ""
+    return (name or "Route"), points, waypoints
 
 
 def result(label, ok, detail=""):

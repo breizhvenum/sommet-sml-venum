@@ -36,7 +36,8 @@ import sys
 import tempfile
 
 from write_nav import (
-    build_routes, check_memory_map, existing_routes_as_gpx, nav_summary_json, put_pois_back,
+    backup_pois_before_route_write, build_routes, check_memory_map, existing_routes_as_gpx,
+    nav_summary_json, put_pois_back, put_pois_back_safely,
     read_memory_map, read_nav_flash, read_pois, remove_route, send_plan, waypoint_size,
 )
 
@@ -51,7 +52,8 @@ def read_nav_summary(link):
     return nav_summary_json(read_nav_flash(link))
 
 
-def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
+def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True, serial=None,
+                backup_dir=None):
     """Real route write flow, transport-agnostic - see this file's own docstring for what
     is and isn't proven over BLE specifically, and for why `preserve_existing` exists at
     all. `gpx_paths`: real GPX file paths, same as `write_nav.py route FILE...` - the
@@ -81,10 +83,20 @@ def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
 
         flash, layout = build_routes([pathlib.Path(p) for p in all_gpx_paths], meta_capture,
                                      waypoint_size(link))      # 54-byte records on a Traverse
-        send_plan(link, flash, layout)
+        # The commit empties the POI store: a copy goes to disk first, and the put-back
+        # retries once from an empty store (write_nav.put_pois_back_safely).
+        backup = backup_pois_before_route_write(link, pois, serial, backup_dir)
+        try:
+            send_plan(link, flash, layout)
+        except (RuntimeError, TimeoutError, OSError):
+            if not link.dry_run:
+                put_pois_back_safely(link, pois, backup)
+            raise
         # Several 0x0b25 of at most 254 bytes each, never the extended header that corrupted
         # the POI store (write_nav.poi_entry_payloads), then the count is checked.
-        put_pois_back(link, pois)
+        _back, err = put_pois_back_safely(link, pois, backup)
+        if err:
+            raise RuntimeError(f"The route was written, but {err}")
     finally:
         for p in temp_paths:
             pathlib.Path(p).unlink(missing_ok=True)
@@ -93,10 +105,10 @@ def write_route(link, gpx_paths, meta_capture=None, preserve_existing=True):
             "routes_kept": len(temp_paths), "routes_added": len(gpx_paths)}
 
 
-def delete_route(link, name):
+def delete_route(link, name, serial=None, backup_dir=None):
     """The BLE path for POST /api/routes/remove: write_nav.remove_route() against the bridge,
     the same steps the USB path runs through `write_nav.py delroute`."""
-    return remove_route(link, name)
+    return remove_route(link, name, serial=serial, backup_dir=backup_dir)
 
 
 def main():

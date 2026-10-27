@@ -47,6 +47,10 @@ void SettingsWriteService::setDevice(const QString &value)
     if (m_device == value)
         return;
     m_device = value;
+    // An error belongs to the watch it happened on.
+    m_lastErrorIsRead = false;
+    m_rereadAfterFailedWrite = false;
+    setLastError(QString());
     emit deviceChanged();
 }
 
@@ -85,9 +89,10 @@ void SettingsWriteService::refresh()
             return;
         }
 
-        // A read that works clears an earlier READ error; a write error stays until the next
-        // write, so the re-read after a failed write doesn't hide it.
-        if (m_lastErrorIsRead) {
+        // A read that works clears an earlier READ error. A write error survives only the re-read
+        // right after that write, so it is seen; any later good read (the page opened again,
+        // another watch) clears it too.
+        if (m_lastErrorIsRead || !afterFailedWrite) {
             m_lastErrorIsRead = false;
             setLastError(QString());
         }

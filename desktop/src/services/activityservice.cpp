@@ -455,11 +455,19 @@ void ActivityService::readWatchSteps(int productId, const QString &serial)
             s.setValue(QStringLiteral("health/watchRecoveryByWatch"),
                        QString::fromUtf8(QJsonDocument(snaps).toJson(QJsonDocument::Compact)));
         }
+        // Only snapshots from the newest day compete: steps from different days don't compare,
+        // and a watch last read days ago on a long day would otherwise keep winning.
+        QString newestDay;
+        for (auto it = snaps.constBegin(); it != snaps.constEnd(); ++it)
+            newestDay = qMax(newestDay,
+                             it.value().toObject().value(QStringLiteral("time")).toString().left(10));
         QJsonObject best;
         double bestSteps = -1;
         for (auto it = snaps.constBegin(); it != snaps.constEnd(); ++it) {
             const QJsonObject snap = it.value().toObject();
             const QString time = snap.value(QStringLiteral("time")).toString();
+            if (time.left(10) != newestDay)
+                continue;
             const double daySteps = stepsByWatch.value(it.key()).toObject()
                                         .value(time.left(10)).toDouble();
             if (daySteps > bestSteps || (daySteps == bestSteps

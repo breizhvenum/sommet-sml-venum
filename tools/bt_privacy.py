@@ -72,6 +72,15 @@ def notify():
             pass
 
 
+def _kill(proc):
+    """Once the password is typed, pkexec runs the script as root and this process may not
+    signal it (PermissionError). The script still ends on its own: stdin closed or 30 min."""
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 class PrivacyWindow:
     """One pkexec'd root script. open() blocks until privacy is on (or the prompt is
     cancelled); close() turns it off again. Safe to close() twice."""
@@ -109,7 +118,7 @@ class PrivacyWindow:
             code = self.proc.poll()
             self.state = "declined" if code == 126 else "unavailable"
             if code is None:
-                self.proc.kill()
+                _kill(self.proc)
             self.proc = None
         self.log({"on": "Bluetooth privacy on for this pairing",
                   "already": "Bluetooth privacy was already on - leaving it as it is",
@@ -134,7 +143,7 @@ class PrivacyWindow:
         try:
             proc.wait(timeout=40)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill(proc)
         if self.state == "on":
             self.log("Bluetooth privacy off again")
         self.state = "off"

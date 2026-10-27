@@ -839,7 +839,15 @@ def read_pois(link, capture=None):
     In dry-run there is no watch to ask, so the reply is taken from the capture being
     compared. That keeps --compare byte-exact rather than skipping the message.
     """
-    reply = link.command(CMD_POI_READ, b"\0\0\0\0")
+    try:
+        reply = link.command(CMD_POI_READ, b"\0\0\0\0")
+    except RuntimeError:
+        # Over Bluetooth an empty store's refusal (err=1, no data) comes back as an error
+        # (ble_server.WatchRefused, or BleBridgeError through the bridge); over USB it is just
+        # b"". The count tells an empty store from a real failure (Android does the same).
+        if not link.dry_run and poi_count(link) == 0:
+            return b""
+        raise
     if not link.dry_run:
         return _rest_of_poi_pages(link, reply)
     if capture:
@@ -1144,6 +1152,46 @@ def set_poi_records(link, records):
         raise RuntimeError(f"the watch did not keep the {len(records)} POIs written back")
 
 
+DEFAULT_BACKUP_DIR = pathlib.Path.home() / "AmbitAppBackups"   # server.py's BACKUP_DIR
+
+
+def poi_records_of(reply):
+    """The non-empty POI records of a read_pois() reply, in the order read."""
+    if not reply or F.SBEM_MAGIC not in reply:
+        return []
+    return [d for i, d in F.sbem_entries(reply) if i == POI_ENTRY and d]
+
+
+def backup_pois_before_route_write(link, pois, serial, backup_dir=None):
+    """A route write's 0x0b04 commit empties the POI store; until they are put back the POIs
+    exist only in memory. A copy goes to disk first, as remove_pois() does, so a link that
+    drops in between loses nothing for good. Returns the path, or None (dry-run, no POIs)."""
+    if link.dry_run or not poi_records_of(pois):
+        return None
+    return str(save_poi_backup(pois, serial or getattr(link, "opened_serial", None) or "",
+                               backup_dir or DEFAULT_BACKUP_DIR))
+
+
+def put_pois_back_safely(link, pois, backup=None):
+    """put_pois_back(), and if it fails or the count is wrong, one more go from an empty store
+    (set_poi_records: 0x0b04, count 0, write, count) so a half-done restore is never doubled.
+    Returns (count put back, None) or (None, error text naming the backup)."""
+    try:
+        back = put_pois_back(link, pois)
+        if back is not None:
+            return back, None
+        first = "the watch did not keep every POI put back"
+    except (RuntimeError, TimeoutError, OSError) as e:
+        first = str(e)
+    records = poi_records_of(pois)
+    try:
+        set_poi_records(link, records)
+        return len(records), None
+    except (RuntimeError, TimeoutError, OSError) as e:
+        where = f" A copy of them is saved in {backup}." if backup else ""
+        return None, f"the POIs could not be put back ({first}; then {e}).{where}"
+
+
 def remove_pois(link, targets, backup_dir):
     """Removes `targets` ([(name, lat, lon)]) from an Ambit3-family watch, keeping every other
     POI byte for byte: device info, read the list (0x0b24, every page), save a copy, then
@@ -1211,7 +1259,7 @@ def routes_to_keep_as_gpx(flash, name):
     return keep
 
 
-def remove_route(link, name):
+def remove_route(link, name, serial=None, backup_dir=None):
     """Removes route `name` from an Ambit3-family watch: the routes database is rewritten with
     every other route (or reset when none is left), and the POIs that write erases are put
     back (put_pois_back). Refuses when the watch's memory map is not the one these addresses
@@ -1222,7 +1270,7 @@ def remove_route(link, name):
     import tempfile
     if link.dry_run:
         return {"ok": False, "error": "removing a route needs the watch: run it with --write"}
-    link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
+    info = link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
     pois = read_pois(link)
     if not check_memory_map(read_memory_map(link)):
         return {"ok": False, "error": "this watch's memory map is not the one Sommet writes "
@@ -1240,15 +1288,23 @@ def remove_route(link, name):
                 paths.append(f.name)
         flash, layout = (build_routes([pathlib.Path(p) for p in paths], None, wsize) if paths
                          else build_reset(wsize))
-        send_plan(link, flash, layout)
+        backup = backup_pois_before_route_write(
+            link, pois, serial or serial_from_device_info(info), backup_dir)
+        try:
+            send_plan(link, flash, layout)
+        except (RuntimeError, TimeoutError, OSError) as e:
+            # The commit may have emptied the POI store before the failure.
+            _back, err = put_pois_back_safely(link, pois, backup)
+            return {"ok": False, "error": f"Removing the route failed ({e})."
+                    + (f" Also, {err}" if err else " The POIs were put back."), "backup": backup}
     finally:
         for path in paths:
             pathlib.Path(path).unlink(missing_ok=True)
-    back = put_pois_back(link, pois)
+    back, err = put_pois_back_safely(link, pois, backup)
     if back is None:
-        return {"ok": False, "routesLeft": len(keep),
-                "error": "the route is removed, but the watch did not keep every POI put back"}
-    return {"ok": True, "routesLeft": len(keep), "poisPutBack": back}
+        return {"ok": False, "routesLeft": len(keep), "backup": backup,
+                "error": f"The route is removed, but {err}"}
+    return {"ok": True, "routesLeft": len(keep), "poisPutBack": back, "backup": backup}
 
 
 def run_delroute(args):
@@ -1259,7 +1315,7 @@ def run_delroute(args):
     if args.write:
         print("!! REAL WRITE requested")
         link.open()
-    result = remove_route(link, args.name)
+    result = remove_route(link, args.name, backup_dir=args.backup_dir)
     print(json.dumps(result))
     return 0 if result.get("ok") else 1
 
@@ -1712,7 +1768,7 @@ def main():
     else:
         print("dry-run mode: not a byte will be emitted")
 
-    link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
+    info = link.command(CMD_DEVICE_INFO, b"\x02\x48\x03\x00")
     # SuuntoLink reads the POI list here, before the memory map, and writes it back
     # after the commit. Skipping that is what erased André's POIs on 2026-08-04.
     pois = read_pois(link, args.compare or args.meta)
@@ -1727,7 +1783,19 @@ def main():
         flash, layout = build_restore(args.gpx[0])
     else:
         flash, layout = build_routes([pathlib.Path(p) for p in args.gpx], args.meta, wsize)
-    send_plan(link, flash, layout)
+    backup = None
+    if args.set_pois_json is None:
+        backup = backup_pois_before_route_write(link, pois, serial_from_device_info(info),
+                                                args.backup_dir)
+        if backup:
+            print(f"  POIs saved first: {backup}")
+    try:
+        send_plan(link, flash, layout)
+    except (RuntimeError, TimeoutError, OSError):
+        if args.set_pois_json is None and not link.dry_run:
+            _back, err = put_pois_back_safely(link, pois, backup)
+            print("  POIs put back after the failed write" if err is None else f"!! {err}")
+        raise
 
     # The 0x0b04 commit in send_plan() just cleared the POI SBEM region, so the 0x0b25 below
     # SETS the whole list (the SuuntoLink poiimport sequence) rather than appending. With
@@ -1745,7 +1813,9 @@ def main():
     else:
         restored = poi_restore_payloads(pois)
         if restored:
-            put_pois_back(link, pois)
+            _back, err = put_pois_back_safely(link, pois, backup)
+            if err:
+                raise RuntimeError(err)
         elif link.dry_run and not (args.compare or args.meta):
             # A dry-run has no watch to ask, so it cannot show the 0x0b25 a live run will
             # send. Saying "no POI" here once made a rehearsal announce one message fewer than

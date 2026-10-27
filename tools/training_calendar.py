@@ -349,7 +349,14 @@ def auto_start_rules(decoded, existing, new_apps_bytes, plan_entries, today, aut
     return touched_modes(), out
 
 
+# Callers kill a calendar sync at 300 s (server.py, training_calendar_gui.py) and each compile
+# may take up to 45 s on a cold compiler. Past this budget the remaining entries wait for the
+# next sync, so the flash write never runs into that kill.
+COMPILE_BUDGET_S = 180
+
+
 def sync(link, plan, today, write, json_out, auto_start=None):
+    started = time.monotonic()
     mm = read_memory_map(link)
     cm_base, cm_size = mm["CustomModes"]
     apps_base, apps_size = mm["Apps"]
@@ -372,10 +379,14 @@ def sync(link, plan, today, write, json_out, auto_start=None):
     installed = load_installed(serial)
     edited = edited_labels(existing, kept_block_set, by_label, installed, lang)
     edited_blocks = {}   # label -> its block on the watch, kept if the new version fails to compile
+    # Their rule ids stay taken until the new version is in: a failed compile puts the old block
+    # back with its id, which a workout added meanwhile must not have been given.
+    reserved_ids = {}
     for e in existing:
         if e["name"] in edited and e["_raw_block"] in kept_block_set:
             kept_block_set.discard(e["_raw_block"])
             edited_blocks[e["name"]] = e["_raw_block"]
+            reserved_ids[e["name"]] = e.get("ruleId")
             to_add.append(by_label[e["name"]])
     for e in existing:
         if not (is_managed(e["name"]) and e["_raw_block"] in kept_block_set
@@ -410,6 +421,9 @@ def sync(link, plan, today, write, json_out, auto_start=None):
         label = entry_label(e["date"], e["workout"]["name"])
         try:
             GW.mode_activity_id(decoded, e["mode"])  # fail fast on an unknown mode name
+            if time.monotonic() - started > COMPILE_BUDGET_S:
+                raise SystemExit("the workout compiler is slow right now - this one goes on "
+                                 "the watch at the next sync")
             compiled = GW.compile_workout(e["workout"], lang)
         except SystemExit as err:
             failed.append((label, str(err)))
@@ -417,12 +431,14 @@ def sync(link, plan, today, write, json_out, auto_start=None):
                 new_apps_bytes = rebuild_apps_region(
                     [x["_raw_block"] for x in current_list] + [edited_blocks.pop(label)])
                 current_list = WI.apps_entries_with_raw_blocks(new_apps_bytes)
+                reserved_ids.pop(label, None)       # now in current_list itself
             continue
         compiled["name"] = label
         compiled["activityId"] = GW.ANY_MODE_ACTIVITY  # row == slot in every mode, see guided_workout
         # A unique rule id per installed workout, or the watch runs the first one with the same
         # id whatever was picked (GW.with_rule_id; André's swim-instead-of-run, 2026-10-05).
-        rule_id = GW.free_rule_id(current_list)
+        reserved_ids.pop(label, None)               # its own old id may be reused
+        rule_id = GW.free_rule_id(current_list + [{"ruleId": r} for r in reserved_ids.values()])
         if rule_id is None:
             failed.append((label, "no free rule id (1..9) left among the installed workouts"))
             continue
