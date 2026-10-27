@@ -47,19 +47,29 @@ export function decodeScale(hex: string): ScaleReading | null {
 export class Settle {
   private lastT: number | null = null;
   private armed = true;
-  constructor(private silenceSec = 15, private nearZeroKg = 5) {}
+  // A weigh-in also needs `confirm` final packets in a row with the same weight: the scale sends
+  // about 50 over 5 s, and a single stray final packet once gave a 13.23 kg weigh-in between two
+  // real ~92 kg ones on this phone app (2026-10-27).
+  private run = 0;
+  private runKg = 0;
+  constructor(private silenceSec = 15, private nearZeroKg = 5, private confirm = 3) {}
 
   feed(d: ScaleReading | null, nowSec: number): ScaleReading | null {
     if (!d) return null;
-    if (this.lastT !== null && nowSec - this.lastT >= this.silenceSec) this.armed = true;
+    if (this.lastT !== null && nowSec - this.lastT >= this.silenceSec) { this.armed = true; this.run = 0; }
     this.lastT = nowSec;
     if (!d.final) {
+      this.run = 0;
       if (d.weightKg < this.nearZeroKg) this.armed = true;
       return null;
     }
-    const fresh = this.armed;
-    this.armed = false;
-    return fresh ? d : null;
+    if (this.run > 0 && Math.abs(d.weightKg - this.runKg) < 0.005) this.run += 1;
+    else { this.run = 1; this.runKg = d.weightKg; }
+    if (this.armed && this.run >= this.confirm) {
+      this.armed = false;
+      return d;
+    }
+    return null;
   }
 }
 

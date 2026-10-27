@@ -37,25 +37,43 @@ describe('decodeScale', () => {
 
 describe('Settle', () => {
   const fin = decodeScale(FINAL_500)!, ramp = decodeScale(SETTLED)!, zero = decodeScale(ZERO)!;
-  it('one weigh-in per step-on', () => {
+  // n packets ~70 ms apart, as the scale sends them; the last non-null result.
+  const burst = (s: Settle, d: ReturnType<typeof decodeScale>, t: number, n = 3) => {
+    let out: ReturnType<typeof decodeScale> = null;
+    for (let i = 0; i < n; i++) out = s.feed(d, t + i * 0.07) ?? out;
+    return out;
+  };
+  it('one weigh-in per step-on, after three identical final packets', () => {
     const s = new Settle(15);
     expect(s.feed(ramp, 0)).toBeNull();
-    expect(s.feed(fin, 5.5)).toBe(fin);
-    expect(s.feed(fin, 8)).toBeNull();                       // repeat while standing there
+    expect(s.feed(fin, 5.5)).toBeNull();
+    expect(s.feed(fin, 5.6)).toBeNull();
+    expect(s.feed(fin, 5.7)).toBe(fin);
+    expect(burst(s, fin, 8)).toBeNull();                     // repeats while standing there
   });
   it('a re-measure while standing still is not a new weigh-in', () => {
     const s = new Settle(15);
-    expect(s.feed(fin, 0)).toBe(fin);
+    expect(burst(s, fin, 0)).toBe(fin);
     expect(s.feed(ramp, 6)).toBeNull();                      // impedance dropped to 0, weight high
-    expect(s.feed(fin, 9)).toBeNull();
+    expect(burst(s, fin, 9)).toBeNull();
   });
   it('a long silence, or the weight returning to ~0, starts a new weigh-in', () => {
     const s = new Settle(15);
-    expect(s.feed(fin, 0)).toBe(fin);
-    expect(s.feed(fin, 40)).toBe(fin);                       // 15 s+ silence
+    expect(burst(s, fin, 0)).toBe(fin);
+    expect(burst(s, fin, 40)).toBe(fin);                     // 15 s+ silence
     expect(s.feed(zero, 41)).toBeNull();
     expect(s.feed(ramp, 42)).toBeNull();
-    expect(s.feed(fin, 43)).toBe(fin);                       // stepped off and on again
+    expect(burst(s, fin, 43)).toBe(fin);                     // stepped off and on again
+  });
+  it('a lone stray final packet never counts', () => {
+    const s = new Settle(15);
+    const stray = { ...fin, weightKg: 13.23 };
+    expect(s.feed(zero, 0)).toBeNull();
+    expect(s.feed(stray, 0.1)).toBeNull();
+    expect(s.feed(zero, 0.2)).toBeNull();
+    expect(s.feed(fin, 0.3)).toBeNull();
+    expect(s.feed(stray, 0.4)).toBeNull();                   // a different weight restarts the count
+    expect(burst(s, fin, 0.5)).toBe(fin);
   });
 });
 

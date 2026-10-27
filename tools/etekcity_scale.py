@@ -50,28 +50,42 @@ class Settle:
     packet while you stand there, and it can re-measure (impedance 0, then back) without you
     stepping off. Measured 2026-10-16: a real step-on starts from about 0 kg or follows a long
     silence; a re-measure keeps the weight up with pauses of 3-7 s. So a final packet is a
-    new weigh-in only after a near-zero weight packet or `silence` seconds without any packet."""
+    new weigh-in only after a near-zero weight packet or `silence` seconds without any packet.
+
+    A weigh-in also needs `confirm` final packets in a row with the same weight: the scale sends
+    about 50 of them over 5 s (2026-10-27, desktop and Android both), and a single stray final
+    packet once gave Android a 13.23 kg weigh-in between two real ~92 kg ones."""
 
     NEAR_ZERO_KG = 5.0
 
-    def __init__(self, silence=15.0):
+    def __init__(self, silence=15.0, confirm=3):
         self.silence = silence
+        self.confirm = confirm
         self.last_t = None
-        self.armed = True     # True: the next final packet counts as a weigh-in
+        self.armed = True     # True: the next confirmed final reading counts as a weigh-in
+        self.run = 0          # final packets in a row with the same weight
+        self.run_kg = None
 
     def feed(self, d, now):
         if not d:
             return None
         if self.last_t is not None and now - self.last_t >= self.silence:
             self.armed = True
+            self.run = 0
         self.last_t = now
         if not d["final"]:
+            self.run = 0
             if d["weight_kg"] < self.NEAR_ZERO_KG:
                 self.armed = True
             return None
-        fresh = self.armed
-        self.armed = False
-        return d if fresh else None
+        if self.run and abs(d["weight_kg"] - self.run_kg) < 0.005:
+            self.run += 1
+        else:
+            self.run, self.run_kg = 1, d["weight_kg"]
+        if self.armed and self.run >= self.confirm:
+            self.armed = False
+            return d
+        return None
 
 
 # Payloads shaped like the first real capture (made-up address and weight): a ramp, the settled
@@ -92,19 +106,33 @@ def selftest():
         assert abs(d["weight_kg"] - kg) < 1e-9, (hx, d)
         assert d["final"] is final and d["impedance_ohm"] == imp, (hx, d)
     assert decode(b"\x00" * 20) is None and decode(b"\x01\x02") is None
+    def burst(s, d, t, n=3):
+        """n packets ~70 ms apart, as the scale sends them; the last non-None result."""
+        out = None
+        for i in range(n):
+            out = s.feed(d, t + i * 0.07) or out
+        return out
+
     s = Settle(silence=15)
     fin = decode(bytes.fromhex(_SAMPLES[2][0]))
     ramp = decode(bytes.fromhex(_SAMPLES[1][0]))
     zero = decode(bytes.fromhex(_SAMPLES[1][0])[:10] + bytes(3) + bytes.fromhex(_SAMPLES[1][0])[13:])
     assert zero["weight_kg"] == 0.0 and not zero["final"], zero
     assert s.feed(ramp, 0) is None, "ramp is ignored"
-    assert s.feed(fin, 5.5) is fin, "first final packet is the weigh-in"
-    assert s.feed(fin, 8.0) is None, "repeat while standing there is not a new weigh-in"
-    assert s.feed(ramp, 14.0) is None and s.feed(fin, 15.0) is None, \
+    assert s.feed(fin, 5.5) is None and s.feed(fin, 5.6) is None, "two final packets are not enough"
+    assert s.feed(fin, 5.7) is fin, "the third identical final packet is the weigh-in"
+    assert burst(s, fin, 8.0) is None, "repeats while standing there are not a new weigh-in"
+    assert s.feed(ramp, 14.0) is None and burst(s, fin, 15.0) is None, \
         "re-measure while standing still (weight stays high) is not a new weigh-in"
-    assert s.feed(fin, 40.0) is fin, "after 15 s of silence it is a new weigh-in"
+    assert burst(s, fin, 40.0) is fin, "after 15 s of silence it is a new weigh-in"
     assert s.feed(zero, 41.0) is None and s.feed(ramp, 42.0) is None
-    assert s.feed(fin, 43.0) is fin, "stepping off (weight back to ~0) then on again is a new weigh-in"
+    assert burst(s, fin, 43.0) is fin, "stepping off (weight back to ~0) then on again is a new weigh-in"
+    # A lone stray final packet with another weight never counts, even when armed.
+    s = Settle(silence=15)
+    stray = dict(fin, weight_kg=13.23)
+    assert s.feed(zero, 0) is None and s.feed(stray, 0.1) is None and s.feed(zero, 0.2) is None
+    assert s.feed(fin, 0.3) is None and s.feed(stray, 0.4) is None, "a different weight restarts the count"
+    assert burst(s, fin, 0.5) is fin
     print("selftest ok")
 
 
