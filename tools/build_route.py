@@ -4,10 +4,10 @@
     ./tools/build_route.py --compare "assets/ambit3 pcap/route12km" \\
         "assets/ambit3 pcap/Gare-du-Nord-to-114-Av.-André-Morizet.gpx"
 
-Four values are not derivable from a GPX: `distance`, `ascent`, `descent` and the
-route timestamp. They come from the application. In --compare mode they are taken
-from the capture, which makes it possible to demand byte-for-byte identity on
-everything else.
+`distance`, `ascent` and `descent` are worked out from the GPX when not given
+(route_from_gpx, as SuuntoLink's route.js does without a Suunto-app total); the route
+timestamp comes from the application. In --compare mode all four are taken from the
+capture, which makes it possible to demand byte-for-byte identity on everything else.
 """
 
 import argparse

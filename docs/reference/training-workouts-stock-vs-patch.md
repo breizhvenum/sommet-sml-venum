@@ -96,6 +96,14 @@ does **not** affect the backlight (light already fires every step on stock), and
 for "free run + planned complex workout" — that combo is native via the menu. Known edge: the very
 first step fires on the pre-start preview with light but no melody; every later step change gets both.
 
+## In Sommet
+
+- **Default (route 1):** Training Program → Sync to watch puts the dated workouts in the WORKOUT
+  menu; picked by hand on the day. Cards only for plain sessions without steps.
+- **"Training day on the watch" (route 2, opt-in):** adds the date-gated auto-start rules and a
+  card for every entry. Saved as `trainingProgram/autoStartOptIn` since 0.2.51 (an older
+  `autoStart` value is ignored). Android has route 1 only.
+
 ## No-flash recommendation
 Simple → the card. Complex → the (dated) WORKOUT menu, picked by hand (full cues, free run
 preserved). The patch is pure convenience: save the one manual tap, and add the melody to the no-tap

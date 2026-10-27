@@ -47,6 +47,25 @@ so you can load it into the editor again or install it later.
 With **Update the watch when it's plugged in** ticked, this happens by itself each time you
 connect the watch.
 
+### On the day
+
+Go into the sport mode (for example Running), **hold [Next] for 3 seconds**, choose **WORKOUT**,
+pick the day's workout (for example "Wed 28/10 W9 Workout") and start recording. You get the step
+screens, the light and the melody at each step, and "Workout ended" at the finish, on any
+Ambit3. A normal start without picking a workout stays a free run, every day.
+
+### "Training day on the watch" (optional, off by default)
+
+With this switch on, starting the sport on a training day runs that day's workout by itself, and
+each workout also gets a card under TIME → [Next]. Two trade-offs:
+
+- On stock firmware the workout runs **silently**: step screens and light, but no melody and no
+  "Workout ended". The melody on this path needs a firmware patch.
+- On a training day the sport is no longer a free run: any start runs the day's workout.
+
+Leave it off unless you want both. See
+[Training workouts: stock vs patch](../reference/training-workouts-stock-vs-patch.md) for why.
+
 On Android, each workout is compiled on the community compiler's website in your browser: the
 app gives you the text to paste, and you import the result back. The Android app makes no
 automatic compile call.

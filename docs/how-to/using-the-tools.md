@@ -22,9 +22,19 @@ for byte against a capture, packet sequence included.
 ```
 ./tools/write_nav.py reset                   # simulates, nothing is emitted
 ./tools/write_nav.py reset --compare CAPTURE  # checks against a capture
-./tools/write_nav.py route GPX --meta CAPTURE
+./tools/write_nav.py route GPX              # distance, ascent, descent from the GPX
+./tools/write_nav.py route GPX --meta CAPTURE  # ...or SuuntoLink's values from a capture
+./tools/write_nav.py delroute --name NAME --write   # remove one route
 ./tools/write_nav.py reset --write            # ACTUALLY EMITS
 ```
+
+A route write ends with a commit that empties the watch's POI list. The tools save the POIs to
+`~/AmbitAppBackups/POIs/<serial>/POIs_pre_<date>.bin` first, then put them back; if that fails
+twice, the error names this file.
+
+A route's distance is the whole GPX summed with the 6371 km Earth radius, and its ascent and
+descent are every rise and drop between points (as SuuntoLink's own `route.js`). A GPX without
+elevations gives 0 m of climb, as in SuuntoLink.
 
 Dry-run is the default across this toolset — pass `--write` explicitly to touch a real watch.
 See `docs/reference/compatibility.md` before trusting a feature on a watch that isn't marked

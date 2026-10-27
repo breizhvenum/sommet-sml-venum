@@ -13,19 +13,19 @@ The aim is to provide the same features to Android, Linux and later on if possib
 
 
 All features that are visible in the app are available by USB/USB-OTG, and some are also available/being tested by bluetooth.
-Bluetooth currently is only available as experimental feature, which can be enabled in settings. Currently it works on the first pair, but then it is flaky.
+Bluetooth is still an experimental feature, which can be enabled in settings. On the desktop (Ambit3 family) it now holds: the link reconnects by itself after the watch sleeps, a sync starts when the watch asks for one, and activities, POIs, routes and the clock go over it. On Linux, pairing asks for your password once (see "Linux: pairing a watch over Bluetooth" below, and [Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md)).
 Within the features we have:
 - Sync time with watch: from the current time of the device or another timezone
 - Update orbital data: gps and glonass (for the glonass devices)
 - Device manual: download them in pdf format
 - Activities: download from the watch,view on a map, export them in gpx, fit, to local, cloud or 3rd party services (strava, runalyze, intervals.icu, others to come)
-- Routes: Import/send a gpx route to the watch. export the routes on the watch to gpx format
-- POIs: Import/send a POI to the watch (via a map search, or coordinates), export the POIs on the map to gpx
+- Routes: Import/send a gpx route to the watch (with its distance, climb and altitude graph), remove a route from the watch, export the routes on the watch to gpx format. Sending or removing a route keeps your POIs; a copy of them is saved first in `~/AmbitAppBackups/POIs/`
+- POIs: Import/send a POI to the watch (via a map search, or coordinates), remove a POI, export the POIs on the map to gpx
 - Calendar: visual calendar with days where activities were done
 - Totals: totals of a certain activity
 - Backup: backup routes and POI altogether to a folder. Backup of your watch firmware (these watches firmwares should be matching the hw version)
 - Scheduled workouts (Ambit3): the watch's own WORKOUT menu is back - step screen with target band, step text, melody at each step, optional backlight flash at step change / out of limits. Running, cycling, pool swimming... (the watch shows 5 at a time)
-- Training Program: calendar of dated workouts, imported from intervals.icu (or made in the app) and rotated onto the watch at each sync; also sent to Bryton / Magene bike computers
+- Training Program: calendar of dated workouts, imported from intervals.icu (or made in the app) and rotated onto the watch at each sync; also sent to Bryton / Magene bike computers. On the day, pick the workout from the sport's WORKOUT menu (full beeps and melody, and a normal start stays a free run). The optional "Training day on the watch" switch starts the day's workout by itself, but silently on stock firmware
 - Workout Builder: build a workout step by step (time, distance, lap, energy, HR above/below; HR, pace, speed, power targets) and install it straight to the watch
 - Apps: Suunto App Zone apps (app-based workouts for Ambit1/2, or more complex ones on Ambit3), with app logging
 - Copy to watch: copy sport modes and settings from one watch to another

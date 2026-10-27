@@ -14,9 +14,9 @@ hang the watch.
 
 The GPX order is the descriptor order: most recently modified first.
 
-The four values supplied by the application (distance, ascent, descent, timestamp)
-are not in a GPX. --meta takes them from a capture; otherwise neutral values are
-used, which remains to be validated on hardware.
+Distance, ascent and descent are worked out from each GPX (build_route.route_from_gpx,
+hardware-checked 2026-10-27); the timestamp stays neutral. --meta takes all four from a
+capture instead.
 
 `settings` never writes: it sends the 0x1100 query, four zero bytes, which is what
 SuuntoLink sends on every connection, and decodes the reply. Its point is
@@ -1697,7 +1697,8 @@ def main():
     parser.add_argument("--write", action="store_true",
                         help="actually emits; without this option nothing is sent")
     parser.add_argument("--meta", metavar="CAPTURE",
-                        help="takes distance, ascent, descent and timestamp from it")
+                        help="takes distance, ascent, descent and timestamp from it "
+                             "(default: worked out from the GPX)")
     parser.add_argument("--compare", metavar="CAPTURE",
                         help="checks the simulated payloads against a capture")
     parser.add_argument("--from", metavar="CAPTURE", dest="from_capture",
