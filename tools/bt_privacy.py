@@ -116,6 +116,14 @@ class PrivacyWindow:
         else:
             # Cancelled prompt (pkexec exits 126), no polkit agent (127), or no answer.
             code = self.proc.poll()
+            if code is None and line[0] == "":
+                # Its output closed (EOF), so it is exiting: wait for the code. Asking poll()
+                # at once could beat the exit, and a cancelled prompt read as "unavailable"
+                # (seen 2026-10-27 as test_bt_privacy failing about one run in three).
+                try:
+                    code = self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    code = None
             self.state = "declined" if code == 126 else "unavailable"
             if code is None:
                 _kill(self.proc)
