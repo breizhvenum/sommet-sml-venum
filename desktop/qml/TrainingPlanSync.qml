@@ -26,9 +26,12 @@ QtObject {
     property Settings settings: Settings {
         category: "trainingProgram"
         property string draft: ""
-        // Every mode of a plan sport runs the next upcoming workout by itself (hardware, André's
-        // Peak, 2026-10-05).
-        property bool autoStart: false
+        // Route 2, opt-in (f6dbb10, 2026-10-21): every mode of a plan sport runs the next
+        // upcoming workout by itself - silent on stock firmware, and no free run on a training
+        // day. Saved under a NEW name since 2026-10-27: the old "autoStart" key was still true
+        // from the testing before 21/10 and quietly sent André's week as route 2. Old values are
+        // ignored; only ticking the box again turns it on.
+        property bool autoStartOptIn: false
         // Sync the plan whenever a watch is plugged in (2026-10-09).
         property bool autoSync: true
     }
@@ -126,10 +129,10 @@ QtObject {
         if (TrainingProgramService.installing || !DeviceService.deviceInfoOk) return
         const entries = store.entriesWithMode(store.draftEntries(), store.defaultMode)
         console.info("[plan-sync] syncing", entries.length, "workouts, default mode", store.defaultMode,
-                    "autoStart", store.settings.autoStart)
+                    "autoStart", store.settings.autoStartOptIn)
         if (entries.length === 0) return
         store.lastAutoSync = ""
-        TrainingProgramService.syncCalendar(entries, true, store.settings.autoStart)
+        TrainingProgramService.syncCalendar(entries, true, store.settings.autoStartOptIn)
     }
 
     property Connections modesWatch: Connections {

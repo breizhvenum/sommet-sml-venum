@@ -873,14 +873,14 @@ Item {
                             id: autoStartToggle
                             anchors.verticalCenter: parent.verticalCenter
                             text: qsTr("Training day on the watch")
-                            checked: draftStore.autoStart
-                            onToggled: draftStore.autoStart = checked
+                            checked: draftStore.autoStartOptIn
+                            onToggled: draftStore.autoStartOptIn = checked
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             width: parent.width * 0.6
                             wrapMode: Text.WordWrap
-                            text: draftStore.autoStart
+                            text: draftStore.autoStartOptIn
                                   ? qsTr("On a training day, Start the sport (Running) and the day's "
                                          + "workout runs step by step; on other days that sport is a "
                                          + "free run. Two trade-offs: on a training day the sport is "
@@ -944,7 +944,7 @@ Item {
                                      && HomeViewModel.anyDevice
                             onClicked: TrainingProgramService.syncCalendar(
                                 root.entriesWithMode(root.defaultMode), true,
-                                draftStore.autoStart)
+                                draftStore.autoStartOptIn)
                         }
                         RoundedButton {
                             // Same planned workouts, sent to a mounted Bryton Aero 60 as its own
