@@ -133,7 +133,7 @@ Kailash — plus Garmin eTrex 10/20/30 handheld GPS units.
 
 ### Bike computers (import your rides)
 - **Garmin Edge** and **Hammerhead Karoo** — plug in over USB and Sommet pulls the recorded rides straight off the device into your library.
-- **Bryton Aero 60** — plug it in (it shows up as a plain USB drive) and Sommet imports its rides. It also **syncs your rider profile** (FTP, LTHR, Max HR, weight) with intervals.icu, and lets you **build workouts** for the head unit.
+- **Bryton Aero 60** — plug it in (it shows up as a plain USB drive) and Sommet imports its rides. It also **sends your rider profile** (FTP, LTHR, Max HR, weight) from intervals.icu to the device, and lets you **build workouts** for the head unit.
 - **Magene C406 Pro** — has no USB data mode, so Sommet connects to it over **Bluetooth** (from "Pair over Bluetooth → Magene C406"), pairs once, and syncs its rides. It stays paired afterwards.
 - Rides land in your library with the right sport (outdoor → **Cycling**, trainer → **Indoor Cycling**), and — when your intervals.icu export is set to "everything" — upload to **intervals.icu** as the device's own file, so the type matches there too.
 
@@ -152,7 +152,7 @@ These go further than what Movescount or SuuntoLink ever offered:
   offline for the basics.
 - **📆 Training calendar / planned workouts** — pull planned workouts from intervals.icu and
   see them in a calendar.
-- **⚖️ Weight tracking** — reads your weight history from intervals.icu (and Garmin, where set up).
+- **⚖️ Weight tracking** — reads your weight history from intervals.icu (and Garmin, where set up), and from an **Etekcity FIT 8S** Bluetooth scale, whose weigh-ins can go to intervals.icu.
 - **🩺 Health & wellness** — reads wellness data (resting HR, HRV, etc.) from intervals.icu.
 - **💓 HRV (heart-rate variability)** — computed from your watch's raw heartbeat data.
 - **☁️ Cloud backup** — back up your data to **Dropbox, Google Drive or OneDrive.**
@@ -180,7 +180,7 @@ These go further than what Movescount or SuuntoLink ever offered:
 
 ## A few honest limitations
 
-- **Bluetooth** works fully on **Android**; on the desktop app it's cable-only for now.
+- **Bluetooth** works fully on **Android**; on the desktop it covers the Ambit3 family (activities, routes, POIs, sport modes, apps, workouts, profile, clock), and firmware still needs the cable.
 - **Firmware updates** — Sommet's firmware flasher is **tested and working on Linux, Android
   and macOS**. (On Android, do it with a charged phone and a reliable USB-OTG cable.)
 - **GPS-update data and firmware images** still come from Suunto's own servers (Sommet just

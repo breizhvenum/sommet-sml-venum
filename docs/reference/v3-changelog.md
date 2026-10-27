@@ -7,6 +7,32 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-27: Bluetooth scale, weigh-ins to intervals.icu, sport modes and apps over Bluetooth (desktop 0.2.53)
+
+Checked on André's Ambit3 Peak (fw 2.4.17) over Bluetooth and an Etekcity FIT 8S scale, 2026-10-27.
+
+- **Bluetooth scale (Etekcity FIT 8S), desktop and Android:** set it up once from Settings →
+  Connections; every weigh-in lands in Weight, with a body-fat estimate from the impedance. A
+  weigh-in counts only after three identical final readings (a stray packet once read 13.2 kg
+  for 93 kg). Set-up no longer asks for height or sex when intervals.icu or the watch already has
+  them.
+- **Weigh-ins go to intervals.icu** (scale and typed-in ones), on by default when an account is
+  connected; the body-fat estimate only if you tick it. intervals.icu keeps one weight per day,
+  the last one sent.
+- **intervals.icu writes to devices, never the other way:** Bryton and Magene profile sync only
+  sends intervals.icu's values to the device.
+- **Desktop over Bluetooth (Ambit3):** sport modes, apps, workouts, the Training Program and its
+  Today cards, the watch profile from intervals.icu, and the clock now work without the cable
+  (before, the desktop couldn't even read sport modes or apps over Bluetooth). Hardware: sport-mode
+  rename and back (byte-identical), clock, Today cards, weigh-in 91.78 kg → intervals.icu → watch
+  weight. The cable is used whenever it is plugged in.
+- **Today cards** use the workout's own sport.
+- **Ambit3 Vertical:** its settings show with their own numbers (read only).
+- **Android:** sets the watch clock and GPS orbit data when the watch connects.
+- **Linux pairing:** a cancelled password prompt is reported as cancelled.
+
+---
+
 ## 2026-10-27: Windows build fixed (desktop 0.2.52)
 
 - 0.2.50 and 0.2.51 have no Windows download: one lambda in the activity-weather code used

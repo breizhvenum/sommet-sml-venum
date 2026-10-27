@@ -13,7 +13,7 @@ The aim is to provide the same features to Android, Linux and later on if possib
 
 
 All features that are visible in the app are available by USB/USB-OTG, and some are also available/being tested by bluetooth.
-Bluetooth is still an experimental feature, which can be enabled in settings. On the desktop (Ambit3 family) it now holds: the link reconnects by itself after the watch sleeps, a sync starts when the watch asks for one, and activities, POIs, routes and the clock go over it. On Linux, pairing asks for your password once (see "Linux: pairing a watch over Bluetooth" below, and [Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md)).
+Bluetooth is still an experimental feature, which can be enabled in settings. On the desktop (Ambit3 family) it now holds: the link reconnects by itself after the watch sleeps, a sync starts when the watch asks for one, and activities, POIs, routes, the clock, sport modes, apps, workouts, the Training Program and the watch profile go over it. On Linux, pairing asks for your password once (see "Linux: pairing a watch over Bluetooth" below, and [Keep a Bluetooth watch paired on Linux](docs/how-to/bluetooth-pairing-on-linux.md)).
 Within the features we have:
 - Sync time with watch: from the current time of the device or another timezone
 - Update orbital data: gps and glonass (for the glonass devices)
@@ -31,6 +31,7 @@ Within the features we have:
 - Copy to watch: copy sport modes and settings from one watch to another
 - Watch settings: edit the watch's settings (Ambit1/2 and Ambit3 families)
 - Race Plan: plan a brevet / long ride from a GPX or roadbook: controls, stops, weather, climbs
+- Bluetooth scale: Etekcity FIT 8S weigh-ins with a body-fat estimate, sent to intervals.icu if you want (desktop and Android)
 - Health, Weight, Coach: wellness and training load from intervals.icu, HRV from R-R, readiness and an optional chat coach (bring your own API key)
 - Gear: bikes, shoes and parts with service reminders, synced with intervals.icu
 - Cloud backup: Dropbox, Google Drive, OneDrive

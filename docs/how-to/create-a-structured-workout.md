@@ -6,8 +6,8 @@ rate, pace, speed or power) and each step's text, and beeps at every step change
 
 It works on **Ambit3** watches, and has been tested on the Ambit3 Peak. It needs:
 
-- the watch plugged in with its USB cable, **on its time screen** (not in a menu, not
-  recording);
+- the watch plugged in with its USB cable, or connected over Bluetooth, **on its time screen**
+  (not in a menu, not recording);
 - an internet connection for one step: the workout is compiled by the community Ambit Apps
   compiler. Everything else works offline.
 
