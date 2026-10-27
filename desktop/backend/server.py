@@ -8064,6 +8064,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         plan = {"name": body.get("name", "Calendar"), "entries": entries}
         auto_start = bool(body.get("autoStart"))
+        if use_ble():
+            self._sync_calendar_ble(plan, bool(body.get("write")), auto_start)
+            return
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(plan, f)
             plan_path = f.name
@@ -8072,9 +8075,9 @@ class Handler(BaseHTTPRequestHandler):
             if body.get("write"):
                 args.append("--write")
             if auto_start:
-                # Every mode of a plan sport runs that sport's next upcoming workout on every
-                # recording, so the Today card's Start -> any mode of the sport -> the steps run
-                # by themselves (training_calendar.auto_start_rules). Off = such rules removed.
+                # The sport mode each entry names (plain "Running") runs every upcoming workout,
+                # each gated on its date, so the Today card's Start -> Running -> the day's steps
+                # run by themselves (training_calendar.auto_start_rules). Off = such rules removed.
                 args.append("--auto-start")
             code, out, err = run_tool("training_calendar.py", args, timeout=300)
         finally:
@@ -8090,6 +8093,60 @@ class Handler(BaseHTTPRequestHandler):
                                    "raw_output": out, "stderr": err})
             return
         self._send_json(200 if info.get("ok") else 502, info)
+
+    def _sync_calendar_ble(self, plan, write, auto_start):
+        """The Bluetooth path of sync-calendar (training-calendar/04): the same
+        training_calendar.sync() the cable runs as a subprocess, here in this process on
+        ble_bridge.bridge, because the Bluetooth link lives here. Same reads, writes and
+        CustomModes read-back/rollback; write=false still reads the watch (the Bluetooth
+        daemon's dry-run would block reads too) but sync() itself sends no write. Proven on
+        the emulated watch over the phone link (Apps + TrainingProgram byte-exact, 2026-10-20);
+        not yet on a real watch over Bluetooth."""
+        sys.path.insert(0, str(TOOLS_DIR))
+        import training_calendar                             # noqa: PLC0415
+        try:
+            ble_bridge.bridge.set_dry_run(False)
+            result = training_calendar.sync(ble_bridge.bridge, plan, datetime.now().date(),
+                                            write, True, auto_start=auto_start)
+        except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError, ValueError,
+                OSError, SystemExit) as exc:
+            self._send_json(502, {"ok": False, "transport": "ble", "error": str(exc)})
+            return
+        finally:
+            try:
+                ble_bridge.bridge.set_dry_run(True)
+            except Exception:  # noqa: BLE001 - best effort back to the safe default
+                pass
+        self._send_json(200 if result.get("ok") else 502, {**result, "transport": "ble"})
+
+    def _write_planned_moves_ble(self, plan):
+        """The Bluetooth path of a planned-moves WRITE (training-calendar/04): builds the same
+        TrainingProgram region as `training_program.py --plan/--clear` and sends it on
+        ble_bridge.bridge, then reads it back (training_program.write_and_verify). Returns the
+        tool's usual {ok, written, count, ...} dict. plan=None clears the region."""
+        sys.path.insert(0, str(TOOLS_DIR))
+        import training_program                              # noqa: PLC0415
+        try:
+            if plan is None:
+                flash, layout = training_program.clear_layout()
+                info = {"count": 0, "dates": [], "cleared": True}
+            else:
+                flash, layout, info = training_program.build_plan(
+                    *training_program.parse_plan(plan))
+            ble_bridge.bridge.set_dry_run(False)
+            error = training_program.write_and_verify(ble_bridge.bridge, flash, layout)
+        except (ble_bridge.BleBridgeError, RuntimeError, TimeoutError, ValueError,
+                KeyError, SystemExit) as exc:
+            return {"ok": False, "written": False, "transport": "ble", "error": str(exc)}
+        finally:
+            try:
+                ble_bridge.bridge.set_dry_run(True)
+            except Exception:  # noqa: BLE001 - best effort back to the safe default
+                pass
+        result = {"ok": error is None, "written": True, "transport": "ble", **info}
+        if error:
+            result["error"] = error
+        return result
 
     def _handle_trainingprogram_planned_moves(self, body):
         """POST /api/trainingprogram/planned-moves. Body: {entries:[{date, mode, workout,
@@ -8115,15 +8172,17 @@ class Handler(BaseHTTPRequestHandler):
         (the tool builds and logs the exact bytes, opens no device).
 
         WITH "autoStart" (the same flag the sync-calendar call got) every entry gets a card,
-        because the card's Start now leads somewhere: every mode of the sport runs the next
-        upcoming workout by itself (training_calendar.auto_start_rules). The card then only points at
+        because the card's Start now leads somewhere: the entry's sport mode (plain "Running") runs
+        the day's workout by itself (training_calendar.auto_start_rules). The card then only points at
         the workout, so its own HR target must stay out of the way - the firmware always turns
         the mode's HR limits on for a planned move (FUN_00026a36), the band being
         zone%[i]..zone%[i+1] of max HR (FUN_0003ed3e); intensity 0 with header zones
         97/98/99/100 gives rest HR .. 97 % of max, the widest the watch allows. Hardware,
         André's Peak, 2026-10-16: card -> Start -> "Running workout" runs the day's workout by
-        itself with the step pop-ups ("Brisk Walk 0'30", "Jog", "Walk 0'30"), light and beep at
-        each step change, the card's own 50 % / 100 % screens in between. (On 2026-10-14 the
+        itself with the step pop-ups ("Brisk Walk 0'30", "Jog", "Walk 0'30"), the card's own
+        50 % / 100 % screens in between; 2026-10-18 the same from plain "Running". A step change
+        gives the pop-up and the light; the workout's only beep is its HR-zone alarm (HR outside
+        the step's zone), so a step whose zone the HR is already in changes silently. (On 2026-10-14 the
         pop-ups were empty and every step lasted a second: the date gate had left the step
         natives' references one slot too low - iamrule_code.native_ref_sites, fixed 2026-10-15.
         Only the fixed guidance display, sport-mode display type 15, stays WORKOUT-menu only.)
@@ -8154,9 +8213,29 @@ class Handler(BaseHTTPRequestHandler):
         # dry-run on a desk with no watch) still gets a plan, from the workout/default ids.
         mode_activity = {}
         activity_source = "default"
-        code, out, err = run_tool("custom_modes.py", ["--json"], timeout=120)
-        info = self._parse_last_json_line(out) if code == 0 else None
-        modes = (info or {}).get("modes") if isinstance(info, dict) else None
+        if use_ble():
+            # Same read as custom_modes.py --json, on the Bluetooth link (training-calendar/04).
+            sys.path.insert(0, str(TOOLS_DIR))
+            import custom_modes                              # noqa: PLC0415
+            from write_nav import read_flash                 # noqa: PLC0415
+            try:
+                ble_bridge.bridge.set_dry_run(False)
+                data = read_flash(ble_bridge.bridge, custom_modes.CUSTOM_MODES_BASE,
+                                  custom_modes.CUSTOM_MODES_SIZE, label="CustomModes")
+                info = custom_modes.to_json(custom_modes.decode(data))
+            except Exception:  # noqa: BLE001 - best effort, as the cable read below
+                info = None
+            finally:
+                try:
+                    ble_bridge.bridge.set_dry_run(True)
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            code, out, err = run_tool("custom_modes.py", ["--json"], timeout=120)
+            info = self._parse_last_json_line(out) if code == 0 else None
+        # custom_modes.to_json names the list "exerciseModes" (it never had "modes": until
+        # 2026-10-20 this lookup always fell back to the default ids).
+        modes = (info.get("exerciseModes") or info.get("modes")) if isinstance(info, dict) else None
         if isinstance(modes, list):
             for m in modes:
                 if m.get("name") and m.get("activityId") is not None:
@@ -8229,7 +8308,17 @@ class Handler(BaseHTTPRequestHandler):
             resolution.append({"date": e["date"], "mode": e["mode"], "activityId": activity_id,
                                "activityIdFrom": how})
 
-        if items:
+        # A preview opens no watch at all, so only a real write takes the Bluetooth path.
+        ble_write = bool(body.get("write")) and use_ble()
+        if ble_write:
+            plan = None
+            if items:
+                plan = {"items": items}
+                if auto_start:
+                    plan["hrZones"] = [97, 98, 99, 100]
+            result = self._write_planned_moves_ble(plan)
+            out = err = ""
+        elif items:
             plan = {"items": items}
             if auto_start:
                 plan["hrZones"] = [97, 98, 99, 100]
@@ -8249,7 +8338,8 @@ class Handler(BaseHTTPRequestHandler):
         else:
             args = ["--clear", "--json"] + (["--write"] if body.get("write") else [])
             code, out, err = run_tool("training_program.py", args, timeout=180)
-        result = self._parse_last_json_line(out)
+        if not ble_write:
+            result = self._parse_last_json_line(out)
         if result is None:
             self._send_json(502, {"ok": False,
                                    "error": ("training_program.py produced no JSON: "

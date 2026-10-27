@@ -35,7 +35,8 @@ import sys
 
 import ambit_format as F
 from ambit_pcap import FlashImage
-from write_nav import CMD_DEVICE_INFO, Link, check_memory_map, read_memory_map, send_plan
+from write_nav import (CMD_DEVICE_INFO, Link, check_memory_map, read_flash,
+                       read_memory_map, send_plan)
 
 # HEADER now READ BYTE-FOR-BYTE, 2026-08-19, out of the ACTUAL createBinary the Ambit3-Peak
 # save path calls (TrainingProgramAreaConverter::createBinary == FUN_007f4770; EmuDevice::
@@ -267,6 +268,91 @@ def build_training_program(items, base_date, date_format="ymd", emu=False,
     return flash, layout
 
 
+def parse_plan(plan):
+    """[(date, item)] sorted by date, and the header's HR zone percentages, from a --plan
+    object ({"items": [...], "hrZones"?: [a,b,c,d]} or a bare item list). ValueError/KeyError
+    when the watch could not hold it."""
+    raw = plan["items"] if isinstance(plan, dict) else plan
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("plan has no items")
+    if len(raw) > 60:
+        raise ValueError(f"{len(raw)} items - the watch stores at most 60 planned moves")
+    parsed = []
+    for i, it in enumerate(raw):
+        d = datetime.date.fromisoformat(str(it["date"]))
+        if not 2013 <= d.year <= 2099:
+            raise ValueError(f"item {i}: year {d.year} outside the firmware's 2013-2099")
+        parsed.append((d, it))
+    parsed.sort(key=lambda t: t[0])
+    base = parsed[0][0]
+    if (parsed[-1][0] - base).days > 127:
+        # The firmware masks the item's day offset with 0x7F (sfi2 notes, item +0).
+        raise ValueError("plan spans more than 127 days from its first workout - the "
+                         "watch's day offset wraps past that")
+    # Optional header zone percentages. The card's HR band is zone%[i]..zone%[i+1] of
+    # max HR for intensity i (firmware FUN_0003ed3e); 97/98/99/100 with intensity 0
+    # makes it rest HR .. 97 % - the widest the watch allows, used when the card only
+    # points at a guided workout (desktop backend, auto-start mode).
+    zones = tuple(int(z) for z in plan["hrZones"]) \
+        if isinstance(plan, dict) and plan.get("hrZones") else DEFAULT_HR_ZONES
+    pack_hr_zones(zones)  # validate now, with the plan error path
+    return parsed, zones
+
+
+def build_plan(plan_items, zones, verbose=False):
+    """(flash, layout, info) for parse_plan()'s output: the TrainingProgram region to send
+    with send_plan(..., commit=False), and {count, baseDate, dates, bytes} for the JSON."""
+    base = plan_items[0][0]
+    items, dates, per_day = [], [], {}
+    for d, it in plan_items:
+        ordinal = per_day[d] = per_day.get(d, -1) + 1
+        # 0 = "no id": never send it, see plan_move_id().
+        move_id = int(it.get("moveId", 0)) or plan_move_id(d, ordinal)
+        items.append(build_training_item(
+            int(it.get("activityId", 3)), int(it.get("durationMinutes", 0)),
+            int(it.get("intensity", 1)), str(it.get("name", "Move")),
+            day_offset=(d - base).days, completed=bool(it.get("completed", False)),
+            move_id=move_id, distance=int(it.get("distance", 0))))
+        dates.append(d.isoformat())
+    flash, layout = build_training_program(items, base_date=base, hr_zones=zones)
+    blob = layout[0][2]
+    if verbose:
+        print(f"  plan: {len(items)} planned move(s), base date {base.isoformat()}, "
+              f"{len(blob)} bytes")
+        for (d, it), item in zip(plan_items, items):
+            print(f"    {d.isoformat()}  act={it.get('activityId', 3):<3} "
+                  f"{int(it.get('durationMinutes', 0)):>4} min  int={it.get('intensity', 1)}  "
+                  f"moveId=0x{struct.unpack_from('<I', item, 4)[0]:08x}  "
+                  f"{str(it.get('name', 'Move'))[:23]!r}")
+    return flash, layout, {"count": len(items), "baseDate": base.isoformat(), "dates": dates,
+                           "bytes": len(blob)}
+
+
+def clear_layout():
+    """(flash, layout) restoring the region to its pristine empty state (all 0xFF)."""
+    blob = b"\xff" * F.TRAINING_PROGRAM_REGION_SIZE
+    flash = FlashImage()
+    flash.write(F.TRAINING_PROGRAM_BASE, blob)
+    return flash, [("TrainingProgram (cleared to empty)", F.TRAINING_PROGRAM_BASE, blob),
+                   ("tail", F.TRAINING_PROGRAM_BASE, None)]
+
+
+def write_and_verify(link, flash, layout):
+    """Sends a TrainingProgram layout over an open link (USB Link or ble_bridge) and reads
+    the region back. Returns None when it matches, else an error string. Used by the
+    desktop backend's Bluetooth path (training-calendar/04): over Bluetooth the write lands
+    in the watch's flash file system and reads back at the same logical 0x1000 (emulator,
+    2026-10-19/20)."""
+    check_memory_map(read_memory_map(link))
+    send_plan(link, flash, layout, commit=False)
+    base, blob = layout[0][1], bytes(layout[0][2])
+    back = bytes(read_flash(link, base, len(blob), label="TrainingProgram (verify)"))
+    if back != blob:
+        diff = next((i for i, (a, b) in enumerate(zip(back, blob)) if a != b), min(len(back), len(blob)))
+        return f"the Today cards read back wrong after the write (first difference at byte {diff})"
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--name", default="Test", help="the workout's name (up to 23 characters)")
@@ -341,31 +427,7 @@ def main():
         try:
             with open(args.plan) as f:
                 plan = json.load(f)
-            raw = plan["items"] if isinstance(plan, dict) else plan
-            if not isinstance(raw, list) or not raw:
-                raise ValueError("plan has no items")
-            if len(raw) > 60:
-                raise ValueError(f"{len(raw)} items - the watch stores at most 60 planned moves")
-            parsed = []
-            for i, it in enumerate(raw):
-                d = datetime.date.fromisoformat(str(it["date"]))
-                if not 2013 <= d.year <= 2099:
-                    raise ValueError(f"item {i}: year {d.year} outside the firmware's 2013-2099")
-                parsed.append((d, it))
-            parsed.sort(key=lambda t: t[0])
-            base = parsed[0][0]
-            if (parsed[-1][0] - base).days > 127:
-                # The firmware masks the item's day offset with 0x7F (sfi2 notes, item +0).
-                raise ValueError("plan spans more than 127 days from its first workout - the "
-                                 "watch's day offset wraps past that")
-            plan_items = [(d, it) for d, it in parsed]
-            # Optional header zone percentages. The card's HR band is zone%[i]..zone%[i+1] of
-            # max HR for intensity i (firmware FUN_0003ed3e); 97/98/99/100 with intensity 0
-            # makes it rest HR .. 97 % - the widest the watch allows, used when the card only
-            # points at a guided workout (desktop backend, auto-start mode).
-            plan_zones = tuple(int(z) for z in plan["hrZones"]) \
-                if isinstance(plan, dict) and plan.get("hrZones") else DEFAULT_HR_ZONES
-            pack_hr_zones(plan_zones)  # validate now, with the plan error path
+            plan_items, plan_zones = parse_plan(plan)
         except (OSError, KeyError, ValueError, json.JSONDecodeError) as e:
             print(f"bad --plan: {e}")
             emit_json(False, error=str(e))
@@ -384,42 +446,17 @@ def main():
     check_memory_map(read_memory_map(link))
 
     if plan_items is not None:
-        items = []
-        dates = []
-        per_day = {}
-        for d, it in plan_items:
-            ordinal = per_day[d] = per_day.get(d, -1) + 1
-            # 0 = "no id": never send it, see plan_move_id().
-            move_id = int(it.get("moveId", 0)) or plan_move_id(d, ordinal)
-            items.append(build_training_item(
-                int(it.get("activityId", 3)), int(it.get("durationMinutes", 0)),
-                int(it.get("intensity", 1)), str(it.get("name", "Move")),
-                day_offset=(d - args.date).days, completed=bool(it.get("completed", False)),
-                move_id=move_id, distance=int(it.get("distance", 0))))
-            dates.append(d.isoformat())
-        flash, layout = build_training_program(items, base_date=args.date, hr_zones=plan_zones)
-        blob = layout[0][2]
-        print(f"  plan: {len(items)} planned move(s), base date {args.date.isoformat()}, "
-              f"{len(blob)} bytes")
-        for (d, it), item in zip(plan_items, items):
-            print(f"    {d.isoformat()}  act={it.get('activityId', 3):<3} "
-                  f"{int(it.get('durationMinutes', 0)):>4} min  int={it.get('intensity', 1)}  "
-                  f"moveId=0x{struct.unpack_from('<I', item, 4)[0]:08x}  "
-                  f"{str(it.get('name', 'Move'))[:23]!r}")
+        flash, layout, info = build_plan(plan_items, plan_zones, verbose=True)
         send_plan(link, flash, layout, commit=False)
         total = sum(len(payload) for _, payload, _ in link.sent)
         print(f"\n{len(link.sent)} messages, {total} payload bytes"
               + ("" if args.write else " — nothing was emitted"))
-        emit_json(True, count=len(items), baseDate=args.date.isoformat(), dates=dates,
-                  bytes=len(blob))
+        emit_json(True, **info)
         return 0
 
     if args.clear:
-        blob = b"\xff" * F.TRAINING_PROGRAM_REGION_SIZE
-        flash = FlashImage()
-        flash.write(F.TRAINING_PROGRAM_BASE, blob)
-        layout = [("TrainingProgram (cleared to empty)", F.TRAINING_PROGRAM_BASE, blob),
-                  ("tail", F.TRAINING_PROGRAM_BASE, None)]
+        flash, layout = clear_layout()
+        blob = layout[0][2]
         print(f"  CLEAR: restoring {len(blob)} bytes of 0xFF (pristine empty region)")
     else:
         if args.emu:

@@ -21,7 +21,11 @@ The cursor advances by 0x18 (24) each page in the capture, consistent with a fix
 per-page entry count, but nothing in the capture says what ends the sequence (a sentinel
 reply, a count from the first 0xec reply, or something else) - guessing that wrong risks a
 loop that never stops or one that stops early, silently short. Deliberately not
-implemented here until that can be verified against a live watch; entry 0x8d's per-activity
+implemented here until that can be verified against a live watch. (Settled since, 2026-10-18,
+ticket watch-emulator/01: each page reply starts `[u32 cursor][u16 last]`, the app echoes the
+cursor into the next request, and the last page has cursor 00000000 and last = 1 - in all three
+captures (both 2026-08-09 btsnoops and ambit3pairand2activitiesnoorbit.pklg) and in the watch
+program itself; still not seen on a live watch from this code.) Also, entry 0x8d's per-activity
 byte layout also hasn't been cross-checked against exercise_log.py's own known field
 offsets yet (date/duration/distance/sport type). Real, useful data point either way: the
 "first request in the sequence" scope below IS real, tested plumbing, not a guess.
