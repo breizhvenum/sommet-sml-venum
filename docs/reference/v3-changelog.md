@@ -7,6 +7,23 @@ they land, on the way to what André/Vincent have been calling "V3": wireless sy
 
 ---
 
+## 2026-10-27: Routes show their distance and climb; "Training day on the watch" stays off (desktop 0.2.51)
+
+Checked on André's Ambit3 Peak (fw 2.4.17), 2026-10-27.
+
+- **Routes sent by Sommet show their distance, ascent and descent** in the watch's route list
+  (always 0 m before). Worked out like SuuntoLink's own route.js: distance summed over the whole
+  GPX (6371 km radius - exact on Movescount's LyricanTrail, within 5 m of SuuntoLink's totals),
+  ascent and descent as the sum of every rise and drop (the descent is exact on SuuntoLink's
+  128 km capture; SuuntoLink takes its ascent from the Suunto cloud, which a GPX doesn't carry).
+  Hardware: Boucle 5 km read back as 5269 m, 46 m up, 47 m down; the 8 POIs unchanged.
+- **"Training day on the watch" (auto-start) is off unless you tick it again.** It is saved under a
+  new name, so a value left on from before 21/10 no longer sends the plan the auto-start way
+  (silent on stock firmware, no free run on a training day). The default stays the WORKOUT menu:
+  pick the day's workout by hand, full beeps and melody on any watch.
+
+---
+
 ## 2026-10-27: Bluetooth sync that holds, POIs and routes you can remove, Settings split (desktop 0.2.50)
 
 Checked on André's Ambit3 Peak (fw 2.4.17) over Bluetooth and USB, 2026-10-20 to 2026-10-27.
