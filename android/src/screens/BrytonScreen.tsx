@@ -2,27 +2,24 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Modal, Pressable } from 'react-native';
 import { readGrid, writeGrid, GRID_GROUPS, FIELD_NAME, type GridPage, type GridChange } from '../services/BrytonGrid';
 import { useNavigation } from '@react-navigation/native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useV3Theme, v3Spacing, v3Radius, v3Type } from '../theme/v3';
 import { Button, StatusLine, Toggle } from '../components/ui/primitives';
 import { Card } from '../components/ui/Card';
 import {
   connectBryton, disconnectBryton, readProfile, writeProfile, isBrytonUsbAvailable,
 } from '../services/BrytonUsb';
-import { getAthleteThresholds, putAthleteThresholds } from '../services/ApiIntervalsIcu';
+import { getAthleteThresholds } from '../services/ApiIntervalsIcu';
 import type { BrytonProfile } from '../services/BrytonProfile';
 
 // Bryton Aero 60 hub — the Android counterpart of the desktop Home Bryton card + "Sync profile"
 // dialog (BrytonProfileDialog.qml). Connects to the Aero 60 over USB (BrytonUsb / libaums),
-// reconciles its FTP/LTHR/Max HR/weight against intervals.icu, and links to the Workout Builder.
+// updates its FTP/LTHR/Max HR/MAP/weight from intervals.icu (one way: a device never writes to
+// intervals.icu, André 2026-10-27), and links to the Workout Builder.
 // Responsive: a single centred column that stays readable on a phone and doesn't sprawl on a tablet.
 
 type Field = 'ftp' | 'lthr' | 'maxHr' | 'map' | 'weight';
 const FIELDS: Field[] = ['ftp', 'lthr', 'maxHr', 'map', 'weight'];
 const LABELS: Record<Field, string> = { ftp: 'FTP (W)', lthr: 'LTHR (bpm)', maxHr: 'Max HR (bpm)', map: 'MAP (W)', weight: 'Weight (kg)' };
-// MAP only goes intervals.icu -> device (estimated from its power curve; intervals.icu has no MAP).
-const ONE_WAY: Field[] = ['map'];
-const PREF_KEY = 'brytonProfileSource';
 
 export default function BrytonScreen() {
   const t = useV3Theme();
@@ -34,10 +31,6 @@ export default function BrytonScreen() {
   const [device, setDevice] = useState<BrytonProfile | null>(null);
   const [intervals, setIntervals] = useState<Record<Field, number | undefined> | null>(null);
   const [mapSource, setMapSource] = useState('');
-  const [choice, setChoice] = useState<Record<Field, 'device' | 'intervals'>>({
-    ftp: 'intervals', lthr: 'intervals', maxHr: 'intervals', map: 'intervals', weight: 'intervals',
-  });
-  const [remember, setRemember] = useState(true);
   const [applying, setApplying] = useState(false);
   const [applyMsg, setApplyMsg] = useState('');
   // Data screens (System/Grid.ini) - desktop BrytonScreensDialog parity.
@@ -58,11 +51,6 @@ export default function BrytonScreen() {
       const icu = await getAthleteThresholds();
       setIntervals(icu ? { ftp: icu.ftp, lthr: icu.lthr, maxHr: icu.maxHr, map: icu.map, weight: icu.weight } : null);
       setMapSource(icu?.mapSource ?? '');
-      // restore remembered per-field sources
-      try {
-        const raw = await AsyncStorage.getItem(PREF_KEY);
-        if (raw) setChoice(c => ({ ...c, ...JSON.parse(raw) }));
-      } catch { /* ignore */ }
       setStatus('ready');
     } catch (e: any) {
       setError(String(e?.message ?? e)); setStatus('error');
@@ -83,15 +71,9 @@ export default function BrytonScreen() {
     if (!device || !intervals) return;
     setApplying(true); setApplyMsg('');
     const toDevice: Partial<BrytonProfile> = {};
-    const toIntervals: { ftp?: number; lthr?: number; maxHr?: number; weight?: number } = {};
-    for (const f of diffs) {
-      if (choice[f] === 'intervals' || ONE_WAY.includes(f)) (toDevice as any)[f] = intervals[f];
-      else (toIntervals as any)[f] = device[f];
-    }
+    for (const f of diffs) (toDevice as any)[f] = intervals[f];
     try {
-      if (remember) await AsyncStorage.setItem(PREF_KEY, JSON.stringify(choice));
       if (Object.keys(toDevice).length) await writeProfile(toDevice);
-      if (Object.keys(toIntervals).length) await putAthleteThresholds(toIntervals);
       setApplyMsg('Saved.');
       await connect();
     } catch (e: any) {
@@ -99,7 +81,7 @@ export default function BrytonScreen() {
     } finally {
       setApplying(false);
     }
-  }, [device, intervals, diffs, choice, remember, connect]);
+  }, [device, intervals, diffs, connect]);
 
   const fmt = (f: Field, v: number | undefined) => (v == null ? '—' : String(v));
 
@@ -152,44 +134,21 @@ export default function BrytonScreen() {
               <Card>
                 <Text style={{ color: t.text, fontSize: v3Type.heading, fontWeight: '700' }}>Sync profile</Text>
                 <Text style={{ color: t.mutedText, fontSize: v3Type.body, marginTop: 2, marginBottom: v3Spacing.medium }}>
-                  Pick the value that's right for each — it's written to the device and/or intervals.icu.
+                  These differ. Apply writes the intervals.icu values to the Bryton.
                 </Text>
 
                 {diffs.map(f => (
                   <View key={f} style={{ marginBottom: v3Spacing.medium }}>
                     <Text style={{ color: t.text, fontSize: v3Type.body, fontWeight: '600', marginBottom: 6 }}>{LABELS[f]}</Text>
-                    <View style={{ flexDirection: 'row', gap: v3Spacing.small }}>
-                      {(['device', 'intervals'] as const).map(src => {
-                        const locked = src === 'device' && ONE_WAY.includes(f);
-                        const sel = locked ? false : (ONE_WAY.includes(f) ? src === 'intervals' : choice[f] === src);
-                        const val = src === 'device' ? device[f] : intervals[f];
-                        return (
-                          <TouchableOpacity key={src} activeOpacity={0.8} disabled={locked}
-                            onPress={() => setChoice(c => ({ ...c, [f]: src }))}
-                            style={{
-                              flex: 1, padding: v3Spacing.small, borderRadius: v3Radius.small,
-                              borderWidth: 1, borderColor: sel ? t.primary : t.border,
-                              backgroundColor: sel ? t.primary : t.card, alignItems: 'center',
-                            }}>
-                            <Text style={{ color: sel ? t.card : t.mutedText, fontSize: v3Type.caption }}>
-                              {src === 'device' ? 'Bryton' : 'intervals.icu'}
-                            </Text>
-                            <Text style={{ color: sel ? t.card : t.text, fontSize: v3Type.body, fontWeight: '700' }}>{fmt(f, val)}</Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
+                    <Text style={{ color: t.text, fontSize: v3Type.body }}>
+                      {fmt(f, device[f])} → {fmt(f, intervals[f])}
+                    </Text>
                   </View>
                 ))}
 
                 {diffs.includes('map') && !!mapSource && (
                   <Text style={{ color: t.mutedText, fontSize: v3Type.caption, marginBottom: v3Spacing.small }}>MAP from intervals.icu: {mapSource}</Text>
                 )}
-                <View style={{ marginBottom: v3Spacing.medium }}>
-                  <Toggle value={remember} onValueChange={setRemember} />
-                  <Text style={{ color: t.mutedText, fontSize: v3Type.caption }}>Remember these choices</Text>
-                </View>
-
                 {applyMsg ? <StatusLine text={applyMsg} tone={applyMsg === 'Saved.' ? 'muted' : 'alert'} /> : null}
                 <Button label={applying ? 'Saving…' : 'Apply'} icon="check"
                   onPress={apply} disabled={applying} />

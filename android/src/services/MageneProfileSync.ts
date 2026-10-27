@@ -2,14 +2,12 @@ import type { AthleteThresholds } from './ApiIntervalsIcu';
 import type { MageneProfile } from './MageneDevice';
 
 // Magene profile vs intervals.icu - the mobile twin of the desktop's /api/magene/profile/compare
-// (server.py _BRYTON_COMPARE_FIELDS + _MAGENE_TO_COMMON). intervals.icu is the source of truth;
-// FTP/LTHR/Max HR/weight can go either way, gender/height/age only onto the device (intervals.icu
-// doesn't take them through this API).
+// (server.py _BRYTON_COMPARE_FIELDS + _MAGENE_TO_COMMON). intervals.icu is the source of truth and
+// every field goes one way only, onto the device (André, 2026-10-27).
 
 export type ProfileField = 'ftp' | 'lthr' | 'maxHr' | 'map' | 'weight' | 'height' | 'sex' | 'age';
 // map: Bryton only (the Magene profile has none, so it's skipped there); one-way like height/age.
 export const PROFILE_FIELDS: ProfileField[] = ['ftp', 'lthr', 'maxHr', 'map', 'weight', 'height', 'sex', 'age'];
-export const TWO_WAY: ProfileField[] = ['ftp', 'lthr', 'maxHr', 'weight'];
 export const PROFILE_LABELS: Record<ProfileField, string> = {
   ftp: 'FTP (W)', lthr: 'LTHR (bpm)', maxHr: 'Max HR (bpm)', map: 'MAP (W)', weight: 'Weight (kg)',
   height: 'Height (cm)', sex: 'Gender', age: 'Age',

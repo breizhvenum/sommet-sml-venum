@@ -2157,8 +2157,8 @@ class Handler(BaseHTTPRequestHandler):
     # ── Bryton Aero 60 athlete-profile reconciliation ────────────────────────────────────────
     # The Aero 60 keeps FTP/LTHR/MaxHR/MAP/weight/... in System/Profile.bin (tools/bryton_profile.py,
     # HW-proven writable). intervals.icu is André's source of truth for FTP/LTHR/MaxHR/weight
-    # (tools/intervals_athlete.py). "compare" diffs the two so the UI can ask which side is right;
-    # "apply" writes the chosen values to the device and/or back to intervals.icu.
+    # (tools/intervals_athlete.py). "compare" diffs the two;
+    # "apply" writes intervals.icu's values to the device - one way only (André 2026-10-27).
     # map = Maximal Aerobic Power: Bryton-only, estimated from intervals.icu (intervals_athlete
     # .estimate_map); one-way (intervals -> device), like gender/height/age. The Magene has no MAP,
     # so its compare skips it (the device side is missing).
@@ -2520,7 +2520,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_wahoo_profile_apply(self, body):
         """POST /api/wahoo/profile/apply {direction, fields, athlete_id?, api_key?} - 'to_device'
         writes FTP / max HR / weight / height to the ELEMNT (zone ceilings scaled with FTP / max
-        HR); 'to_intervals' pushes FTP / max HR / weight back to intervals.icu."""
+        HR). 'to_intervals' is refused: devices never write to intervals.icu."""
         body = body or {}
         direction = body.get("direction")
         fields = {k: v for k, v in (body.get("fields") or {}).items()
@@ -2539,19 +2539,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "written": fields, "via": res.get("via")})
             return
         if direction == "to_intervals":
-            aid, akey = body.get("athlete_id"), body.get("api_key")
-            if not aid or not akey:
-                self._send_json(400, {"ok": False, "error": "intervals.icu not connected"})
-                return
-            args = ["put", str(aid), str(akey)]
-            for name in ("ftp", "max_hr", "weight"):
-                if name in fields:
-                    args += ["--" + name.replace("_", "-"), str(fields[name])]
-            code, out, err = run_tool("intervals_athlete.py", args)
-            if code != 0:
-                self._send_json(502, {"ok": False, "error": err.strip() or "intervals write failed"})
-                return
-            self._send_json(200, {"ok": True, "sent": out.strip()})
+            # One direction only (André, 2026-10-27): intervals.icu writes to devices, a device
+            # never writes to intervals.icu.
+            self._send_json(400, {"ok": False, "error": "Sommet doesn't write device values to intervals.icu"})
             return
         self._send_json(400, {"ok": False, "error": f"unknown direction {direction!r}"})
 
@@ -2605,8 +2595,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_bryton_profile_apply(self, body):
         """POST /api/bryton/profile/apply {direction, fields, athlete_id?, api_key?}.
-        direction 'to_device' writes fields into Profile.bin; 'to_intervals' pushes FTP/LTHR/
-        MaxHR/weight back to intervals.icu. `fields` is {name: value}."""
+        direction 'to_device' writes fields into Profile.bin; 'to_intervals' is refused (devices
+        never write to intervals.icu). `fields` is {name: value}."""
         body = body or {}
         direction = body.get("direction")
         fields = body.get("fields") or {}
@@ -2631,19 +2621,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if direction == "to_intervals":
-            aid, akey = body.get("athlete_id"), body.get("api_key")
-            if not aid or not akey:
-                self._send_json(400, {"ok": False, "error": "intervals.icu not connected"})
-                return
-            args = ["put", str(aid), str(akey)]
-            for name in ("ftp", "lthr", "max_hr", "weight"):
-                if name in fields and fields[name] is not None:
-                    args += [f"--{name.replace('_', '-')}", str(fields[name])]
-            code, out, err = run_tool("intervals_athlete.py", args)
-            if code != 0:
-                self._send_json(502, {"ok": False, "error": err.strip() or "intervals write failed"})
-                return
-            self._send_json(200, {"ok": True, "sent": out.strip()})
+            # One direction only (André, 2026-10-27): intervals.icu writes to devices, a device
+            # never writes to intervals.icu.
+            self._send_json(400, {"ok": False, "error": "Sommet doesn't write device values to intervals.icu"})
             return
 
         self._send_json(400, {"ok": False, "error": f"unknown direction {direction!r}"})
@@ -3051,7 +3031,7 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_magene_profile_apply(self, body):
         """POST /api/magene/profile/apply {direction, fields, address?, athlete_id?, api_key?} -
         same contract as the Bryton one. 'to_device' writes only the given fields to the C406;
-        'to_intervals' is device-independent, so it reuses the Bryton handler's branch."""
+        any other direction goes to the Bryton handler, which refuses it."""
         body = body or {}
         fields = body.get("fields") or {}
         if not fields:
@@ -3134,8 +3114,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_brytonble_profile_apply(self, body):
         """POST /api/brytonble/profile/apply {direction, fields, address} - 'to_device' writes the
-        given fields over Bluetooth (bounds-checked in the tool); 'to_intervals' reuses the
-        device-independent Bryton branch."""
+        given fields over Bluetooth (bounds-checked in the tool); any other direction goes to the
+        Bryton handler, which refuses it."""
         body = body or {}
         fields = body.get("fields") or {}
         if not fields:

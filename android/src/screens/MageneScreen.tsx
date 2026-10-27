@@ -1,23 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Modal, Pressable } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useV3Theme, v3Spacing, v3Radius, v3Type } from '../theme/v3';
 import { Button, StatusLine, Toggle } from '../components/ui/primitives';
 import { Card } from '../components/ui/Card';
-import { getAthleteThresholds, putAthleteThresholds, type AthleteThresholds } from '../services/ApiIntervalsIcu';
+import { getAthleteThresholds, type AthleteThresholds } from '../services/ApiIntervalsIcu';
 import {
   withMagene, readProfile, setProfile, readSettings, writeSettings, altitudeCorrect, type MageneProfile,
 } from '../services/MageneDevice';
 import { readPages, writePages, FIELD_GROUPS, FIELD_NAMES, MAX_FIELDS, MIN_FIELDS, MAX_PAGES } from '../services/MagenePages';
 import { getKnownMagene, type KnownMagene } from '../services/MageneStore';
-import { diffProfile, fmtProfile, PROFILE_LABELS, TWO_WAY, type ProfileField } from '../services/MageneProfileSync';
+import { diffProfile, fmtProfile, PROFILE_LABELS } from '../services/MageneProfileSync';
 
 // Magene C406 hub - the Android counterpart of the desktop Home Magene card's Sync profile
 // (profile sync), Device settings, Data screens and altitude calibration. Routes are sent from the
 // Routes screen, like every device's. Same layout as BrytonScreen: one centred column, max 640 wide. Every action
 // is its own short BLE connection (the C406 sleeps; a held link drains it and blocks other apps).
 
-const PREF_KEY = 'mageneProfileSource';
 
 type Choice = { v: number; t: string };
 const onOff = (key: string, label: string) => ({ key, label, kind: 'switch' as const });
@@ -53,8 +51,6 @@ export default function MageneScreen() {
   const [error, setError] = useState('');
   const [device, setDevice] = useState<MageneProfile | null>(null);
   const [icu, setIcu] = useState<AthleteThresholds | null>(null);
-  const [pick, setPick] = useState<Record<string, 'device' | 'intervals'>>({});
-  const [remember, setRemember] = useState(true);
   const [settings, setSettings] = useState<Record<string, number> | null>(null);
   const [edited, setEdited] = useState<Record<string, number>>({});
   const [pages, setPages] = useState<number[][] | null>(null);
@@ -77,7 +73,6 @@ export default function MageneScreen() {
       setSettings(sets);
       setEdited(sets ? { ...sets } : {});
       setIcu(await getAthleteThresholds().catch(() => null));
-      try { const raw = await AsyncStorage.getItem(PREF_KEY); if (raw) setPick(JSON.parse(raw)); } catch { /* ignore */ }
       setStatus('ready');
     } catch (e: any) {
       setError(String(e?.message ?? e)); setStatus('error');
@@ -86,24 +81,18 @@ export default function MageneScreen() {
   useEffect(() => { load(); }, [load]);
 
   const diffs = device && icu ? diffProfile(device, icu) : [];
-  const sideFor = (f: ProfileField) => (TWO_WAY.includes(f) ? pick[f] ?? 'intervals' : 'intervals');
 
   const applyProfile = async () => {
     if (!magene || !device || !icu) return;
     setBusy('profile'); setMsg('');
+    // One way: intervals.icu -> the C406, never back (André, 2026-10-27).
     const toDevice: Partial<MageneProfile> = {};
-    const toIcu: { ftp?: number; lthr?: number; maxHr?: number; weight?: number } = {};
-    for (const d of diffs) {
-      if (sideFor(d.field) === 'intervals') (toDevice as any)[d.field] = d.intervals;
-      else (toIcu as any)[d.field] = d.device;
-    }
+    for (const d of diffs) (toDevice as any)[d.field] = d.intervals;
     try {
-      if (remember) await AsyncStorage.setItem(PREF_KEY, JSON.stringify(pick));
       if (Object.keys(toDevice).length) {
         const r = await withMagene(magene.address, () => setProfile(toDevice));
         if (!r) throw new Error('The C406 didn’t accept the profile');
       }
-      if (Object.keys(toIcu).length && !(await putAthleteThresholds(toIcu))) throw new Error('intervals.icu update failed');
       await load();
       setMsg('Profile saved ✓');
     } catch (e: any) { setMsg(String(e?.message ?? e)); } finally { setBusy(''); }
@@ -185,37 +174,16 @@ export default function MageneScreen() {
               {icu && diffs.length > 0 && (
                 <>
                   <Text style={[muted, { marginTop: 2, marginBottom: v3Spacing.medium }]}>
-                    Pick the value that's right for each. Gender, height and age can only go to the device.
+                    These differ. Apply writes the intervals.icu values to the Magene.
                   </Text>
                   {diffs.map(d => (
                     <View key={d.field} style={{ marginBottom: v3Spacing.medium }}>
                       <Text style={[text, { fontWeight: '600', marginBottom: 6 }]}>{PROFILE_LABELS[d.field]}</Text>
-                      <View style={{ flexDirection: 'row', gap: v3Spacing.small }}>
-                        {(['device', 'intervals'] as const).map(src => {
-                          const sel = sideFor(d.field) === src;
-                          const locked = !TWO_WAY.includes(d.field) && src === 'device';
-                          return (
-                            <TouchableOpacity key={src} activeOpacity={0.8} disabled={locked}
-                              onPress={() => setPick(p => ({ ...p, [d.field]: src }))}
-                              style={{
-                                flex: 1, padding: v3Spacing.small, borderRadius: v3Radius.small, borderWidth: 1,
-                                borderColor: sel ? t.primary : t.border, backgroundColor: sel ? t.primary : t.card,
-                                alignItems: 'center', opacity: locked ? 0.5 : 1,
-                              }}>
-                              <Text style={{ color: sel ? t.card : t.mutedText, fontSize: v3Type.caption }}>{src === 'device' ? 'Magene' : 'intervals.icu'}</Text>
-                              <Text style={{ color: sel ? t.card : t.text, fontSize: v3Type.body, fontWeight: '700' }}>
-                                {fmtProfile(d.field, src === 'device' ? d.device : d.intervals)}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
+                      <Text style={text}>
+                        {fmtProfile(d.field, d.device)} → {fmtProfile(d.field, d.intervals)}
+                      </Text>
                     </View>
                   ))}
-                  <View style={{ marginBottom: v3Spacing.medium }}>
-                    <Toggle value={remember} onValueChange={setRemember} />
-                    <Text style={{ color: t.mutedText, fontSize: v3Type.caption }}>Remember these choices</Text>
-                  </View>
                   <Button label={busy === 'profile' ? 'Saving…' : 'Apply'} icon="check" onPress={applyProfile} disabled={!!busy} />
                 </>
               )}

@@ -1,16 +1,14 @@
 import QtQuick
 import QtQuick.Controls
-import QtCore
 import AmbitApp
 
 // Bryton Aero 60 <-> intervals.icu profile reconciliation (André, 2026-09-24).
 //
 // The Aero 60 keeps FTP/LTHR/Max HR/weight/... in System/Profile.bin (the backend reads/writes it
 // via tools/bryton_profile.py, hardware-proven). intervals.icu is André's source of truth for
-// those numbers. On open we ask the backend to /compare the two; for every field that differs we
-// let him pick which side is right, remember that choice for next time, and write the winners to
-// the device and/or back to intervals.icu. Gender/birthday/height reconcile device<->Sommet only
-// (intervals.icu doesn't expose them for write); MAP is device-only and left untouched here.
+// those numbers. On open we ask the backend to /compare the two and list every field that
+// differs; Apply writes intervals.icu's values to the device. One way only (André, 2026-10-27:
+// "bryton or any other device should not write to intervals"), so there is no side to pick.
 //
 // Shared with the Magene C406 (2026-09-25): its backend endpoints return the same {device,
 // intervals, diff} shape, so a Magene instance only sets apiBase/deviceName/address.
@@ -39,23 +37,11 @@ ThemedDialog {
         return JSON.stringify(b)
     }
 
-    // Persisted per-field "remember my choice" source: "intervals" or "device". Lives in the same
-    // Sommet.conf as everything else (QSettings), so a remembered field auto-resolves next time.
-    // One category per device ("brytonProfileSync" unchanged for the Bryton).
-    Settings {
-        id: prefs
-        category: root.apiBase + "ProfileSync"
-    }
-
     readonly property var labels: ({
         "ftp": qsTr("FTP (W)"), "lthr": qsTr("LTHR (bpm)"), "max_hr": qsTr("Max HR (bpm)"),
         "weight": qsTr("Weight (kg)"), "height": qsTr("Height (cm)"), "gender": qsTr("Gender"),
         "age": qsTr("Age"), "map": qsTr("MAP (W)")
     })
-    // Only intervals.icu -> device: intervals.icu doesn't take these back (MAP is estimated from
-    // its power curve, see intervals_athlete.estimate_map), so the device side can't be picked.
-    readonly property var oneWay: ["map", "gender", "height", "age"]
-
     ListModel { id: diffModel }
 
     function fmtGender(v) { return v === 1 ? qsTr("Male") : qsTr("Female") }
@@ -74,12 +60,7 @@ ThemedDialog {
             if (!r.intervals) { root.error = qsTr("Connect intervals.icu in Settings to compare."); return }
             for (var i = 0; i < (r.diff || []).length; i++) {
                 var d = r.diff[i]
-                var remembered = prefs.value("src_" + d.field, "")
-                diffModel.append({
-                    field: d.field, deviceVal: d.device, intervalsVal: d.intervals,
-                    choice: root.oneWay.indexOf(d.field) >= 0 ? "intervals"
-                            : (remembered === "device" || remembered === "intervals" ? remembered : "intervals")
-                })
+                diffModel.append({ field: d.field, deviceVal: d.device, intervalsVal: d.intervals })
             }
         }
         xhr.open("POST", root.endpoint("compare"))
@@ -87,25 +68,21 @@ ThemedDialog {
         xhr.send(root.body({}))
     }
 
-    property bool remember: true
     property bool applying: false
     property string applyMsg: ""
 
     function apply() {
-        var toDevice = {}, toIntervals = {}, n = 0
+        var toDevice = {}
         for (var i = 0; i < diffModel.count; i++) {
             var row = diffModel.get(i)
-            if (root.remember) prefs.setValue("src_" + row.field, row.choice)
-            if (row.choice === "intervals") { toDevice[row.field] = row.intervalsVal; n++ }
-            else { toIntervals[row.field] = row.deviceVal; n++ }
+            toDevice[row.field] = row.intervalsVal
         }
-        if (n === 0) { root.close(); return }
+        if (diffModel.count === 0) { root.close(); return }
         root.applying = true; root.applyMsg = ""
-        var pending = (Object.keys(toDevice).length > 0 ? 1 : 0)
-                    + (Object.keys(toIntervals).length > 0 ? 1 : 0)
-        function done() { if (--pending <= 0) { root.applying = false; root.close() } }
-        if (Object.keys(toDevice).length > 0) postApply("to_device", toDevice, done)
-        if (Object.keys(toIntervals).length > 0) postApply("to_intervals", toIntervals, done)
+        postApply("to_device", toDevice, function () {
+            root.applying = false
+            if (root.applyMsg.length === 0) root.close()
+        })
     }
 
     function postApply(direction, fields, cb) {
@@ -143,8 +120,8 @@ ThemedDialog {
         Text {
             visible: diffModel.count > 0
             width: parent.width; wrapMode: Text.WordWrap
-            text: qsTr("These differ. Pick the value that's right for each — it's written to the "
-                       + "device and/or intervals.icu.")
+            text: qsTr("These differ. Apply writes the intervals.icu values to the %1.")
+                  .arg(root.deviceName)
             color: Theme.mutedText; font.pixelSize: Theme.fontSizeBody
         }
 
@@ -153,43 +130,20 @@ ThemedDialog {
             delegate: Row {
                 width: 420
                 spacing: Theme.spacingMedium
-                // The nested chip Repeater shadows `index`, so hold the row's own index here.
-                property int rowIndex: index
                 Text {
                     width: 120
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.labels[field] || field
                     color: Theme.text; font.pixelSize: Theme.fontSizeBody; font.bold: true
                 }
-                // Device vs intervals as two selectable chips.
-                Repeater {
-                    model: [ { src: "device", val: deviceVal }, { src: "intervals", val: intervalsVal } ]
-                    delegate: Rectangle {
-                        width: 140; height: 40; radius: Theme.radiusSmall
-                        color: choice === modelData.src ? Theme.primary : Theme.cardNested
-                        border.width: 1
-                        border.color: choice === modelData.src ? Theme.primary : Theme.border
-                        Column {
-                            anchors.centerIn: parent; spacing: 0
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: modelData.src === "device" ? root.deviceName : qsTr("intervals.icu")
-                                color: choice === modelData.src ? Theme.card : Theme.mutedText
-                                font.pixelSize: Theme.fontSizeCaption
-                            }
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: root.fmt(field, modelData.val)
-                                color: choice === modelData.src ? Theme.card : Theme.text
-                                font.pixelSize: Theme.fontSizeBody; font.bold: true
-                            }
-                        }
-                        opacity: modelData.src === "device" && root.oneWay.indexOf(field) >= 0 ? 0.45 : 1
-                        TapHandler {
-                            enabled: !(modelData.src === "device" && root.oneWay.indexOf(field) >= 0)
-                            onTapped: diffModel.setProperty(rowIndex, "choice", modelData.src)
-                        }
-                    }
+                Text {
+                    width: 280
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1 → %2").arg(root.fmt(field, deviceVal)).arg(root.fmt(field, intervalsVal))
+                    color: Theme.text; font.pixelSize: Theme.fontSizeBody
+                    Accessible.name: qsTr("%1: %2 now, %3 from intervals.icu")
+                        .arg(root.labels[field] || field).arg(root.fmt(field, deviceVal))
+                        .arg(root.fmt(field, intervalsVal))
                 }
             }
         }
@@ -200,17 +154,6 @@ ThemedDialog {
             width: parent.width; wrapMode: Text.WordWrap
             text: root.intervals ? qsTr("MAP from intervals.icu: %1").arg(root.intervals.map_source) : ""
             color: Theme.mutedText; font.pixelSize: Theme.fontSizeCaption
-        }
-
-        Row {
-            visible: diffModel.count > 0
-            spacing: Theme.spacingSmall
-            CheckBox {
-                id: rememberBox
-                checked: root.remember
-                onToggled: root.remember = checked
-                text: qsTr("Remember these choices")
-            }
         }
 
         Text {
