@@ -129,7 +129,7 @@ export function NavShell({
           <View style={[styles.bar, { backgroundColor: t.text, marginVertical: 4 }]} />
           <View style={[styles.bar, { backgroundColor: t.text }]} />
         </TouchableOpacity>
-        <Text style={[styles.appBrand, { color: t.text }]}>Sommet</Text>
+        <Text style={[styles.appBrand, { color: t.text }]}>Ambit Venum</Text>
         <Text style={[styles.navVer, { color: t.mutedText, marginLeft: 8 }]}>v{APP_VERSION}</Text>
       </View>
 

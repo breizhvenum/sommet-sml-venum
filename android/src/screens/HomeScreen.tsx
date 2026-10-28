@@ -1197,7 +1197,7 @@ export default function HomeScreen() {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <Text style={styles.appName}>Sommet</Text>
+        <Text style={styles.appName}>Ambit Venum</Text>
         <Badge label={`v${APP_VERSION}`} />
       </View>
 
