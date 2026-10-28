@@ -2,17 +2,6 @@ import RNFS from 'react-native-fs';
 
 const ACTIVITIES_DIR = `${RNFS.DocumentDirectoryPath}/activities`;
 
-/**
- * The file name (without extension) an activity id is stored under. react-native-fs takes a path
- * containing ':' for a URL ("/data/.../activities/icu" becomes the scheme), so every write failed
- * with "No content provider" and intervals.icu imports (ids "icu:<n>") never got a track
- * (tablet, 2026-10-23). The other ids (dates, garmin_/coros_/c406_/bryton_/sommet_) only use
- * these characters already, so their files keep the names they have.
- */
-export function activityFileStem(id: string): string {
-  return id.replace(/[^\w.-]/g, '_');
-}
-
 /** S'assure que le dossier activities/ existe. */
 async function ensureDir(): Promise<void> {
   const exists = await RNFS.exists(ACTIVITIES_DIR);
@@ -27,7 +16,7 @@ async function ensureDir(): Promise<void> {
  */
 export async function writeGpxFile(id: string, gpxXml: string, overwrite = false): Promise<string | null> {
   await ensureDir();
-  const path = `${ACTIVITIES_DIR}/${activityFileStem(id)}.gpx`;
+  const path = `${ACTIVITIES_DIR}/${id}.gpx`;
   if (!overwrite && await RNFS.exists(path)) return null; // doublon, ne pas écraser
   await RNFS.writeFile(path, gpxXml, 'utf8');
   return path;
@@ -43,16 +32,49 @@ export async function writeGpxFile(id: string, gpxXml: string, overwrite = false
 export async function writeFitFile(id: string, base64: string, overwrite = false): Promise<string | null> {
   if (!base64) return null;
   await ensureDir();
-  const path = `${ACTIVITIES_DIR}/${activityFileStem(id)}.fit`;
+  const path = `${ACTIVITIES_DIR}/${id}.fit`;
   if (!overwrite && await RNFS.exists(path)) return null;
   await RNFS.writeFile(path, base64, 'base64');
   return path;
 }
 
+/**
+ * Moves the SML the native layer wrote (a temp file) next to the move's GPX as <id>.sml - the
+ * same file Moveslink2 produces. `tmpPath` empty -> nothing. The temp file is always removed.
+ * Returns the final path, or null.
+ */
+export async function adoptSmlFile(id: string, tmpPath: string, overwrite = false): Promise<string | null> {
+  if (!tmpPath) return null;
+  try {
+    await ensureDir();
+    const path = `${ACTIVITIES_DIR}/${id}.sml`;
+    if (!overwrite && await RNFS.exists(path)) return null;
+    if (await RNFS.exists(path)) await RNFS.unlink(path);
+    await RNFS.moveFile(tmpPath, path);
+    return path;
+  } finally {
+    if (await RNFS.exists(tmpPath).catch(() => false)) await RNFS.unlink(tmpPath).catch(() => {});
+  }
+}
+
+/** The <id>.sml path for an activity's <id>.gpx path, if that SML file exists on disk. */
+export async function smlPathForGpx(gpxPath: string): Promise<string | null> {
+  const path = gpxPath.replace(/\.gpx$/, '.sml');
+  return (await RNFS.exists(path)) ? path : null;
+}
+
+/** Scratch folder the native layer writes the per-sync SML files into. */
+export const SML_TMP_DIR = `${RNFS.CachesDirectoryPath}/sml_tmp`;
+
+/** Removes the scratch SML folder (moves skipped as duplicates/junk leave temp files behind). */
+export async function clearSmlTmp(): Promise<void> {
+  if (await RNFS.exists(SML_TMP_DIR).catch(() => false)) await RNFS.unlink(SML_TMP_DIR).catch(() => {});
+}
+
 /** Whether an activity with this id is already in the library (checked before a slow device
  *  download, e.g. a Magene ride over BLE). */
 export async function activityExists(id: string): Promise<boolean> {
-  return RNFS.exists(`${ACTIVITIES_DIR}/${activityFileStem(id)}.gpx`);
+  return RNFS.exists(`${ACTIVITIES_DIR}/${id}.gpx`);
 }
 
 /** The <id>.fit path for an activity's <id>.gpx path, if that FIT file exists on disk. */

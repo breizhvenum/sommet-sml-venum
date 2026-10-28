@@ -1,6 +1,6 @@
 import { DeviceProvider } from './devices/DeviceProvider';
 import { ambitDeviceProvider } from './devices/AmbitDeviceProvider';
-import { writeGpxFile, writeFitFile } from './GpxService';
+import { writeGpxFile, writeFitFile, adoptSmlFile, clearSmlTmp, SML_TMP_DIR } from './GpxService';
 import { extractGpxMetadata } from './GpxParser';
 import { isActivitySynced, isActivityDeleted, markActivitySynced, getAllSyncedIds, clearDeletedActivities, rejectJunkActivity } from '../database/db';
 import { isMarkSyncedEnabled } from './MarkSynced';
@@ -23,7 +23,7 @@ type SyncListener = (state: SyncState) => void;
 
 /**
  * Orchestre une synchronisation complète :
- *   connect → getLogs → clock → (pour chaque log nouveau) writeGpx → markSynced → disconnect
+ *   connect → getLogs → (pour chaque log nouveau) writeGpx → markSynced → disconnect
  *
  * @param onState  Callback appelé à chaque changement d'état
  * @param provider DeviceProvider à utiliser (par défaut : Suunto Ambit)
@@ -106,6 +106,17 @@ export async function runSync(
     }
   }
 
+  // Moveslink2-style SML of each move (same indices as gpxLogs), written by the native layer to
+  // temp files and moved next to the GPX below. Best-effort: a failure only means no .sml export.
+  let smlLogs: string[] = [];
+  if (provider.getLogSmlFiles) {
+    try {
+      smlLogs = await provider.getLogSmlFiles(SML_TMP_DIR);
+    } catch (e: any) {
+      console.log('[sync] native SML fetch failed, no .sml for this sync:', e?.message ?? e);
+    }
+  }
+
   // ── 2b. Mark-synced write-back (experimental Settings toggle, OFF by default) ──
   // The moves in gpxLogs are exactly the ones read this session (the watch skipped the
   // already-known ones), so their indices match the native cache 0..gpxLogs.length-1. Tell
@@ -120,21 +131,7 @@ export async function runSync(
     }
   }
 
-  // ── 2c. Watch clock ──────────────────────────────────────────────────────────
-  // Set to the phone's local time on every sync, as the Suunto app does, so a daylight-saving
-  // change reaches the watch without a tap on Home's "Sync time" (André, 🟣26, 2026-10-25: the
-  // Peak stayed on summer time after 25/10). Before the step read, so its read time is right.
-  // Best-effort: a clock the watch refused never fails the sync.
-  if (provider.setClock) {
-    try {
-      await provider.setClock();
-      console.log('[clock] watch clock set to the phone\'s time');
-    } catch (e: any) {
-      console.log('[clock] watch clock not set, sync goes on:', e?.message ?? e);
-    }
-  }
-
-  // ── 2d. Daily steps (Ambit3) ─────────────────────────────────────────────────
+  // ── 2c. Daily steps (Ambit3) ─────────────────────────────────────────────────
   // The watch keeps only 30 days of step counts; each sync stores what it has, for the Health
   // screen. Best-effort and silent: it never fails the sync.
   if (provider.syncDailySteps) {
@@ -177,6 +174,15 @@ export async function runSync(
       }
     }
 
+    // The Moveslink2-style .sml, next to the GPX/FIT (best-effort, index-aligned with gpxLogs).
+    if (smlLogs[i]) {
+      try {
+        await adoptSmlFile(id, smlLogs[i], refresh);
+      } catch (e: any) {
+        console.log(`[sync] .sml write failed for ${id}, GPX still saved:`, e?.message ?? e);
+      }
+    }
+
     await markActivitySynced({
       id,
       synced_at: Date.now(),
@@ -192,6 +198,8 @@ export async function runSync(
     await attributeMoveToGear(id, meta.activityType, meta.distanceM, meta.durationS, meta.date);
     newCount++;
   }
+
+  await clearSmlTmp();
 
   // ── 4. Déconnexion ───────────────────────────────────────────────────────────
   await provider.disconnect().catch(() => {});
