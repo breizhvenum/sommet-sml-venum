@@ -1,6 +1,7 @@
 import { DeviceProvider } from './devices/DeviceProvider';
 import { ambitDeviceProvider } from './devices/AmbitDeviceProvider';
 import { writeGpxFile, writeFitFile, adoptSmlFile, clearSmlTmp, SML_TMP_DIR } from './GpxService';
+import { readCustomModeNames } from './SmlActivityNames';
 import { extractGpxMetadata } from './GpxParser';
 import { isActivitySynced, isActivityDeleted, markActivitySynced, getAllSyncedIds, clearDeletedActivities, rejectJunkActivity } from '../database/db';
 import { isMarkSyncedEnabled } from './MarkSynced';
@@ -111,7 +112,7 @@ export async function runSync(
   let smlLogs: string[] = [];
   if (provider.getLogSmlFiles) {
     try {
-      smlLogs = await provider.getLogSmlFiles(SML_TMP_DIR);
+      smlLogs = await provider.getLogSmlFiles(SML_TMP_DIR, await readCustomModeNames());
     } catch (e: any) {
       console.log('[sync] native SML fetch failed, no .sml for this sync:', e?.message ?? e);
     }
