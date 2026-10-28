@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDeviceInfo, readCustomModesRaw } from '../native/AmbitUsbModule';
 import { base64ToBytes } from './Base64';
 import { decode } from './CustomModesReader';
@@ -24,4 +25,23 @@ export async function readCustomModeNames(): Promise<Record<string, string>> {
     console.log('[sml] could not read the sport-mode names:', e?.message ?? e);
     return {};
   }
+}
+
+const SML_STATUS_KEY = 'sommet_sml_last_status';
+
+/** Remembers what the SML step of the last sync did (shown by the export menu when no SML exists,
+ *  so a missing file can be explained instead of silently absent). Never throws. */
+export async function saveSmlStatus(text: string): Promise<void> {
+  try { await AsyncStorage.setItem(SML_STATUS_KEY, `${new Date().toISOString()}  ${text}`); } catch { /* ignore */ }
+}
+export async function loadSmlStatus(): Promise<string> {
+  try { return (await AsyncStorage.getItem(SML_STATUS_KEY)) ?? ''; } catch { return ''; }
+}
+
+/** Rejects after `ms` so a stuck watch read can never block the sync. */
+export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
 }
