@@ -3,7 +3,14 @@
 export {};   // a module: its mocks don't clash with the other test files' names
 
 jest.mock('../devices/AmbitDeviceProvider', () => ({ ambitDeviceProvider: {} }));
-jest.mock('../GpxService', () => ({ writeGpxFile: jest.fn(), writeFitFile: jest.fn() }));
+jest.mock('../GpxService', () => ({
+  writeGpxFile: jest.fn(), writeFitFile: jest.fn(),
+  adoptSmlFile: jest.fn(), clearSmlTmp: jest.fn(async () => {}), SML_TMP_DIR: '/tmp/sml_tmp',
+}));
+jest.mock('../SmlActivityNames', () => ({
+  readCustomModeNames: jest.fn(async () => ({})), saveSmlStatus: jest.fn(async () => {}),
+  loadSmlStatus: jest.fn(async () => ''), withTimeout: (p: Promise<unknown>) => p,
+}));
 jest.mock('../GpxParser', () => ({ extractGpxMetadata: jest.fn(() => ({})) }));
 jest.mock('../MarkSynced', () => ({ isMarkSyncedEnabled: jest.fn(async () => false) }));
 jest.mock('../GearAutoAssign', () => ({ attributeMoveToGear: jest.fn() }));
