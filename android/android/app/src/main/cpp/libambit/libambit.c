@@ -644,6 +644,8 @@ int device_info_get(ambit_object_t *object, ambit_device_info_t *info)
             LOG_INFO("kailash-debug: about to memcpy fw/hw version");
             memcpy(info->fw_version, p, 4);
             memcpy(info->hw_version, p + 4, 4);
+            info->raw_reply_len = (uint8_t)(replylen < sizeof(info->raw_reply) ? replylen : sizeof(info->raw_reply));
+            memcpy(info->raw_reply, reply_data, info->raw_reply_len);
             LOG_INFO("kailash-debug: fw/hw version copied ok");
         }
         ret = 0;

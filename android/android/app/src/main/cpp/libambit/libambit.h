@@ -40,6 +40,8 @@ typedef struct ambit_device_info_s {
     uint8_t hw_version[4];
     uint8_t komposti_version[4];
     uint8_t compact_serial[11];
+    uint8_t raw_reply[64];              /* first bytes of the device-info reply (diagnostics: bootloader version) */
+    uint8_t raw_reply_len;
 
     const char *path;                   /* file system encoding */
     uint16_t    vendor_id;
