@@ -35,7 +35,7 @@
 // bytes / values needed to pin down the header fields that are not yet decoded exactly like
 // Moveslink2 does (battery, time to first fix, gps-small UTC). Set to 0 once those are confirmed.
 #ifndef SOMMET_SML_DIAG
-#define SOMMET_SML_DIAG 1
+#define SOMMET_SML_DIAG 0
 #endif
 
 namespace smlexport {
@@ -620,7 +620,11 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
         o += "gps_small_time_ms:raw_field=" + smallRaw + "\n-->\n";
     }
 #endif
-    return o;
+    // Moveslink2 (a .NET program) writes CRLF line ends; match it byte for byte.
+    std::string crlf;
+    crlf.reserve(o.size() + o.size() / 20);
+    for (char c : o) { if (c == '\n') crlf += '\r'; crlf += c; }
+    return crlf;
 }
 
 }  // namespace smlexport

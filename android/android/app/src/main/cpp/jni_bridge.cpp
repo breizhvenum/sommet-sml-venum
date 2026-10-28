@@ -855,6 +855,15 @@ static void log_push_callback(void *userdata, ambit_log_entry_t *log_entry)
         char b[24];
         snprintf(b, sizeof b, "%d.%d.%d", fw[0], fw[1], fw[2] | (fw[3] << 8)); di.sw = b;
         snprintf(b, sizeof b, "%d.%d.%d", hw[0], hw[1], hw[2] | (hw[3] << 8)); di.hw = b;
+        {   // BSL (bootloader) version: the 3 bytes right after hw_version in the USB device-info reply
+            // (reply = model[16] serial[16] fw[4] hw[4] bsl[3]...; "01 06 0d" -> 1.6.13 on a real Ambit3).
+            const ambit_device_info_t &d0 = g_device->device_info;
+            if (d0.raw_reply_len >= 43 && d0.raw_reply_len <= sizeof d0.raw_reply && d0.raw_reply[40] != 0) {
+                char bb[24];
+                snprintf(bb, sizeof bb, "%d.%d.%d", d0.raw_reply[40], d0.raw_reply[41], d0.raw_reply[42]);
+                di.bsl = bb;
+            }
+        }
         {   // diagnostics: every raw device-info field that could hold the bootloader (BSL) version
             const ambit_device_info_t &d = g_device->device_info;
             char b[256];
