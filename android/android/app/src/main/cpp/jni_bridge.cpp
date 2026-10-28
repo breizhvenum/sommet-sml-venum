@@ -60,6 +60,9 @@ extern "C" int ambit3_write_route_to_watch(ambit_object_t *object,
 extern "C" int ambit3_add_poi_to_watch(ambit_object_t *object,
                                         const char *name, double lat, double lon, int type);
 
+extern "C" int ambit3_set_poi_list(ambit_object_t *object, const uint8_t *expected, size_t expected_len,
+                                   const uint8_t *new_list, size_t new_len);
+
 // ambit3_read_flash_region() / ambit3_read_poi_list_raw() / ambit3_read_object_by_id_raw()
 // sont déclarées dans device_driver_ambit3.c
 extern "C" int ambit3_read_flash_region(ambit_object_t *object, uint32_t address, uint32_t length, uint8_t *out_buffer);
@@ -1047,7 +1050,11 @@ JNIEXPORT jstring JNICALL
 Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitGetLogAsFit(
         JNIEnv *env, jobject /* thiz */, jint index)
 {
-    if ((size_t)index >= g_log_fit_b64.size()) {
+    // getLogFits() reads until it gets null, so one past the end is how every sync stops - not an
+    // error. It used to log "hors limites" at error level on each sync (tablet, 2026-10-23).
+    if (index >= 0 && (size_t)index == g_log_fit_b64.size())
+        return nullptr;
+    if (index < 0 || (size_t)index > g_log_fit_b64.size()) {
         LOGE("nativeAmbitGetLogAsFit: index %d hors limites (cache=%zu)",
              index, g_log_fit_b64.size());
         return nullptr;
@@ -1166,8 +1173,9 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitWriteRoutes(
     const jsize route_count = env->GetArrayLength(routeNames);
     const jsize total_points = env->GetArrayLength(ptLat);
     const jsize total_wpts = env->GetArrayLength(wptLat);
-    if (route_count == 0 || route_count > AMBIT3_MAX_ROUTES) {
-        LOGE("nativeAmbitWriteRoutes: %d routes (1..%d)", route_count, AMBIT3_MAX_ROUTES);
+    // 0 routes writes an empty navigation database: removing the last route.
+    if (route_count > AMBIT3_MAX_ROUTES) {
+        LOGE("nativeAmbitWriteRoutes: %d routes (0..%d)", route_count, AMBIT3_MAX_ROUTES);
         return JNI_FALSE;
     }
 
@@ -1310,6 +1318,29 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitReadRegion(
 
     std::string b64 = base64Encode(buffer.data(), buffer.size());
     return env->NewStringUTF(b64.c_str());
+}
+
+/**
+ * nativeAmbitSetPoiList
+ *
+ * Replaces the watch's POI list (ambit3_set_poi_list in device_driver_ambit3.c). `expected` is
+ * the raw 0x0b24 read the caller saved a copy of; `newList` the same shape, holding the POIs
+ * to keep. Returns the POI count written, -2 if the watch's list changed since `expected`
+ * (nothing written), -1 on failure.
+ */
+JNIEXPORT jint JNICALL
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSetPoiList(
+        JNIEnv *env, jobject /* thiz */, jbyteArray expected, jbyteArray newList)
+{
+    if (!g_device) { LOGE("nativeAmbitSetPoiList: Not connected"); return -1; }
+    const jsize elen = expected ? env->GetArrayLength(expected) : 0;
+    const jsize nlen = newList ? env->GetArrayLength(newList) : 0;
+    std::vector<uint8_t> e((size_t)elen), n((size_t)nlen);
+    if (elen > 0) env->GetByteArrayRegion(expected, 0, elen, reinterpret_cast<jbyte *>(e.data()));
+    if (nlen > 0) env->GetByteArrayRegion(newList, 0, nlen, reinterpret_cast<jbyte *>(n.data()));
+    int ret = ambit3_set_poi_list(g_device, e.data(), e.size(), n.data(), n.size());
+    LOGI("nativeAmbitSetPoiList: %d", ret);
+    return (jint)ret;
 }
 
 /**
@@ -2118,6 +2149,18 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitDisconnect(
         libambit_close(g_device);
         g_device = nullptr;
     }
+}
+
+/** Takes or releases the watch's sync lock (0x0b19 check, 0x0b1a set): libambit's
+ * sync_display_show/clear. See AmbitUsbModule.syncDisplay(). */
+JNIEXPORT jboolean JNICALL
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSyncDisplay(
+        JNIEnv * /* env */, jobject /* thiz */, jboolean on)
+{
+    if (!g_device) return JNI_FALSE;
+    if (on) libambit_sync_display_show(g_device);
+    else libambit_sync_display_clear(g_device);
+    return JNI_TRUE;
 }
 
 /**
