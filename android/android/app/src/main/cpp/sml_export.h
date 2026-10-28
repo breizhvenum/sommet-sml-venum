@@ -23,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <string>
 #include <utility>
@@ -177,6 +178,19 @@ static inline std::string utcGpsSmall(long long t0ms, double t) {
     return utcFromEpochMs(sec * 1000);
 }
 
+// The gps-small record carries the UTC second-of-minute (utc_msec, 0..59999) - Moveslink2 prints exactly
+// that second (checked on all 7507 points of a real move). The minute is not in the record: take the
+// one that lands nearest the time-base estimate above.
+static inline std::string utcGpsSmallExact(long long t0ms, double t, unsigned utcMsec) {
+    long long s = t0ms + (long long)(t * 1000.0) - 140;
+    long long est = (s >= 0) ? (s + 999) / 1000 : -((-s) / 1000);
+    long long base = est - ((est % 60) + 60) % 60 + (long long)(utcMsec / 1000);
+    long long best = base;
+    for (long long c = base - 60; c <= base + 60; c += 60)
+        if (llabs(c - est) < llabs(best - est)) best = c;
+    return utcFromEpochMs(best * 1000);
+}
+
 // Satellite state word -> the booleans Moveslink2 prints. Read off the sample file: across its 2340
 // satellite records "Ephemeris" is exactly bit 0x0080 and "CodeLocked" exactly bit 0x0020 of the state.
 static inline const char *boolStr(bool b) { return b ? "true" : "false"; }
@@ -314,16 +328,35 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
         close(o, 3, "Temperature");
     }
     tagInt(o, 3, "ActivityType", h.activity_type);
-    tagStr(o, 3, "Activity", h.activity_name ? h.activity_name : "");
+    // Name of the sport mode: libambit leaves it empty for these logs, but the raw PMEM header holds
+    // it (NUL-padded, 16 bytes at offset 43 on the Ambit3 - checked against a Moveslink2 file).
+    std::string actName = h.activity_name ? h.activity_name : "";
+    if (actName.empty() && h.raw_header_len >= 59) {
+        const char *rp = (const char *)h.raw_header + 43;
+        size_t n = 0; while (n < 16 && rp[n] != '\0') n++;
+        actName.assign(rp, n);
+    }
+    tagStr(o, 3, "Activity", actName);
     tagInt(o, 3, "Distance", h.distance);
     tagInt(o, 3, "LogItemCount", h.samples_count);
     // Time to first fix and battery: Moveslink2's values are NOT the ones at the generic PMEM header
     // offsets (those gave 108 s / 1 % / 129 % on the sample move; Moveslink2 wrote 131 s / 87 % / 51 %).
     // Best evidence: they come from the log's own stream - the ttff sample and the first / last
     // periodic "charge" value. Falls back to the header fields only when they look sane.
-    tagNum(o, 3, "TimeToFirstFix", ttffSample >= 0 ? (double)ttffSample : h.first_fix_time / 1000.0);
-    tagNum(o, 3, "BatteryChargeAtStart", (chgFirst >= 0 ? chgFirst : (h.battery_start <= 100 ? h.battery_start : 0)) / 100.0);
-    tagNum(o, 3, "BatteryCharge", (chgLast >= 0 ? chgLast : (h.battery_end <= 100 ? h.battery_end : 0)) / 100.0);
+    // The PMEM header of the Ambit3 holds them at fixed raw offsets that libambit's field walk misses
+    // (it reads 4 bytes too early): ttff u16 @169, battery start @171, battery end @172. Verified on
+    // a real move against Moveslink2 (131 s, 0.87, 0.51).
+    double ttffOut = ttffSample >= 0 ? (double)ttffSample : h.first_fix_time / 1000.0;
+    double chgStartOut = (chgFirst >= 0 ? chgFirst : (h.battery_start <= 100 ? h.battery_start : 0)) / 100.0;
+    double chgEndOut = (chgLast >= 0 ? chgLast : (h.battery_end <= 100 ? h.battery_end : 0)) / 100.0;
+    if (h.raw_header_len >= 173 && h.raw_header[171] <= 100 && h.raw_header[172] <= 100) {
+        ttffOut = (double)(h.raw_header[169] | (h.raw_header[170] << 8));
+        chgStartOut = h.raw_header[171] / 100.0;
+        chgEndOut = h.raw_header[172] / 100.0;
+    }
+    tagNum(o, 3, "TimeToFirstFix", ttffOut);
+    tagNum(o, 3, "BatteryChargeAtStart", chgStartOut);
+    tagNum(o, 3, "BatteryCharge", chgEndOut);
     tagInt(o, 3, "DistanceBeforeCalibrationChange", h.distance_before_calib);
     tagStr(o, 3, "DateTime", localTime(h.date_time));
     close(o, 2, "Header");
@@ -399,7 +432,7 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
             tagNum(o, 4, "Longitude", rad(g.longitude * 1e-7));
             tagNum(o, 4, "EHPE", g.ehpe * 0.01);
             tagNum(o, 4, "Time", t);
-            tagStr(o, 4, "UTC", haveT0 ? utcGpsSmall(t0ms, t) : when);
+            tagStr(o, 4, "UTC", haveT0 ? utcGpsSmallExact(t0ms, t, (unsigned)g.utc_msec) : when);
             tagStr(o, 4, "SampleType", "gps-small");
 #if SOMMET_SML_DIAG
             { char b[40]; snprintf(b, sizeof b, "%u:%u ", (unsigned)s.time, (unsigned)g.utc_msec); smallRaw += b; }
@@ -554,10 +587,12 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
     }
 
     close(o, 2, "Samples");
-    if (h.raw_log_size) {                                        // UNVERIFIED source (see diagnostics)
+    // raw_log_size counts 12 bytes more than Moveslink2's binarySize (340517 vs 340505 on a real move).
+    if (h.raw_log_size > 12) {
+        const uint32_t binSize = h.raw_log_size - 12;
         open(o, 2, "parsingResume");
-        tagInt(o, 3, "binarySize", h.raw_log_size);
-        tagInt(o, 3, "parsedSize", h.raw_log_size);
+        tagInt(o, 3, "binarySize", binSize);
+        tagInt(o, 3, "parsedSize", binSize);
         close(o, 2, "parsingResume");
     }
     close(o, 1, "DeviceLog");

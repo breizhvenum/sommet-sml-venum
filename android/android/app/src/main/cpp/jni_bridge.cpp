@@ -865,6 +865,7 @@ static void log_push_callback(void *userdata, ambit_log_entry_t *log_entry)
                      smlexport::detail::hexOf(d.compact_serial, 11).c_str(),
                      (unsigned)d.vendor_id, (unsigned)d.product_id);
             di.diag = b;
+            di.diag += "\nraw_device_info_reply=" + smlexport::detail::hexOf(d.raw_reply, d.raw_reply_len <= 64 ? d.raw_reply_len : 0);
         }
         sml = smlexport::build(log_entry, di);
     }
