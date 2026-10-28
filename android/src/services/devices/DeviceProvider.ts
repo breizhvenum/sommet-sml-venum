@@ -30,6 +30,11 @@ export interface DeviceProvider {
    *  right after getLogs() (reads the same native cache; does not re-read the watch). */
   getLogFits?(): Promise<string[]>;
 
+  /** Moveslink2-style SML of each move from the most recent getLogs(): written to files under
+   *  `dirPath`, paths returned aligned index-for-index with the GPX array ("" = no SML). Optional;
+   *  call right after getLogs() (reads the same native cache). */
+  getLogSmlFiles?(dirPath: string): Promise<string[]>;
+
   /** S'abonne aux événements de progression pendant getLogs(). Retourne une fonction de désinscription. */
   onSyncProgress(callback: (event: SyncProgressEvent) => void): () => void;
 
@@ -45,10 +50,6 @@ export interface DeviceProvider {
   /** The watch's own daily step counts (Ambit3: its last 30 days), stored for the Health
    *  screen. Optional, best-effort, never throws; returns how many days were read. */
   syncDailySteps?(): Promise<number>;
-
-  /** Sets the watch clock to the phone's local time, as the Suunto app does on every sync (so a
-   *  daylight-saving change reaches the watch). Optional; resolves true once the watch took it. */
-  setClock?(): Promise<boolean>;
 
   /** When true, a sync REFRESHES already-synced activities (overwrites their GPX + row)
    *  instead of skipping them. For a live re-read device like the Kailash, getLogs() rebuilds

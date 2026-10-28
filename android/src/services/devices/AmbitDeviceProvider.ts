@@ -26,6 +26,10 @@ export class AmbitDeviceProvider implements DeviceProvider {
     return AmbitUsbModule.getLogFits();
   }
 
+  getLogSmlFiles(dirPath: string): Promise<string[]> {
+    return AmbitUsbModule.getLogSmlFiles(dirPath);
+  }
+
   onSyncProgress(callback: (event: SyncProgressEvent) => void): () => void {
     return AmbitUsbModule.onSyncProgress(callback);
   }
@@ -40,10 +44,6 @@ export class AmbitDeviceProvider implements DeviceProvider {
 
   syncDailySteps(): Promise<number> {
     return syncWatchSteps();
-  }
-
-  setClock(): Promise<boolean> {
-    return AmbitUsbModule.setDateTime();
   }
 }
 

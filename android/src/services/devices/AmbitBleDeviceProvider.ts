@@ -44,6 +44,10 @@ export class AmbitBleDeviceProvider implements DeviceProvider {
     return AmbitUsbModule.getLogFits();
   }
 
+  getLogSmlFiles(dirPath: string): Promise<string[]> {
+    return AmbitUsbModule.getLogSmlFiles(dirPath);
+  }
+
   onSyncProgress(callback: (event: SyncProgressEvent) => void): () => void {
     return AmbitUsbModule.onSyncProgress(callback);
   }
@@ -61,12 +65,6 @@ export class AmbitBleDeviceProvider implements DeviceProvider {
 
   syncDailySteps(): Promise<number> {
     return syncWatchSteps();
-  }
-
-  // The Suunto app sends this same date + time pair (0x0302, 0x0300) on every Bluetooth sync of
-  // a Peak, inside its sync lock, which Home holds around the whole sync over Bluetooth.
-  setClock(): Promise<boolean> {
-    return AmbitUsbModule.setDateTime();
   }
 }
 
