@@ -44,8 +44,8 @@ export class AmbitBleDeviceProvider implements DeviceProvider {
     return AmbitUsbModule.getLogFits();
   }
 
-  getLogSmlFiles(dirPath: string): Promise<string[]> {
-    return AmbitUsbModule.getLogSmlFiles(dirPath);
+  getLogSmlFiles(dirPath: string, modeNames: Record<string, string> = {}): Promise<string[]> {
+    return AmbitUsbModule.getLogSmlFiles(dirPath, modeNames);
   }
 
   onSyncProgress(callback: (event: SyncProgressEvent) => void): () => void {

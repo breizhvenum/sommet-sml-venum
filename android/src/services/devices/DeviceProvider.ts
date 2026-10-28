@@ -32,8 +32,9 @@ export interface DeviceProvider {
 
   /** Moveslink2-style SML of each move from the most recent getLogs(): written to files under
    *  `dirPath`, paths returned aligned index-for-index with the GPX array ("" = no SML). Optional;
-   *  call right after getLogs() (reads the same native cache). */
-  getLogSmlFiles?(dirPath: string): Promise<string[]>;
+   *  call right after getLogs() (reads the same native cache). `modeNames` = {CustomModeID: name} so
+   *  the SML <Activity> can carry the sport mode's name. */
+  getLogSmlFiles?(dirPath: string, modeNames?: Record<string, string>): Promise<string[]>;
 
   /** S'abonne aux événements de progression pendant getLogs(). Retourne une fonction de désinscription. */
   onSyncProgress(callback: (event: SyncProgressEvent) => void): () => void;
