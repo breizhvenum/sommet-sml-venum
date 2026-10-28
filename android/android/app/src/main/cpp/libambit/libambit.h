@@ -374,6 +374,8 @@ typedef struct ambit_log_sample_s {
             int32_t  latitude;                  /* degree, scale: 0.0000001, -90 <= latitude <= 90 */
             int32_t  longitude;                 /* degree, scale: 0.0000001, -180 <= latitude <= 180 */
             uint32_t ehpe;                      /* meters scale: 0.01 */
+            uint16_t utc_msec;                  /* raw 16-bit "time" field of the record (used by the SML export as
+                                                   the fix's whole-second UTC; validated there before use) */
         } gps_small;
         struct {
             int32_t  latitude;                  /* degree, scale: 0.0000001, -90 <= latitude <= 90 */
@@ -469,6 +471,14 @@ typedef struct ambit_log_header_s {
     uint32_t swimming_pool_length;  /* m */
     uint8_t  unknown5[4];
     uint8_t  unknown6[24];
+
+    /* Raw bytes as received, kept so the SML export can dump them (diagnostics: battery / time to
+     * first fix / name are not where the generic PMEM header says on every Ambit3 firmware). */
+    uint16_t raw_header_len;
+    uint8_t  raw_header[192];       /* the PMEM log header (libambit_pmem20_log_parse_header input) */
+    uint16_t raw_list_len;
+    uint8_t  raw_list[192];         /* the Ambit3 log-list record of this move */
+    uint32_t raw_log_size;          /* bytes of the whole log read from flash (SML <parsingResume>) */
 } ambit_log_header_t;
 
 typedef struct ambit_log_entry_s {

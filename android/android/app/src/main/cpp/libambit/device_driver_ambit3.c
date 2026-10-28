@@ -748,6 +748,15 @@ static int parse_log_header_block(ambit_object_t *object, libambit_sbem0102_data
                                                                LIBAMBIT_PMEM20_FLAGS_UNKNOWN2_PADDING_48);
             LOG_INFO("Completed data of log %d of %d", *log_entries_walked + 1, log_entries_total);
             if (log_entry != NULL) {
+                /* The PMEM header of an Ambit3 move carries no activity name (empty on fw 2.4.x), but the
+                 * log-list record does ("Windsurf IDF" in Moveslink2's file): hand that one over. */
+                if ((log_entry->header.activity_name == NULL || log_entry->header.activity_name[0] == '\0')
+                        && log_header.header.activity_name && log_header.header.activity_name[0] != '\0') {
+                    free(log_entry->header.activity_name);
+                    log_entry->header.activity_name = strdup(log_header.header.activity_name);
+                }
+                log_entry->header.raw_list_len = log_header.header.raw_list_len;
+                memcpy(log_entry->header.raw_list, log_header.header.raw_list, sizeof(log_entry->header.raw_list));
                 if (push_cb != NULL) {
                     push_cb(userref, log_entry);
                     LOG_INFO("Completed push_cb");
@@ -855,6 +864,9 @@ static size_t parse_log_entry(ambit_object_t *object, const uint8_t *data, ambit
     log_header->header.energy_consumption = read16inc(data, &offset);
 
     offset += object->driver_data->driver_params.log_header_tail_length;
+
+    log_header->header.raw_list_len = (uint16_t)(offset < sizeof(log_header->header.raw_list) ? offset : sizeof(log_header->header.raw_list));
+    memcpy(log_header->header.raw_list, data, log_header->header.raw_list_len);
 
     return offset;
 }
@@ -1206,126 +1218,29 @@ static int ambit3_send_region(ambit_object_t *object, const ambit3_nav_plan_t *p
  * Returns the entry count (0 for a genuinely empty POI store, a real,
  * reachable state confirmed on hardware), or -1 if the read itself failed.
  */
-#define AMBIT3_CMD_POI_COUNT  0x0b02 /* == ambit_command_waypoint_count: on the Ambit3 it counts the POI store */
-#define AMBIT3_POI_MAX_PAGES  32
-
-/* The watch's POI count (0x0b02, u32 LE), or -1 if the command failed. In the
- * MSP430X firmware (Emu 2.4.17) 0x0b02 returns count(list1)+count(list2), the same
- * two lists 0x0b24 walks - see scratchpad fwre/FINDINGS.md of 2026-10-24. SuuntoLink's
- * own POI import opens with it too (assets/pcap/ambit3poiimport). */
-static int ambit3_poi_count(ambit_object_t *object)
+static int ambit3_read_poi_entries(ambit_object_t *object,
+                                    const uint8_t **bodies, uint32_t *body_lens, size_t max_entries,
+                                    uint8_t **poi_reply_out, size_t *poi_reply_len_out)
 {
-    uint8_t *reply = NULL;
-    size_t len = 0;
-    int n = -1;
-    if (libambit_protocol_command(object, AMBIT3_CMD_POI_COUNT, NULL, 0, &reply, &len, 0) == 0
-        && reply != NULL && len >= 4) {
-        n = (int)((uint32_t)reply[0] | ((uint32_t)reply[1] << 8) |
-                  ((uint32_t)reply[2] << 16) | ((uint32_t)reply[3] << 24));
+    uint8_t zero4[4] = { 0, 0, 0, 0 };
+    *poi_reply_out = NULL;
+    *poi_reply_len_out = 0;
+
+    if (libambit_protocol_command(object, AMBIT3_CMD_POI_READ, zero4, sizeof(zero4), poi_reply_out, poi_reply_len_out, 0) != 0) {
+        return -1;
     }
-    libambit_protocol_free(reply);
-    return n;
-}
 
-/*
- * The whole POI list as ONE buffer shaped like a single 0x0b24 reply:
- * [6-byte page header]["SBEM0102"][0x55 entries...]. Returns 0 (with *out NULL and
- * *out_len 0 for an empty store) or -1. Two firmware facts this handles
- * (MSP430X Emu 2.4.17, 0x0b24 case at 0x1a632, serializer FUN_0002fd08):
- *  - An EMPTY store is answered with an error (flags 0x02, errFlags 1, no data): the
- *    serializer wrote nothing. Over USB libambit never looks at errFlags so it read as
- *    0 bytes; over Bluetooth protocol_ble.c returns -1 - which is why POIs, and routes
- *    (their write reads the POIs first), stopped working over Bluetooth once the store
- *    was empty. So a failed read asks for the count: 0 means empty, anything else is a
- *    real failure.
- *  - The reply is PAGED: [u16 nextCursor][u16 0][u16 isLast][data <= 0x3fa bytes], the
- *    SBEM header only on the first page; the request is [u16 cursor][u16 0]. One request
- *    used to be all we sent, so a long list was cut short - and a route write then put
- *    back only that part. SuuntoLink's capture (4 POIs) is one page with isLast = 1.
- */
-static int ambit3_read_poi_all(ambit_object_t *object, uint8_t **out, size_t *out_len)
-{
-    *out = NULL;
-    *out_len = 0;
-    uint8_t *all = NULL;
-    size_t all_len = 0;
-    uint16_t cursor = 0;
-
-    for (int page = 0; page < AMBIT3_POI_MAX_PAGES; page++) {
-        uint8_t req[4] = { (uint8_t)(cursor & 0xff), (uint8_t)(cursor >> 8), 0, 0 };
-        uint8_t *reply = NULL;
-        size_t len = 0;
-        if (libambit_protocol_command(object, AMBIT3_CMD_POI_READ, req, sizeof(req), &reply, &len, 0) != 0) {
-            libambit_protocol_free(reply);
-            if (page == 0 && ambit3_poi_count(object) == 0) {
-                LOG_INFO("ambit3_read_poi_all: the watch has no POIs");
-                return 0;
-            }
-            LOG_ERROR("ambit3_read_poi_all: page %d (cursor %u) failed", page, cursor);
-            free(all);
-            return -1;
-        }
-        if (reply == NULL || len < 6) {
-            /* Over USB an empty store comes back as 0 bytes, not as an error. */
-            libambit_protocol_free(reply);
-            if (page == 0) return 0;
-            LOG_ERROR("ambit3_read_poi_all: page %d came back empty", page);
-            free(all);
-            return -1;
-        }
-        uint16_t next = (uint16_t)(reply[0] | (reply[1] << 8));
-        uint16_t is_last = (uint16_t)(reply[4] | (reply[5] << 8));
-        /* page 0 keeps its header; later pages contribute their data only */
-        size_t skip = page == 0 ? 0 : 6;
-        uint8_t *grown = (uint8_t *)realloc(all, all_len + (len - skip));
-        if (grown == NULL) {
-            libambit_protocol_free(reply);
-            free(all);
-            return -1;
-        }
-        all = grown;
-        memcpy(all + all_len, reply + skip, len - skip);
-        all_len += len - skip;
-        libambit_protocol_free(reply);
-
-        if (is_last != 0) {
-            *out = all;
-            *out_len = all_len;
-            return 0;
-        }
-        if (next == cursor) {
-            LOG_ERROR("ambit3_read_poi_all: the cursor did not move (%u)", cursor);
-            free(all);
-            return -1;
-        }
-        cursor = next;
-    }
-    LOG_ERROR("ambit3_read_poi_all: more than %d pages", AMBIT3_POI_MAX_PAGES);
-    free(all);
-    return -1;
-}
-
-/* The 0x55 entries of a buffer shaped like one 0x0b24 reply ([6-byte page header]
- * ["SBEM0102"][entries]), as pointer/length pairs into `buf`. Returns the count, or -1
- * past max_entries. A buffer with no SBEM header holds no entries. */
-static int ambit3_parse_poi_entries(const uint8_t *buf, size_t len,
-                                    const uint8_t **bodies, uint32_t *body_lens, size_t max_entries)
-{
     size_t entry_count = 0;
-    if (buf != NULL && len > 14 && memcmp(buf + 6, "SBEM0102", 8) == 0) {
+    uint8_t *poi_reply = *poi_reply_out;
+    size_t poi_reply_len = *poi_reply_len_out;
+    if (poi_reply != NULL && poi_reply_len > 14 && memcmp(poi_reply + 6, "SBEM0102", 8) == 0) {
         libambit_sbem0102_data_t poi_entries;
-        poi_entries.data = (uint8_t *)buf + 14;
-        poi_entries.size = len - 14;
+        poi_entries.data = poi_reply + 14;
+        poi_entries.size = poi_reply_len - 14;
         libambit_sbem0102_data_reset(&poi_entries);
 
-        while (libambit_sbem0102_data_next(&poi_entries) == 0) {
+        while (libambit_sbem0102_data_next(&poi_entries) == 0 && entry_count < max_entries) {
             if (libambit_sbem0102_data_id(&poi_entries) == AMBIT3_POI_ENTRY_ID) {
-                if (entry_count == max_entries) {
-                    /* Refuse rather than return a cut list: a route write would put back
-                     * only the first max_entries and lose the rest. */
-                    LOG_ERROR("ambit3_parse_poi_entries: more than %zu POIs", max_entries);
-                    return -1;
-                }
                 bodies[entry_count] = libambit_sbem0102_data_ptr(&poi_entries);
                 body_lens[entry_count] = libambit_sbem0102_data_len(&poi_entries);
                 entry_count++;
@@ -1333,16 +1248,6 @@ static int ambit3_parse_poi_entries(const uint8_t *buf, size_t len,
         }
     }
     return (int)entry_count;
-}
-
-static int ambit3_read_poi_entries(ambit_object_t *object,
-                                    const uint8_t **bodies, uint32_t *body_lens, size_t max_entries,
-                                    uint8_t **poi_reply_out, size_t *poi_reply_len_out)
-{
-    if (ambit3_read_poi_all(object, poi_reply_out, poi_reply_len_out) != 0) {
-        return -1;
-    }
-    return ambit3_parse_poi_entries(*poi_reply_out, *poi_reply_len_out, bodies, body_lens, max_entries);
 }
 
 /*
@@ -1363,14 +1268,7 @@ static uint8_t *ambit3_build_poi_write_payload(
     *out_len = 0;
     if (total_body_len == 0) return NULL;
 
-    /* Never the extended 0x55 0xff+u32 header: only the watch writes that form (on read), and
-     * writing it corrupted the POI store (desktop, 2026-08-30). A longer list goes through
-     * ambit3_write_poi_bodies(), in several entries. */
-    if (total_body_len >= 0xff) {
-        LOG_ERROR("ambit3_build_poi_write_payload: %zu bytes do not fit one entry", total_body_len);
-        return NULL;
-    }
-    size_t header_len = 2;
+    size_t header_len = (total_body_len < 0xff) ? 2 : 6;
     size_t payload_len = sizeof(AMBIT3_SBEM_WRITE_PREFIX) + header_len + total_body_len;
     uint8_t *payload = (uint8_t*)malloc(payload_len);
     if (payload == NULL) return NULL;
@@ -1379,7 +1277,14 @@ static uint8_t *ambit3_build_poi_write_payload(
     memcpy(p, AMBIT3_SBEM_WRITE_PREFIX, sizeof(AMBIT3_SBEM_WRITE_PREFIX));
     p += sizeof(AMBIT3_SBEM_WRITE_PREFIX);
     *p++ = AMBIT3_POI_ENTRY_ID;
-    *p++ = (uint8_t)total_body_len;
+    if (header_len == 2) {
+        *p++ = (uint8_t)total_body_len;
+    } else {
+        *p++ = 0xff;
+        uint32_t len_le = htole32((uint32_t)total_body_len);
+        memcpy(p, &len_le, 4);
+        p += 4;
+    }
     if (new_record != NULL) {
         memcpy(p, new_record, new_record_len);
         p += new_record_len;
@@ -1393,74 +1298,18 @@ static uint8_t *ambit3_build_poi_write_payload(
     return payload;
 }
 
-/* The watch holds two lists of 250 POIs (MSP430X Emu 2.4.17, flash 0x27100/0x2B100). */
-#define AMBIT3_POI_MAX_EXISTING 500
-
-/* Most bytes in one 0x55 entry: its length must stay a single byte (< 0xff). */
-#define AMBIT3_POI_ENTRY_MAX 0xfe
+#define AMBIT3_POI_MAX_EXISTING 64
 
 /*
- * Appends POI records to the store: packed into 0x55 entries of at most 254 bytes, the
- * SuuntoLink poiimport shape (one entry, single-byte length) and the desktop's
- * poi_entry_payloads() (tools/write_nav.py), one 0x0b25 per entry. 0x0b25 appends what it is given
- * (firmware FUN_0004da50), so several in a row add up, as several Add POI do. Empty bodies
- * are skipped. Returns 0, or -1 if a write failed (the ones before it are stored).
- */
-static int ambit3_write_poi_bodies(ambit_object_t *object,
-                                   const uint8_t *const *bodies, const uint32_t *body_lens, size_t count)
-{
-    uint8_t buf[sizeof(AMBIT3_SBEM_WRITE_PREFIX) + 2 + AMBIT3_POI_ENTRY_MAX];
-    const size_t head = sizeof(AMBIT3_SBEM_WRITE_PREFIX) + 2;
-    size_t i = 0;
-    while (i < count) {
-        size_t used = 0;
-        while (i < count && (body_lens[i] == 0 || used + body_lens[i] <= AMBIT3_POI_ENTRY_MAX)) {
-            memcpy(buf + head + used, bodies[i], body_lens[i]);
-            used += body_lens[i];
-            i++;
-        }
-        if (used == 0) {
-            if (i >= count) break;            /* only empty bodies were left */
-            LOG_ERROR("ambit3_write_poi_bodies: a %u-byte POI record does not fit one entry", body_lens[i]);
-            return -1;
-        }
-        memcpy(buf, AMBIT3_SBEM_WRITE_PREFIX, sizeof(AMBIT3_SBEM_WRITE_PREFIX));
-        buf[sizeof(AMBIT3_SBEM_WRITE_PREFIX)] = AMBIT3_POI_ENTRY_ID;
-        buf[sizeof(AMBIT3_SBEM_WRITE_PREFIX) + 1] = (uint8_t)used;
-        if (libambit_protocol_command(object, AMBIT3_CMD_POI_WRITE, buf, head + used, NULL, NULL, 0) != 0) {
-            LOG_ERROR("ambit3_write_poi_bodies: a POI write (0x0b25) failed");
-            return -1;
-        }
-    }
-    return 0;
-}
-
-/* The watch keeps 15 bytes of a POI name. A longer one is stored (the count goes up) but the
- * watch then lists it as an empty 0x55 entry, so it vanishes from every read: seen on André's
- * Peak 2026-10-25 with "114 Av. André M", 15 letters but 16 bytes because of the é. Same rule
- * as tools/ambit_format.py poi_name_bytes(): cut on a UTF-8 character boundary, and drop the
- * spaces the cut leaves at the end. */
-#define AMBIT3_POI_NAME_MAX 15
-
-static size_t ambit3_poi_name_len(const char *name)
-{
-    size_t n = strlen(name);
-    if (n <= AMBIT3_POI_NAME_MAX) return n;
-    n = AMBIT3_POI_NAME_MAX;
-    while (n > 0 && ((unsigned char)name[n] & 0xC0) == 0x80) n--;   /* inside a character */
-    while (n > 0 && name[n - 1] == ' ') n--;
-    return n;
-}
-
-/*
- * Adds one POI to the watch. 0x0b25 APPENDS each 0x55 entry it is given to the POI
- * store (firmware FUN_0004da50 -> FUN_000397e6, no implicit clear), and it acks even
- * when nothing was stored. So only the new record is sent - sending "new + the list
- * already there", as this used to, doubled every existing POI on each add (the repeated
- * names seen on the Peak). SuuntoLink's own import does send the whole list, but only
- * after a 0x0b04, which empties the store (assets/pcap/ambit3poiimport). Checked by the
- * count (0x0b02) going up by exactly one. Never touches the Waypoints/Routes regions.
- * Byte layout ported from ambit-app/tools/ambit_format.py's build_poi_record().
+ * Adds one POI to the watch, preserving every POI already there. Unlike a
+ * route write, this never touches the Waypoints/Routes flash regions and
+ * needs no commit -- it only reads and rewrites the POI SBEM list via
+ * 0x0b24/0x0b25. Byte layout ported from ambit-app/tools/ambit_format.py's
+ * build_poi_record(), itself documented as "the exact inverse of
+ * parse_sbem_poi_list" (which IS hardware-verified against real POI reads).
+ * The add path itself (as opposed to reading unmodified) has not been
+ * round-trip tested on real hardware as of this writing -- worth treating
+ * the first real use as a test, same spirit as the route write.
  * `name` must be non-empty. Returns 0 on success, -1 on failure.
  */
 int ambit3_add_poi_to_watch(ambit_object_t *object, const char *name, double lat, double lon, int type)
@@ -1473,13 +1322,14 @@ int ambit3_add_poi_to_watch(ambit_object_t *object, const char *name, double lat
      * what the watch itself uses, so a bad value never corrupts the record. */
     if (type < 0 || type > 17) type = 17;
 
-    int count_before = ambit3_poi_count(object);
-    if (count_before < 0) {
-        LOG_ERROR("ambit3_add_poi_to_watch: could not read the POI count, nothing written");
-        return -1;
-    }
-    if (count_before >= AMBIT3_POI_MAX_EXISTING) {
-        LOG_ERROR("ambit3_add_poi_to_watch: the watch already holds %d POIs", count_before);
+    uint8_t *poi_reply = NULL;
+    size_t poi_reply_len = 0;
+    const uint8_t *bodies[AMBIT3_POI_MAX_EXISTING];
+    uint32_t body_lens[AMBIT3_POI_MAX_EXISTING];
+    int entry_count = ambit3_read_poi_entries(object, bodies, body_lens, AMBIT3_POI_MAX_EXISTING, &poi_reply, &poi_reply_len);
+    if (entry_count < 0) {
+        LOG_ERROR("ambit3_add_poi_to_watch: failed to read the existing POI list, aborting before any write");
+        libambit_protocol_free(poi_reply);
         return -1;
     }
 
@@ -1506,13 +1356,14 @@ int ambit3_add_poi_to_watch(ambit_object_t *object, const char *name, double lat
      * itself writes for a POI it creates (SuuntoLink instead leaves those at
      * 0 for an imported one) -- picked so this looks the same as a
      * watch-made POI rather than an imported one. */
-    size_t name_len = ambit3_poi_name_len(name);
+    size_t name_len = strlen(name);
     size_t stamp_len = strlen(stamp);
     size_t record_len = name_len + 1 + 1 /* empty route_name + its NUL */ + stamp_len + 1 + 5 + 8;
     uint8_t *record = (uint8_t*)malloc(record_len);
     int ret = -1;
     if (record == NULL) {
         LOG_ERROR("ambit3_add_poi_to_watch: out of memory building the POI record");
+        libambit_protocol_free(poi_reply);
         return -1;
     }
     uint8_t *p = record;
@@ -1532,117 +1383,20 @@ int ambit3_add_poi_to_watch(ambit_object_t *object, const char *name, double lat
     memcpy(p, &lon_le, 4); p += 4;
 
     size_t payload_len = 0;
-    uint8_t *payload = ambit3_build_poi_write_payload(NULL, NULL, 0, record, record_len, &payload_len);
+    uint8_t *payload = ambit3_build_poi_write_payload(bodies, body_lens, (size_t)entry_count,
+                                                        record, record_len, &payload_len);
     if (payload == NULL) {
         LOG_ERROR("ambit3_add_poi_to_watch: failed to build the POI write payload");
     } else if (libambit_protocol_command(object, AMBIT3_CMD_POI_WRITE, payload, payload_len, NULL, NULL, 0) != 0) {
         LOG_ERROR("ambit3_add_poi_to_watch: write failed");
     } else {
-        int count_after = ambit3_poi_count(object);
-        if (count_after == count_before + 1) {
-            LOG_INFO("ambit3_add_poi_to_watch: added '%s' (%d -> %d POIs)", name, count_before, count_after);
-            ret = 0;
-        } else {
-            LOG_ERROR("ambit3_add_poi_to_watch: the watch did not keep '%s' (%d -> %d POIs)",
-                      name, count_before, count_after);
-        }
+        LOG_INFO("ambit3_add_poi_to_watch: added '%s' (%d existing POI(s) preserved)", name, entry_count);
+        ret = 0;
     }
 
     free(payload);
     free(record);
-    return ret;
-}
-
-/*
- * Replaces the watch's POI list with the 0x55 entries of `new_list`, a buffer shaped like a
- * 0x0b24 read (PoiService.ts builds it from a read, minus the POIs being removed; a saved
- * copy restores the same way). `expected` is the read the caller saved a copy of: the list
- * is read again here and nothing is written unless it is byte for byte the same, so that
- * copy is exactly what gets replaced.
- *
- *   0x0b04 empties both POI lists. Firmware 2.4.17, 0x0b04 handler at 0x1a65c:
- *          FUN_000688ca(list1), FUN_000688ca(list2), then the ack - the Waypoints/Routes
- *          regions are not touched (fwre/FINDINGS.md, 2026-10-24). The count must then read 0:
- *          over USB an error reply is not reported, and appending to a store that was not
- *          emptied would double it.
- *   0x0b25 x n  appends the new list (ambit3_write_poi_bodies), in reverse: the store reads
- *          newest first, so this keeps the order, as the route write's restore does.
- *   0x0b02 must then count exactly the new list.
- *
- * Empty entries (`55 00`, a name the watch could not keep) carry nothing to write back and
- * are left out. Returns the number of POIs written, -2 if the watch's list changed since
- * `expected` (nothing written), or -1 on failure: before the clear nothing was written, after
- * it the POIs may be partly written and the caller's copy is the way back.
- */
-int ambit3_set_poi_list(ambit_object_t *object, const uint8_t *expected, size_t expected_len,
-                        const uint8_t *new_list, size_t new_len)
-{
-    static const uint8_t *cur_bodies[AMBIT3_POI_MAX_EXISTING];
-    static uint32_t cur_lens[AMBIT3_POI_MAX_EXISTING];
-    static const uint8_t *new_bodies[AMBIT3_POI_MAX_EXISTING];
-    static uint32_t new_lens[AMBIT3_POI_MAX_EXISTING];
-    uint8_t *reply = NULL;
-    size_t reply_len = 0;
-    int ret = -1;
-
-    if (object == NULL || object->driver_data == NULL) {
-        LOG_ERROR("ambit3_set_poi_list: invalid arguments");
-        return -1;
-    }
-    int n_new = ambit3_parse_poi_entries(new_list, new_len, new_bodies, new_lens, AMBIT3_POI_MAX_EXISTING);
-    if (n_new < 0) return -1;
-    if (new_len > 0 && (new_len < 14 || memcmp(new_list + 6, "SBEM0102", 8) != 0)) {
-        LOG_ERROR("ambit3_set_poi_list: the new list is not a POI list");
-        return -1;
-    }
-    for (int i = 0; i < n_new; i++) {
-        if (new_lens[i] > AMBIT3_POI_ENTRY_MAX) {
-            LOG_ERROR("ambit3_set_poi_list: entry %d is %u bytes, not one POI", i, new_lens[i]);
-            return -1;
-        }
-    }
-    int keep = 0;
-    for (int i = 0; i < n_new; i++) if (new_lens[i] > 0) keep++;
-
-    int n_cur = ambit3_read_poi_entries(object, cur_bodies, cur_lens, AMBIT3_POI_MAX_EXISTING, &reply, &reply_len);
-    if (n_cur < 0) {
-        LOG_ERROR("ambit3_set_poi_list: could not read the POIs, nothing written");
-        goto out;
-    }
-    if (reply_len != expected_len || (reply_len > 0 && (expected == NULL || memcmp(reply, expected, reply_len) != 0))) {
-        LOG_ERROR("ambit3_set_poi_list: the POIs on the watch changed since they were read, nothing written");
-        ret = -2;
-        goto out;
-    }
-    LOG_INFO("ambit3_set_poi_list: %d entries on the watch -> %d POIs", n_cur, keep);
-
-    if (libambit_protocol_command(object, AMBIT3_CMD_NAV_COMMIT, NULL, 0, NULL, NULL, 0) != 0) {
-        LOG_ERROR("ambit3_set_poi_list: emptying the POIs (0x0b04) failed, nothing written");
-        goto out;
-    }
-    int cleared = ambit3_poi_count(object);
-    if (cleared != 0) {
-        LOG_ERROR("ambit3_set_poi_list: the watch still counts %d POIs after 0x0b04, nothing written", cleared);
-        goto out;
-    }
-    for (int i = 0; i < n_new / 2; i++) {
-        const uint8_t *tb = new_bodies[i]; new_bodies[i] = new_bodies[n_new - 1 - i]; new_bodies[n_new - 1 - i] = tb;
-        uint32_t tl = new_lens[i]; new_lens[i] = new_lens[n_new - 1 - i]; new_lens[n_new - 1 - i] = tl;
-    }
-    if (ambit3_write_poi_bodies(object, new_bodies, new_lens, (size_t)n_new) != 0) {
-        LOG_ERROR("ambit3_set_poi_list: writing the POIs failed after they were emptied");
-        goto out;
-    }
-    int after = ambit3_poi_count(object);
-    if (after != keep) {
-        LOG_ERROR("ambit3_set_poi_list: the watch counts %d POIs, %d were written", after, keep);
-        goto out;
-    }
-    LOG_INFO("ambit3_set_poi_list: done, %d POIs", keep);
-    ret = keep;
-
-out:
-    libambit_protocol_free(reply);
+    libambit_protocol_free(poi_reply);
     return ret;
 }
 
@@ -1659,14 +1413,11 @@ int ambit3_write_route_to_watch(ambit_object_t *object, const ambit3_nav_route_t
     ambit3_nav_plan_t plan;
     uint8_t *poi_reply = NULL;
     size_t poi_reply_len = 0;
-    const uint8_t *poi_bodies[AMBIT3_POI_MAX_EXISTING];
-    uint32_t poi_lens[AMBIT3_POI_MAX_EXISTING];
-    int poi_count = 0;
+    uint8_t *poi_write_payload = NULL;
+    size_t poi_write_len = 0;
     int ret = -1;
 
-    /* route_count 0 writes an empty navigation database (ambit3_navigation_plan_sized ->
-     * plan_reset_sized, the SuuntoLink routedelete shape): how the last route is removed. */
-    if (object == NULL || object->driver_data == NULL || (routes == NULL && route_count > 0)) {
+    if (object == NULL || object->driver_data == NULL || routes == NULL || route_count == 0) {
         LOG_ERROR("ambit3_write_route_to_watch: invalid arguments");
         return -1;
     }
@@ -1710,17 +1461,24 @@ int ambit3_write_route_to_watch(ambit_object_t *object, const ambit3_nav_route_t
      * what a real capture shows SuuntoLink doing when it preserves (as
      * opposed to adding) a list. This needs no understanding of a POI's own
      * fields, so it cannot corrupt one it doesn't recognise. */
-    poi_count = ambit3_read_poi_entries(object, poi_bodies, poi_lens, AMBIT3_POI_MAX_EXISTING, &poi_reply, &poi_reply_len);
-    if (poi_count < 0) {
-        LOG_ERROR("ambit3_write_route_to_watch: failed to read the POI list, aborting before any write");
-        goto cleanup;
+    {
+        const uint8_t *bodies[AMBIT3_POI_MAX_EXISTING];
+        uint32_t body_lens[AMBIT3_POI_MAX_EXISTING];
+        int entry_count = ambit3_read_poi_entries(object, bodies, body_lens, AMBIT3_POI_MAX_EXISTING, &poi_reply, &poi_reply_len);
+        if (entry_count < 0) {
+            LOG_ERROR("ambit3_write_route_to_watch: failed to read the POI list, aborting before any write");
+            goto cleanup;
+        }
+        for (int i = 0; i < entry_count / 2; i++) {
+            const uint8_t *tb = bodies[i]; bodies[i] = bodies[entry_count - 1 - i]; bodies[entry_count - 1 - i] = tb;
+            uint32_t tl = body_lens[i]; body_lens[i] = body_lens[entry_count - 1 - i]; body_lens[entry_count - 1 - i] = tl;
+        }
+        poi_write_payload = ambit3_build_poi_write_payload(bodies, body_lens, (size_t)entry_count, NULL, 0, &poi_write_len);
+        /* entry_count == 0 means a genuinely empty POI store (confirmed a
+         * real, reachable state on hardware) -- nothing to restore, and
+         * poi_write_payload stays NULL, which step 4 below treats as
+         * "nothing to send" rather than an error. */
     }
-    for (int i = 0; i < poi_count / 2; i++) {
-        const uint8_t *tb = poi_bodies[i]; poi_bodies[i] = poi_bodies[poi_count - 1 - i]; poi_bodies[poi_count - 1 - i] = tb;
-        uint32_t tl = poi_lens[i]; poi_lens[i] = poi_lens[poi_count - 1 - i]; poi_lens[poi_count - 1 - i] = tl;
-    }
-    /* poi_count == 0 is a genuinely empty POI store (a real, reachable state on hardware):
-     * nothing to put back in step 4. */
 
     /* 2. Waypoint region, then Route region: writes, then each group's tail. */
     if (ambit3_send_region(object, &plan, AMBIT3_WAYPOINT_BASE, AMBIT3_WAYPOINT_REGION_SIZE, plan.waypoint_hash) != 0) {
@@ -1738,20 +1496,12 @@ int ambit3_write_route_to_watch(ambit_object_t *object, const ambit3_nav_route_t
         goto cleanup;
     }
 
-    /* 4. Restore the POI list. This is what makes step 1 invisible to the user. In entries of
-     * at most 254 bytes: one entry for the whole list used the extended 0x55 header once it
-     * grew past 254 bytes (about 6 POIs), the form that corrupted the store (2026-08-30). */
-    if (poi_count > 0) {
-        if (ambit3_write_poi_bodies(object, poi_bodies, poi_lens, (size_t)poi_count) != 0) {
+    /* 4. Restore the POI list. This is what makes step 1 invisible to the user. */
+    if (poi_write_payload != NULL) {
+        if (libambit_protocol_command(object, AMBIT3_CMD_POI_WRITE, poi_write_payload, poi_write_len, NULL, NULL, 0) != 0) {
             LOG_ERROR("ambit3_write_route_to_watch: route write succeeded but restoring "
                       "the POI list failed -- the watch's POIs may now be empty");
             goto cleanup;
-        }
-        int kept = 0;
-        for (int i = 0; i < poi_count; i++) if (poi_lens[i] > 0) kept++;
-        int after = ambit3_poi_count(object);
-        if (after != kept) {
-            LOG_WARNING("ambit3_write_route_to_watch: %d POIs put back, the watch counts %d", kept, after);
         }
     }
 
@@ -1761,6 +1511,7 @@ int ambit3_write_route_to_watch(ambit_object_t *object, const ambit3_nav_route_t
 
 cleanup:
     libambit_protocol_free(poi_reply);
+    free(poi_write_payload);
     ambit3_navigation_plan_free(&plan);
     return ret;
 }
@@ -1834,16 +1585,19 @@ int ambit3_read_flash_region(ambit_object_t *object, uint32_t address, uint32_t 
 }
 
 /*
- * Reads the watch's raw POI list (0x0b24), every page, as one buffer shaped like
- * a single reply, including the 14-byte SBEM0102 prefix -- decoding the individual
- * entries happens in TS, which already needs its own small SBEM0102 reader for this
- * (see RouteReader.ts). An empty store gives *out NULL / *out_len 0 (see
- * ambit3_read_poi_all). Caller frees *out with free(). Returns 0 or -1.
+ * Reads the watch's raw POI list (0x0b24) as-is, including the 14-byte
+ * SBEM0102 prefix -- decoding the individual entries happens in TS, which
+ * already needs its own small SBEM0102 reader for this (see RouteReader.ts).
+ * *out is allocated by libambit_protocol_command(); caller frees with
+ * libambit_protocol_free(). Returns 0 on success, -1 on failure.
  */
 int ambit3_read_poi_list_raw(ambit_object_t *object, uint8_t **out, size_t *out_len)
 {
     if (object == NULL || out == NULL || out_len == NULL) return -1;
-    return ambit3_read_poi_all(object, out, out_len);
+    uint8_t zero4[4] = { 0, 0, 0, 0 };
+    *out = NULL;
+    *out_len = 0;
+    return libambit_protocol_command(object, AMBIT3_CMD_POI_READ, zero4, sizeof(zero4), out, out_len, 0);
 }
 
 /*

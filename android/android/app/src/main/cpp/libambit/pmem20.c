@@ -430,6 +430,7 @@ ambit_log_entry_t *libambit_pmem20_log_read_entry_address(libambit_pmem20_t *obj
         return NULL;
     }
     buffer_offset += tmp_len;
+    log_entry->header.raw_log_size = length;   /* for the SML <parsingResume> block */
     // Now that we know number of samples, allocate space for them!
     if ((log_entry->samples = calloc(log_entry->header.samples_count, sizeof(ambit_log_sample_t))) == NULL) {
         if (log_entry->header.activity_name) {
@@ -496,6 +497,9 @@ int libambit_pmem20_log_parse_header(uint8_t *data, size_t datalen, ambit_log_he
     if (datalen < 129) {
         return -1;
     }
+
+    log_header->raw_header_len = (uint16_t)(datalen < sizeof(log_header->raw_header) ? datalen : sizeof(log_header->raw_header));
+    memcpy(log_header->raw_header, data, log_header->raw_header_len);
 
     offset = 1;
     log_header->date_time.year = read16inc(data, &offset);
@@ -937,7 +941,7 @@ static int parse_sample(uint8_t *buf, size_t offset, uint8_t **spec, ambit_log_e
             log_entry->samples[*sample_count].type = ambit_log_sample_type_gps_small;
             log_entry->samples[*sample_count].u.gps_small.latitude = (int16_t)read16inc(buf, &int_offset);
             log_entry->samples[*sample_count].u.gps_small.longitude = (int16_t)read16inc(buf, &int_offset);
-            int_offset += 2; // Time (seconds)
+            log_entry->samples[*sample_count].u.gps_small.utc_msec = read16inc(buf, &int_offset); // time field
             log_entry->samples[*sample_count].u.gps_small.ehpe = read8inc(buf, &int_offset)*100;
             log_entry->samples[*sample_count].u.gps_small.noofsatellites = read8inc(buf, &int_offset);
             break;
