@@ -91,7 +91,7 @@ def main(src, dst):
                 raw('lon', math.degrees(float(txt(s, 'Longitude'))), 1e-7), raw('small.ehpe', float(txt(s, 'EHPE')), 0.01), _sec * 1000))
         elif st == 'periodic':
             vals = []
-            for tag, typ, sc in (('VerticalSpeed', 0x19, 0.01), ('Altitude', 0x0c, 1), ('Distance', 0x03, 1), ('Speed', 0x04, 0.01)):
+            for tag, typ, sc in (('VerticalSpeed', 0x19, 0.01), ('EnergyConsumption', 0x0e, 418.68 / 60.0), ('Altitude', 0x0c, 1), ('Distance', 0x03, 1), ('Speed', 0x04, 0.01)):
                 if txt(s, tag) is not None:
                     vals += [typ, raw('per.' + tag, float(txt(s, tag)), sc)]
             out.append('S\tperiodic\t%d\t%s\t%d\t%s' % (t, U, len(vals) // 2, '\t'.join(map(str, vals))))

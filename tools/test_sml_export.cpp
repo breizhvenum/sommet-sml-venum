@@ -93,6 +93,7 @@ int main(int argc, char **argv) {
                     switch (type) {
                         case 0x19: pv.u.verticalspeed = (int16_t)val; break;
                         case 0x0c: pv.u.altitude = (int16_t)val; break;
+                        case 0x0e: pv.u.energy = (uint16_t)val; break;
                         case 0x03: pv.u.distance = (uint32_t)val; break;
                         case 0x04: pv.u.speed = (uint16_t)val; break;
                     }
