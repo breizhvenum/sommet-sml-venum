@@ -376,6 +376,7 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
     // ── Samples ──────────────────────────────────────────────────────────────
     open(o, 2, "Samples");
     std::vector<std::pair<size_t, size_t>> spans;      // output range of each input sample
+    std::string energyRaw;                              // diagnostics: raw periodic energy values
     std::string smallRaw;                               // diagnostics: gps-small "time ms:raw field"
     for (uint32_t i = 0; i < entry->samples_count; i++) {
         const ambit_log_sample_t &s = entry->samples[i];
@@ -462,6 +463,12 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
                 if ((unsigned)pv.type >= 0x80) continue;
                 switch (pv.type) {
                     case ambit_log_sample_periodic_type_verticalspeed: v[pv.type] = pv.u.verticalspeed * 0.01; has[pv.type] = true; break;
+                    case ambit_log_sample_periodic_type_energy:
+                        if (pv.u.energy != 0xFFFF) { v[pv.type] = pv.u.energy * (418.68 / 60.0); has[pv.type] = true; }   // hcal/min -> W (matches 83.736 for raw 12 on a real move)
+#if SOMMET_SML_DIAG
+                        { char b[24]; snprintf(b, sizeof b, "%u ", (unsigned)pv.u.energy); if (energyRaw.size() < 120) energyRaw += b; }
+#endif
+                        break;
                     case ambit_log_sample_periodic_type_altitude:      v[pv.type] = pv.u.altitude; has[pv.type] = true; break;
                     case ambit_log_sample_periodic_type_distance:      v[pv.type] = pv.u.distance; has[pv.type] = true; break;
                     case ambit_log_sample_periodic_type_speed:
@@ -487,6 +494,7 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
             }
             open(o, 3, "Sample");
             if (has[ambit_log_sample_periodic_type_verticalspeed]) tagNum(o, 4, "VerticalSpeed", v[ambit_log_sample_periodic_type_verticalspeed]);
+            if (has[ambit_log_sample_periodic_type_energy])        tagNum(o, 4, "EnergyConsumption", v[ambit_log_sample_periodic_type_energy]);
             if (has[ambit_log_sample_periodic_type_temperature])   tagNum(o, 4, "Temperature", v[ambit_log_sample_periodic_type_temperature]);
             if (has[ambit_log_sample_periodic_type_hr])            tagNum(o, 4, "HR", v[ambit_log_sample_periodic_type_hr]);
             if (has[ambit_log_sample_periodic_type_altitude])      tagNum(o, 4, "Altitude", v[ambit_log_sample_periodic_type_altitude]);
@@ -608,6 +616,7 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
         o += "device_info " + dev.diag + "\n";
         o += "raw_header=" + hexOf(h.raw_header, h.raw_header_len) + "\n";
         o += "raw_list=" + hexOf(h.raw_list, h.raw_list_len) + "\n";
+        o += "energy_raw=" + energyRaw + "\n";
         o += "gps_small_time_ms:raw_field=" + smallRaw + "\n-->\n";
     }
 #endif
