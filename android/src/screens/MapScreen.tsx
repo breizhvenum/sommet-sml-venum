@@ -700,7 +700,8 @@ export default function MapScreen() {
     if (!smlPath) { await explainNoSml(); return; }
     try {
       const fileName = smlPath.split('/').pop() ?? `${activity.id}.sml`;
-      await saveToDownloads(smlPath, fileName, 'application/xml');
+      // octet-stream, not application/xml: MediaStore appends ".xml" to the name for an XML type (.sml.xml)
+      await saveToDownloads(smlPath, fileName, 'application/octet-stream');
       Alert.alert(t.savedOk, t.savedMsg(fileName));
     } catch (e: any) {
       Alert.alert(t.error, t.saveError + e?.message);
