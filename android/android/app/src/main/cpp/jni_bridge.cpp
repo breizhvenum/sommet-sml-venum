@@ -838,8 +838,13 @@ static void log_push_callback(void *userdata, ambit_log_entry_t *log_entry)
     std::string sml;
     if (g_device) {
         smlexport::DeviceInfo di;
-        const char *nm = g_device->device_info.name ? g_device->device_info.name
-                                                    : g_device->device_info.model;
+        // device_info.name is the watch's codename ("Ibisbill"); the SML wants the product name
+        // ("Suunto Ambit3 Run"), which the device-support table holds for this VID/PID.
+        const ambit_known_device_t *kd = libambit_device_support_find_first(
+                g_device->device_info.vendor_id, g_device->device_info.product_id);
+        const char *nm = (kd && kd->name) ? kd->name
+                       : (g_device->device_info.name ? g_device->device_info.name
+                                                     : g_device->device_info.model);
         di.name   = nm ? nm : "";
         di.serial = g_device->device_info.serial ? g_device->device_info.serial : "";
         const uint8_t *fw = g_device->device_info.fw_version;
@@ -847,6 +852,17 @@ static void log_push_callback(void *userdata, ambit_log_entry_t *log_entry)
         char b[24];
         snprintf(b, sizeof b, "%d.%d.%d", fw[0], fw[1], fw[2] | (fw[3] << 8)); di.sw = b;
         snprintf(b, sizeof b, "%d.%d.%d", hw[0], hw[1], hw[2] | (hw[3] << 8)); di.hw = b;
+        {   // diagnostics: every raw device-info field that could hold the bootloader (BSL) version
+            const ambit_device_info_t &d = g_device->device_info;
+            char b[256];
+            snprintf(b, sizeof b, "model=%s name=%s fw=%s hw=%s komposti=%s compact_serial=%s vid=%04x pid=%04x",
+                     d.model ? d.model : "", d.name ? d.name : "",
+                     smlexport::detail::hexOf(d.fw_version, 4).c_str(), smlexport::detail::hexOf(d.hw_version, 4).c_str(),
+                     smlexport::detail::hexOf(d.komposti_version, 4).c_str(),
+                     smlexport::detail::hexOf(d.compact_serial, 11).c_str(),
+                     (unsigned)d.vendor_id, (unsigned)d.product_id);
+            di.diag = b;
+        }
         sml = smlexport::build(log_entry, di);
     }
     g_log_sml.push_back(sml);

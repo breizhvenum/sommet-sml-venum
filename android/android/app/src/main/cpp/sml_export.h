@@ -25,8 +25,17 @@
 #include <cstdio>
 #include <ctime>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "libambit/libambit.h"
+
+// Diagnostics: when 1, build() appends one XML comment (ignored by every SML reader) holding the raw
+// bytes / values needed to pin down the header fields that are not yet decoded exactly like
+// Moveslink2 does (battery, time to first fix, gps-small UTC). Set to 0 once those are confirmed.
+#ifndef SOMMET_SML_DIAG
+#define SOMMET_SML_DIAG 1
+#endif
 
 namespace smlexport {
 
@@ -37,6 +46,7 @@ struct DeviceInfo {
     std::string sw;       // "2.4.17"   (the log's own fwinfo sample wins when it has one)
     std::string hw;       // "69.4.17414"
     std::string bsl;      // "1.6.13" - empty when unknown (then no <BSL> is written)
+    std::string diag;     // diagnostics only: raw device-info bytes, appended to the SOMMET_SML_DIAG comment
 };
 
 namespace detail {
@@ -114,6 +124,32 @@ static inline std::string sampleUtc(const ambit_log_entry_t *e, const ambit_log_
     return utc(d);
 }
 
+// Epoch milliseconds of a libambit date-time (msec holds seconds * 1000 + milliseconds).
+static inline long long utcEpochMs(const ambit_date_time_t &t) {
+    struct tm g = {};
+    g.tm_year = t.year - 1900; g.tm_mon = t.month - 1; g.tm_mday = t.day;
+    g.tm_hour = t.hour; g.tm_min = t.minute; g.tm_sec = 0;
+    return (long long)timegm(&g) * 1000LL + (long long)t.msec;
+}
+// "2026-10-25T12:07:42.328Z" (".mmm" only when non-zero) from epoch milliseconds.
+static inline std::string utcFromEpochMs(long long ms) {
+    long long sec = ms / 1000; long long frac = ms % 1000;
+    if (frac < 0) { frac += 1000; sec -= 1; }
+    time_t e = (time_t)sec;
+    struct tm g = {};
+    gmtime_r(&e, &g);
+    char b[48];
+    if (frac) snprintf(b, sizeof b, "%04d-%02d-%02dT%02d:%02d:%02d.%03lldZ", g.tm_year + 1900, g.tm_mon + 1, g.tm_mday, g.tm_hour, g.tm_min, g.tm_sec, frac);
+    else      snprintf(b, sizeof b, "%04d-%02d-%02dT%02d:%02d:%02dZ", g.tm_year + 1900, g.tm_mon + 1, g.tm_mday, g.tm_hour, g.tm_min, g.tm_sec);
+    return b;
+}
+static inline std::string hexOf(const uint8_t *p, size_t n) {
+    static const char *H = "0123456789abcdef";
+    std::string s; s.reserve(n * 2);
+    for (size_t i = 0; i < n; i++) { s += H[p[i] >> 4]; s += H[p[i] & 15]; }
+    return s;
+}
+
 // A GPS fix is stamped by the watch with its own whole-second UTC, which libambit does not keep for
 // gps-small / gps-tiny samples. Rounding the sample's UTC UP to the next whole second reproduces the
 // Moveslink2 value for 96 % of the points of the sample file and is 1 s later than it for the other 4 %.
@@ -129,6 +165,16 @@ static inline std::string utcCeilSecond(const std::string &utcStr, const ambit_d
     d.year = (uint16_t)(r.tm_year + 1900); d.month = (uint8_t)(r.tm_mon + 1); d.day = (uint8_t)r.tm_mday;
     d.hour = (uint8_t)r.tm_hour; d.minute = (uint8_t)r.tm_min; d.msec = (uint16_t)(r.tm_sec * 1000);
     return utc(d);
+}
+
+// UTC of a gps-small / gps-tiny sample: a whole second, taken as the sample's time rounded UP to the
+// next second after allowing 140 ms for the fix's processing delay. Fitted on the reference move
+// (7 440 of 7 507 points identical, vs 7 195 for plain rounding up); the exact source is the record's
+// own 16-bit time field (gps_small.utc_msec), dumped in the diagnostics until it is decoded.
+static inline std::string utcGpsSmall(long long t0ms, double t) {
+    long long s = t0ms + (long long)(t * 1000.0) - 140;
+    long long sec = (s >= 0) ? (s + 999) / 1000 : -((-s) / 1000);
+    return utcFromEpochMs(sec * 1000);
 }
 
 // Satellite state word -> the booleans Moveslink2 prints. Read off the sample file: across its 2340
@@ -202,6 +248,25 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
          "xmlns=\"http://www.suunto.com/schemas/sml\">\n";
     open(o, 1, "DeviceLog");
 
+    // One pass over the stream for what the header needs (ttff sample, first / last battery charge)
+    // and for the time base the sample UTCs are derived from.
+    int ttffSample = -1, chgFirst = -1, chgLast = -1;
+    long long t0ms = 0; bool haveT0 = false;
+    for (uint32_t i = 0; i < entry->samples_count; i++) {
+        const ambit_log_sample_t &s = entry->samples[i];
+        if (!haveT0 && s.utc_time.year != 0) { t0ms = utcEpochMs(s.utc_time) - (long long)s.time; haveT0 = true; }
+        if (s.type == ambit_log_sample_type_ttff && ttffSample < 0) ttffSample = s.u.ttff.value;
+        if (s.type == ambit_log_sample_type_periodic) {
+            for (uint8_t k = 0; k < s.u.periodic.value_count; k++) {
+                const ambit_log_sample_periodic_value_t &pv = s.u.periodic.values[k];
+                if (pv.type == ambit_log_sample_periodic_type_charge) {
+                    if (chgFirst < 0) chgFirst = pv.u.charge;
+                    chgLast = pv.u.charge;
+                }
+            }
+        }
+    }
+
     // ── Header ───────────────────────────────────────────────────────────────
     open(o, 2, "Header");
     tagNum(o, 3, "Duration", h.duration / 1000.0);
@@ -237,7 +302,10 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
     tagNum(o, 4, "MaxTime", h.altitude_max_time / 1000.0);
     tagNum(o, 4, "MinTime", h.altitude_min_time / 1000.0);
     close(o, 3, "Altitude");
-    if (h.temperature_max != 0 || h.temperature_min != 0) {      // UNVERIFIED (not in the sample file): kelvin
+    // 0x7fff / 0x8000 are the watch's "no temperature sensor reading" markers (a real Ambit3 file
+    // without a temperature log has no <Temperature> block at all).
+    if ((h.temperature_max != 0 || h.temperature_min != 0) &&
+        h.temperature_max != 0x7fff && h.temperature_min != (int16_t)0x8000) {   // UNVERIFIED shape: kelvin
         open(o, 3, "Temperature");
         tagNum(o, 4, "Max", h.temperature_max / 10.0 + 273.15);
         tagNum(o, 4, "Min", h.temperature_min / 10.0 + 273.15);
@@ -249,9 +317,13 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
     tagStr(o, 3, "Activity", h.activity_name ? h.activity_name : "");
     tagInt(o, 3, "Distance", h.distance);
     tagInt(o, 3, "LogItemCount", h.samples_count);
-    tagNum(o, 3, "TimeToFirstFix", h.first_fix_time / 1000.0);
-    tagNum(o, 3, "BatteryChargeAtStart", h.battery_start / 100.0);
-    tagNum(o, 3, "BatteryCharge", h.battery_end / 100.0);
+    // Time to first fix and battery: Moveslink2's values are NOT the ones at the generic PMEM header
+    // offsets (those gave 108 s / 1 % / 129 % on the sample move; Moveslink2 wrote 131 s / 87 % / 51 %).
+    // Best evidence: they come from the log's own stream - the ttff sample and the first / last
+    // periodic "charge" value. Falls back to the header fields only when they look sane.
+    tagNum(o, 3, "TimeToFirstFix", ttffSample >= 0 ? (double)ttffSample : h.first_fix_time / 1000.0);
+    tagNum(o, 3, "BatteryChargeAtStart", (chgFirst >= 0 ? chgFirst : (h.battery_start <= 100 ? h.battery_start : 0)) / 100.0);
+    tagNum(o, 3, "BatteryCharge", (chgLast >= 0 ? chgLast : (h.battery_end <= 100 ? h.battery_end : 0)) / 100.0);
     tagInt(o, 3, "DistanceBeforeCalibrationChange", h.distance_before_calib);
     tagStr(o, 3, "DateTime", localTime(h.date_time));
     close(o, 2, "Header");
@@ -270,10 +342,18 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
 
     // ── Samples ──────────────────────────────────────────────────────────────
     open(o, 2, "Samples");
+    std::vector<std::pair<size_t, size_t>> spans;      // output range of each input sample
+    std::string smallRaw;                               // diagnostics: gps-small "time ms:raw field"
     for (uint32_t i = 0; i < entry->samples_count; i++) {
         const ambit_log_sample_t &s = entry->samples[i];
+        const size_t spanBegin = o.size();
         const double t = s.time / 1000.0;
-        const std::string when = sampleUtc(entry, s, start_epoch);
+        // UTC of a non-GPS sample, as Moveslink2 computes it: the log's UTC origin plus the sample time
+        // in milliseconds with the double product TRUNCATED (matches all 11 620 periodic samples of
+        // the reference file, where plain rounding was 1 ms late on 53 of them).
+        const std::string when = haveT0
+            ? utcFromEpochMs(t0ms + (long long)(t * 1000.0))
+            : sampleUtc(entry, s, start_epoch);
 
         switch (s.type) {
         case ambit_log_sample_type_gps_base: {
@@ -319,8 +399,11 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
             tagNum(o, 4, "Longitude", rad(g.longitude * 1e-7));
             tagNum(o, 4, "EHPE", g.ehpe * 0.01);
             tagNum(o, 4, "Time", t);
-            tagStr(o, 4, "UTC", s.utc_time.year ? utcCeilSecond(when, s.utc_time) : when);
+            tagStr(o, 4, "UTC", haveT0 ? utcGpsSmall(t0ms, t) : when);
             tagStr(o, 4, "SampleType", "gps-small");
+#if SOMMET_SML_DIAG
+            { char b[40]; snprintf(b, sizeof b, "%u:%u ", (unsigned)s.time, (unsigned)g.utc_msec); smallRaw += b; }
+#endif
             close(o, 3, "Sample");
             break;
         }
@@ -331,7 +414,7 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
             tagNum(o, 4, "Longitude", rad(g.longitude * 1e-7));
             tagNum(o, 4, "EHPE", g.ehpe * 0.01);
             tagNum(o, 4, "Time", t);
-            tagStr(o, 4, "UTC", s.utc_time.year ? utcCeilSecond(when, s.utc_time) : when);
+            tagStr(o, 4, "UTC", haveT0 ? utcGpsSmall(t0ms, t) : when);
             tagStr(o, 4, "SampleType", "gps-tiny");
             close(o, 3, "Sample");
             break;
@@ -400,6 +483,10 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
                 close(o, 5, "Pause");
                 close(o, 4, "Events");
                 close(o, 3, "Sample");
+            } else if (s.time > h.duration + 1000) {
+                // A lap stamped after the move's own end (the watch's closing "Manual" lap when the
+                // move is saved long after it was stopped): Moveslink2 does not write it.
+                break;
             } else {                                              // laps: UNVERIFIED shape
                 const char *name = l.event_type == 0x01 ? "Manual" : l.event_type == 0x14 ? "High interval"
                                  : l.event_type == 0x15 ? "Low interval" : l.event_type == 0x16 ? "Interval" : "Other";
@@ -447,10 +534,48 @@ static inline std::string build(const ambit_log_entry_t *entry, const DeviceInfo
         default:
             break;   // ibi, ttff, altitude/cadence source, time, swimming, position, fwinfo, unknown: not written
         }
+        spans.emplace_back(spanBegin, o.size());
     }
+
+    // Moveslink2 writes the samples that share the very first timestamp (time 0: start events, first
+    // periodic and first GPS fix) in the REVERSE of the order the watch logged them. Seen on the
+    // reference move: log order Activity, Pause, periodic, gps-base -> file order gps-base, periodic,
+    // Pause, Activity. Every later tie keeps the log order.
+    {
+        size_t n = 0;
+        while (n < spans.size() && entry->samples[n].time == 0) n++;
+        if (n > 1) {
+            std::string head = o.substr(0, spans[0].first);
+            std::string lead;
+            for (size_t k = n; k-- > 0;) lead += o.substr(spans[k].first, spans[k].second - spans[k].first);
+            std::string tail = o.substr(spans[n - 1].second);
+            o = head + lead + tail;
+        }
+    }
+
     close(o, 2, "Samples");
+    if (h.raw_log_size) {                                        // UNVERIFIED source (see diagnostics)
+        open(o, 2, "parsingResume");
+        tagInt(o, 3, "binarySize", h.raw_log_size);
+        tagInt(o, 3, "parsedSize", h.raw_log_size);
+        close(o, 2, "parsingResume");
+    }
     close(o, 1, "DeviceLog");
     o += "</sml>\n";
+#if SOMMET_SML_DIAG
+    {
+        char b[200];
+        o += "<!-- sommet-diag\n";
+        snprintf(b, sizeof b, "raw_log_size=%u ttff_sample=%d charge_first=%d charge_last=%d temp_raw=%d,%d header_ttff_s=%u batt_hdr=%u,%u\n",
+                 (unsigned)h.raw_log_size, ttffSample, chgFirst, chgLast, (int)h.temperature_max, (int)h.temperature_min,
+                 (unsigned)(h.first_fix_time / 1000), (unsigned)h.battery_start, (unsigned)h.battery_end);
+        o += b;
+        o += "device_info " + dev.diag + "\n";
+        o += "raw_header=" + hexOf(h.raw_header, h.raw_header_len) + "\n";
+        o += "raw_list=" + hexOf(h.raw_list, h.raw_list_len) + "\n";
+        o += "gps_small_time_ms:raw_field=" + smallRaw + "\n-->\n";
+    }
+#endif
     return o;
 }
 
