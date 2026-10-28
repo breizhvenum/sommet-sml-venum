@@ -12,6 +12,7 @@ import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { readGpxFile, smlPathForGpx } from '../services/GpxService';
+import { loadSmlStatus } from '../services/SmlActivityNames';
 import { parseTrackPoints, computeElevationStats, extractGpxMetadata, GpxMetadata, TrackPoint } from '../services/GpxParser';
 import { t, fmtDate } from '../i18n';
 import { useV3Theme } from '../theme/v3';
@@ -676,9 +677,17 @@ export default function MapScreen() {
     }
   }
 
+  // No .sml on disk for this move: say why (what the last sync's SML step did) instead of hiding the entry.
+  async function explainNoSml() {
+    const status = await loadSmlStatus();
+    Alert.alert('SML',
+      'No SML file exists for this activity yet.\n\nRe-read it from the watch: connect the watch, then LONG-PRESS the Sync button on the home screen and choose Re-download.\n\n' +
+      (status ? `Last sync (SML step):\n${status}` : 'No SML step has run yet on this install (sync the watch first).'));
+  }
+
   async function handleShareSml() {
     setShowExportMenu(false);
-    if (!smlPath) return;
+    if (!smlPath) { await explainNoSml(); return; }
     try {
       await shareFile(smlPath, 'application/xml');
     } catch (e: any) {
@@ -688,7 +697,7 @@ export default function MapScreen() {
 
   async function handleSaveSmlToDownloads() {
     setShowExportMenu(false);
-    if (!smlPath) return;
+    if (!smlPath) { await explainNoSml(); return; }
     try {
       const fileName = smlPath.split('/').pop() ?? `${activity.id}.sml`;
       await saveToDownloads(smlPath, fileName, 'application/xml');
@@ -741,8 +750,8 @@ export default function MapScreen() {
             <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
             <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
             <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
-            {smlPath && <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />}
-            {smlPath && <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />}
+            <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
+            <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
             <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
             <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
             <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
@@ -830,8 +839,8 @@ export default function MapScreen() {
           <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
           <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
           <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
-          {smlPath && <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />}
-          {smlPath && <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />}
+          <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
+          <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
           <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
           <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
           <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
