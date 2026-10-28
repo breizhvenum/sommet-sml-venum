@@ -90,8 +90,8 @@ export const getLogFits = (): Promise<string[]> => NativeAmbit.getLogFits();
  * document into `dirPath` and returns the file paths, aligned index-for-index with the GPX array
  * ("" for a move with no SML). Files, not strings - an SML is several MB. Call right after
  * getLogs(), before any reconnect. Android only (rejects/undefined elsewhere -> []). */
-export const getLogSmlFiles = (dirPath: string): Promise<string[]> =>
-  NativeAmbit.getLogSmlFiles ? NativeAmbit.getLogSmlFiles(dirPath) : Promise.resolve([]);
+export const getLogSmlFiles = (dirPath: string, modeNames: Record<string, string> = {}): Promise<string[]> =>
+  NativeAmbit.getLogSmlFiles ? NativeAmbit.getLogSmlFiles(dirPath, JSON.stringify(modeNames)) : Promise.resolve([]);
 export const updateSgee = (path: string) => ambitConnector.updateSgee!(path);
 
 /** Experimental "mark synced" write-back (OFF by default). Marks every move read this session
