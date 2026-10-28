@@ -17,6 +17,7 @@
 #include "libambit/libambit.h"
 #include "libambit/libambit_int.h"
 #include "device_driver_ambit3_navigation.h"
+#include "sml_export.h"   // Moveslink2-compatible .sml export (see log_push_callback)
 // pmem20.h has no extern "C" guard (like protocol.h) - wrap it so its libambit_pmem20_data_write
 // (the chunked 0x0b16 raw flash write) links against the C libambit.a. Used by
 // nativeAmbitWriteLegacyRegion for the Ambit1/2 sport-mode + nav restore writes.
@@ -58,9 +59,6 @@ extern "C" int ambit3_write_route_to_watch(ambit_object_t *object,
 // ambit3_add_poi_to_watch() est déclarée dans device_driver_ambit3.c
 extern "C" int ambit3_add_poi_to_watch(ambit_object_t *object,
                                         const char *name, double lat, double lon, int type);
-
-extern "C" int ambit3_set_poi_list(ambit_object_t *object, const uint8_t *expected, size_t expected_len,
-                                   const uint8_t *new_list, size_t new_len);
 
 // ambit3_read_flash_region() / ambit3_read_poi_list_raw() / ambit3_read_object_by_id_raw()
 // sont déclarées dans device_driver_ambit3.c
@@ -141,6 +139,10 @@ static std::vector<std::string> g_log_cache;
 // move with no usable samples). Consumed by nativeAmbitGetLogAsFit. Cleared everywhere
 // g_log_cache is. See fitexport::build / log_push_callback.
 static std::vector<std::string> g_log_fit_b64;
+
+// Parallel to g_log_cache: each read move as a Moveslink2-style SML document ("" when the move has
+// no samples). Consumed by nativeAmbitGetLogAsSml. Cleared with g_log_fit_b64.
+static std::vector<std::string> g_log_sml;
 
 // Parallel to g_log_cache: each read move's own header date_time, kept so
 // nativeAmbitMarkReadLogsSynced can rebuild the minimal ambit_log_entry_t that
@@ -832,8 +834,24 @@ static void log_push_callback(void *userdata, ambit_log_entry_t *log_entry)
     std::vector<uint8_t> fit = fitexport::build(log_entry);
     g_log_fit_b64.push_back(fit.empty() ? std::string()
                                         : base64Encode(fit.data(), fit.size()));
-    LOGI("log_push_callback: log #%zu ajouté (%zu bytes gpx, %zu bytes fit)",
-         g_log_cache.size(), gpx.size(), fit.size());
+    // Moveslink2-compatible SML (best-effort, like the FIT: "" when it can't be built).
+    std::string sml;
+    if (g_device) {
+        smlexport::DeviceInfo di;
+        const char *nm = g_device->device_info.name ? g_device->device_info.name
+                                                    : g_device->device_info.model;
+        di.name   = nm ? nm : "";
+        di.serial = g_device->device_info.serial ? g_device->device_info.serial : "";
+        const uint8_t *fw = g_device->device_info.fw_version;
+        const uint8_t *hw = g_device->device_info.hw_version;
+        char b[24];
+        snprintf(b, sizeof b, "%d.%d.%d", fw[0], fw[1], fw[2] | (fw[3] << 8)); di.sw = b;
+        snprintf(b, sizeof b, "%d.%d.%d", hw[0], hw[1], hw[2] | (hw[3] << 8)); di.hw = b;
+        sml = smlexport::build(log_entry, di);
+    }
+    g_log_sml.push_back(sml);
+    LOGI("log_push_callback: log #%zu ajouté (%zu bytes gpx, %zu bytes fit, %zu bytes sml)",
+         g_log_cache.size(), gpx.size(), fit.size(), sml.size());
     // Ne pas libérer ici : device_driver_ambit.c appelle libambit_log_entry_free après push_cb
 }
 
@@ -875,6 +893,7 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitInit(
     }
     g_log_cache.clear();
     g_log_fit_b64.clear();
+    g_log_sml.clear();
     g_log_dates.clear();
 
     g_device = libambit_new_from_fd(fd, epIn, epOut,
@@ -968,6 +987,7 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitGetLogCount(
 
     g_log_cache.clear();
     g_log_fit_b64.clear();
+    g_log_sml.clear();
     g_log_dates.clear();
     int ret = libambit_log_read(g_device,
                                 log_skip_callback,
@@ -1011,16 +1031,35 @@ JNIEXPORT jstring JNICALL
 Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitGetLogAsFit(
         JNIEnv *env, jobject /* thiz */, jint index)
 {
-    // getLogFits() reads until it gets null, so one past the end is how every sync stops - not an
-    // error. It used to log "hors limites" at error level on each sync (tablet, 2026-10-23).
-    if (index >= 0 && (size_t)index == g_log_fit_b64.size())
-        return nullptr;
-    if (index < 0 || (size_t)index > g_log_fit_b64.size()) {
+    if ((size_t)index >= g_log_fit_b64.size()) {
         LOGE("nativeAmbitGetLogAsFit: index %d hors limites (cache=%zu)",
              index, g_log_fit_b64.size());
         return nullptr;
     }
     return env->NewStringUTF(g_log_fit_b64[(size_t)index].c_str());
+}
+
+/**
+ * nativeAmbitGetLogAsSml
+ *
+ * The Moveslink2-style SML document (UTF-8 bytes) of the log at `index` from g_log_sml (same
+ * index as nativeAmbitGetLogAsGpx). Empty array when this move produced no SML; null when the
+ * index is out of range. Raw bytes (not a jstring): an SML is several MB and JNI strings are
+ * modified-UTF-8. Must be called after nativeAmbitGetLogCount.
+ */
+JNIEXPORT jbyteArray JNICALL
+Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitGetLogAsSml(
+        JNIEnv *env, jobject /* thiz */, jint index)
+{
+    if (index < 0 || (size_t)index >= g_log_sml.size()) {
+        LOGE("nativeAmbitGetLogAsSml: index %d hors limites (cache=%zu)", index, g_log_sml.size());
+        return nullptr;
+    }
+    const std::string &s = g_log_sml[(size_t)index];
+    jbyteArray arr = env->NewByteArray((jsize)s.size());
+    if (arr && !s.empty())
+        env->SetByteArrayRegion(arr, 0, (jsize)s.size(), reinterpret_cast<const jbyte *>(s.data()));
+    return arr;
 }
 
 /**
@@ -1111,9 +1150,8 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitWriteRoutes(
     const jsize route_count = env->GetArrayLength(routeNames);
     const jsize total_points = env->GetArrayLength(ptLat);
     const jsize total_wpts = env->GetArrayLength(wptLat);
-    // 0 routes writes an empty navigation database: removing the last route.
-    if (route_count > AMBIT3_MAX_ROUTES) {
-        LOGE("nativeAmbitWriteRoutes: %d routes (0..%d)", route_count, AMBIT3_MAX_ROUTES);
+    if (route_count == 0 || route_count > AMBIT3_MAX_ROUTES) {
+        LOGE("nativeAmbitWriteRoutes: %d routes (1..%d)", route_count, AMBIT3_MAX_ROUTES);
         return JNI_FALSE;
     }
 
@@ -1256,29 +1294,6 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitReadRegion(
 
     std::string b64 = base64Encode(buffer.data(), buffer.size());
     return env->NewStringUTF(b64.c_str());
-}
-
-/**
- * nativeAmbitSetPoiList
- *
- * Replaces the watch's POI list (ambit3_set_poi_list in device_driver_ambit3.c). `expected` is
- * the raw 0x0b24 read the caller saved a copy of; `newList` the same shape, holding the POIs
- * to keep. Returns the POI count written, -2 if the watch's list changed since `expected`
- * (nothing written), -1 on failure.
- */
-JNIEXPORT jint JNICALL
-Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSetPoiList(
-        JNIEnv *env, jobject /* thiz */, jbyteArray expected, jbyteArray newList)
-{
-    if (!g_device) { LOGE("nativeAmbitSetPoiList: Not connected"); return -1; }
-    const jsize elen = expected ? env->GetArrayLength(expected) : 0;
-    const jsize nlen = newList ? env->GetArrayLength(newList) : 0;
-    std::vector<uint8_t> e((size_t)elen), n((size_t)nlen);
-    if (elen > 0) env->GetByteArrayRegion(expected, 0, elen, reinterpret_cast<jbyte *>(e.data()));
-    if (nlen > 0) env->GetByteArrayRegion(newList, 0, nlen, reinterpret_cast<jbyte *>(n.data()));
-    int ret = ambit3_set_poi_list(g_device, e.data(), e.size(), n.data(), n.size());
-    LOGI("nativeAmbitSetPoiList: %d", ret);
-    return (jint)ret;
 }
 
 /**
@@ -2081,23 +2096,12 @@ Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitDisconnect(
     LOGI("nativeAmbitDisconnect");
     g_log_cache.clear();
     g_log_fit_b64.clear();
+    g_log_sml.clear();
     g_log_dates.clear();
     if (g_device) {
         libambit_close(g_device);
         g_device = nullptr;
     }
-}
-
-/** Takes or releases the watch's sync lock (0x0b19 check, 0x0b1a set): libambit's
- * sync_display_show/clear. See AmbitUsbModule.syncDisplay(). */
-JNIEXPORT jboolean JNICALL
-Java_com_ambitsyncmodern_usb_AmbitUsbModule_nativeAmbitSyncDisplay(
-        JNIEnv * /* env */, jobject /* thiz */, jboolean on)
-{
-    if (!g_device) return JNI_FALSE;
-    if (on) libambit_sync_display_show(g_device);
-    else libambit_sync_display_clear(g_device);
-    return JNI_TRUE;
 }
 
 /**
@@ -2130,6 +2134,7 @@ Java_com_ambitsyncmodern_ble_AmbitBleModule_nativeAmbitBleInit(
     }
     g_log_cache.clear();
     g_log_fit_b64.clear();
+    g_log_sml.clear();
     g_log_dates.clear();
 
     JavaVM *jvm = nullptr;
