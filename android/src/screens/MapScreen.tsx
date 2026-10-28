@@ -11,7 +11,7 @@ import { getFitFile } from '../services/FitExport';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
-import { readGpxFile } from '../services/GpxService';
+import { readGpxFile, smlPathForGpx } from '../services/GpxService';
 import { parseTrackPoints, computeElevationStats, extractGpxMetadata, GpxMetadata, TrackPoint } from '../services/GpxParser';
 import { t, fmtDate } from '../i18n';
 import { useV3Theme } from '../theme/v3';
@@ -324,6 +324,14 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  // The Moveslink2-style .sml written at sync time next to the GPX (only moves read from an Ambit
+  // have one) - the two SML entries in the export menu show only when it exists.
+  const [smlPath, setSmlPath] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    smlPathForGpx(activity.gpx_path).then(p => { if (alive) setSmlPath(p); }).catch(() => { if (alive) setSmlPath(null); });
+    return () => { alive = false; };
+  }, [activity.gpx_path]);
   const [showGearPicker, setShowGearPicker] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<DownloadRegionProgress | null>(null);
 
@@ -668,6 +676,28 @@ export default function MapScreen() {
     }
   }
 
+  async function handleShareSml() {
+    setShowExportMenu(false);
+    if (!smlPath) return;
+    try {
+      await shareFile(smlPath, 'application/xml');
+    } catch (e: any) {
+      Alert.alert(t.error, t.shareError + e?.message);
+    }
+  }
+
+  async function handleSaveSmlToDownloads() {
+    setShowExportMenu(false);
+    if (!smlPath) return;
+    try {
+      const fileName = smlPath.split('/').pop() ?? `${activity.id}.sml`;
+      await saveToDownloads(smlPath, fileName, 'application/xml');
+      Alert.alert(t.savedOk, t.savedMsg(fileName));
+    } catch (e: any) {
+      Alert.alert(t.error, t.saveError + e?.message);
+    }
+  }
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -711,6 +741,8 @@ export default function MapScreen() {
             <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
             <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
             <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
+            {smlPath && <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />}
+            {smlPath && <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />}
             <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
             <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
             <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
@@ -798,6 +830,8 @@ export default function MapScreen() {
           <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
           <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
           <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
+          {smlPath && <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />}
+          {smlPath && <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />}
           <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
           <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
           <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
