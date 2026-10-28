@@ -1,3 +1,5 @@
+import { t } from '../i18n';
+import { backupCustomModes } from '../services/CustomModesBackup';
 import { NativeModules, NativeEventEmitter } from 'react-native';
 import type { DeviceConnector, DeviceInfo, SyncProgressEvent } from './DeviceConnector';
 
@@ -61,22 +63,60 @@ export const ambitConnector: DeviceConnector = {
 // from the BLE handshake, and disconnect() must leave the BLE link up (the Home
 // screen owns its lifecycle). Making that switch HERE means every existing
 // service works over BLE with zero changes to it.
+// The sport-mode image last read from the watch (or last written to it): what the watch holds,
+// so writeCustomModesRaw can back it up before changing it. See CustomModesBackup.ts.
+let lastCustomModes: string | null = null;
+
 let bleActive = false;
-export function setBleTransportActive(active: boolean) { bleActive = active; }
+// The last watch link was Bluetooth. When it has closed, a watch job falls back to USB and
+// used to fail with "Check the USB OTG cable", which misleads someone who never uses a cable.
+let lastLinkWasBle = false;
+export function setBleTransportActive(active: boolean) {
+  if (active && !bleActive) lastCustomModes = null;   // a new link, maybe another watch
+  bleActive = active;
+  if (active) lastLinkWasBle = true;
+}
 export function isBleTransportActive() { return bleActive; }
 
+// Watch jobs in progress (every screen wraps its watch work in connect()/disconnect()), so a
+// sync the watch asks for over Bluetooth waits for a POI or route write to finish instead of
+// running in the middle of it. Time-bounded in case a caller never calls disconnect().
+let watchJobs = 0;
+let watchJobSince = 0;
+const WATCH_JOB_MAX_MS = 5 * 60 * 1000;
+export function isWatchJobRunning(): boolean {
+  return watchJobs > 0 && Date.now() - watchJobSince < WATCH_JOB_MAX_MS;
+}
+
 export const connect = async (): Promise<DeviceInfo> => {
+  let info: DeviceInfo;
   if (bleActive) {
     try {
-      const info = await NativeAmbit.getDeviceInfo();
-      return { name: info?.name || 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+      const d = await NativeAmbit.getDeviceInfo();
+      info = { name: d?.name || 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
     } catch {
-      return { name: 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+      info = { name: 'Suunto Ambit', vendorId: 0x1493, productId: 0 };
+    }
+  } else {
+    try {
+      info = await ambitConnector.connect();
+      lastLinkWasBle = false;
+      lastCustomModes = null;   // a new USB session, maybe another watch: read before backing up
+    } catch (e: any) {
+      if (lastLinkWasBle && e?.code === 'AMBIT_NOT_FOUND') {
+        const err: any = new Error(t.watchBleClosedError);
+        err.code = 'BLE_CLOSED';
+        throw err;
+      }
+      throw e;
     }
   }
-  return ambitConnector.connect();
+  if (watchJobs === 0 || !isWatchJobRunning()) { watchJobs = 0; watchJobSince = Date.now(); }
+  watchJobs += 1;
+  return info;
 };
 export const disconnect = async (): Promise<void> => {
+  watchJobs = Math.max(0, watchJobs - 1);
   if (bleActive) return;           // leave the BLE link up; HomeScreen manages it
   return ambitConnector.disconnect();
 };
@@ -164,6 +204,14 @@ export function writeRoutes(routes: NativeRoute[]): Promise<boolean> {
 // what the watch itself uses. GPX re-imports (which have no Ambit type) rely on that default.
 export function addPoi(name: string, lat: number, lon: number, type: number = 17): Promise<boolean> {
   return NativeAmbit.addPoi(name, lat, lon, type);
+}
+
+/** Replaces the watch's POI list (Ambit3 family). `expectedB64` is the raw read
+ * (readPoiListRaw) a copy was saved of, `newListB64` the same shape holding the POIs to keep.
+ * Rejects with code POI_LIST_CHANGED, writing nothing, if the watch's list changed since.
+ * Resolves the POI count written. */
+export function setPoiListRaw(expectedB64: string, newListB64: string): Promise<number> {
+  return NativeAmbit.setPoiList(expectedB64, newListB64);
 }
 
 /**
@@ -340,13 +388,22 @@ export function writeSettingsRaw(dataBase64: string): Promise<boolean> {
   return NativeAmbit.writeSettingsRaw(dataBase64);
 }
 
+/** Takes (true) or releases (false) the watch's sync lock - its "Syncing" message, and what a
+ * "Sync now" pressed on the watch waits for. Best-effort, never throws. */
+export async function syncDisplay(on: boolean): Promise<boolean> {
+  if (typeof NativeAmbit.syncDisplay !== 'function') return false;
+  try { return await NativeAmbit.syncDisplay(on); } catch { return false; }
+}
+
 /**
  * Real, 2026-08-08. Reads the watch's raw 12288-byte CustomModes region (sport modes) in
  * base64 - the same region tools/custom_modes.py already reads. Decoding happens in TS
  * (CustomModesReader.ts). The watch must already be connected.
  */
-export function readCustomModesRaw(): Promise<string> {
-  return NativeAmbit.readCustomModesRaw();
+export async function readCustomModesRaw(): Promise<string> {
+  const b64: string = await NativeAmbit.readCustomModesRaw();
+  lastCustomModes = b64;
+  return b64;
 }
 
 /**
@@ -371,8 +428,21 @@ export function setDateTime(): Promise<boolean> {
  * completed without a protocol-level failure - it does NOT confirm the watch's live state
  * reflects it; the caller re-reads to check, the same "prove it" rule already established.
  */
-export function writeCustomModesRaw(dataBase64: string): Promise<boolean> {
-  return NativeAmbit.writeCustomModesRaw(dataBase64);
+export async function writeCustomModesRaw(dataBase64: string): Promise<boolean> {
+  // A copy of what the watch holds first; no copy, no write (desktop does the same).
+  const before = lastCustomModes ?? await readCustomModesRaw();
+  let serial = '';
+  try { serial = (await NativeAmbit.getDeviceInfo())?.serial ?? ''; } catch { /* name it 'unknown' */ }
+  try {
+    const path = await backupCustomModes(before, serial);
+    console.log(`[sport modes] copy saved before writing: ${path}`);
+  } catch (e: any) {
+    throw new Error(`${t.sportModesBackupFailed} (${e?.message ?? e})`);
+  }
+  const ok: boolean = await NativeAmbit.writeCustomModesRaw(dataBase64);
+  // Written or not, the watch's content is no longer known for sure: the next write reads it.
+  lastCustomModes = ok ? dataBase64 : null;
+  return ok;
 }
 
 /**
