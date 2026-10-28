@@ -81,6 +81,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // ─── Fonctions JNI (implémentées dans jni_bridge.cpp) ────────────────────
     private external fun nativeAmbitInit(fd: Int, epIn: Int, epOut: Int, vid: Int, pid: Int): Boolean
     private external fun nativeAmbitGetDeviceInfo(): String
+    private external fun nativeAmbitSyncDisplay(on: Boolean): Boolean
     private external fun nativeAmbitGetLogCount(knownDates: Array<String>): Int
     private external fun nativeAmbitGetLogAsGpx(index: Int): String?
     private external fun nativeAmbitGetLogAsFit(index: Int): String?
@@ -96,6 +97,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     private external fun nativeAmbitAddPoi(name: String, lat: Double, lon: Double, type: Int): Boolean
     private external fun nativeAmbitReadRegion(address: Long, length: Long): String?
     private external fun nativeAmbitReadPoiListRaw(): String?
+    private external fun nativeAmbitSetPoiList(expected: ByteArray, newList: ByteArray): Int
     private external fun nativeAmbitReadMemoryMapRaw(): String?
     // Firmware flasher (firmware_flash_android.c). THE ONE WRITE THAT CAN BRICK.
     private external fun nativeAmbitFwEnterBsl(): Boolean
@@ -125,9 +127,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // null = "first found", the pre-switcher behaviour. Set from JS via selectDevice(); connect()
     // prefers it, falling back to the first match if that watch is no longer attached.
     @Volatile private var selectedDeviceName: String? = null
-    // Kept so a firmware re-enumeration reopen can close the dead connection before opening the
-    // re-enumerated one (normal connect() left this local; the flasher needs to manage it).
-    private var currentConnection: android.hardware.usb.UsbDeviceConnection? = null
+    // The open USB connection, closed by disconnect() and replaced by the next connect(). connect()
+    // used to leave it local and never close it: every sync left one open until the garbage
+    // collector got to it ("A resource failed to call close", tablet 2026-10-23), and the next
+    // claimInterface(force) had to take the watch from it. The firmware reopen uses it too.
+    @Volatile private var currentConnection: android.hardware.usb.UsbDeviceConnection? = null
     private var pendingConnectPromise: Promise? = null
     private var pendingPickGpxPromise: Promise? = null
     private var pendingSaveAsPromise: Promise? = null
@@ -243,6 +247,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
 
     override fun getName() = "AmbitUsbModule"
 
+    // Required by NativeEventEmitter on the JS side (without them React Native logs a warning at
+    // every start). Events are sent through RCTDeviceEventEmitter, so there's nothing to track.
+    @ReactMethod fun addListener(eventName: String) {}
+    @ReactMethod fun removeListeners(count: Int) {}
+
     // ─── connect() ────────────────────────────────────────────────────────────
     // Détecte l'Ambit, demande la permission USB, initialise la connexion JNI.
     @ReactMethod
@@ -350,6 +359,10 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
             promise.reject("AMBIT_INIT_FAILED", "libambit initialization failed (VID=0x${vid.toString(16)} PID=0x${pid.toString(16)})")
             return
         }
+        // nativeAmbitInit already let go of the previous device, so its connection can close now.
+        val previous = currentConnection
+        currentConnection = connection
+        if (previous !== connection) try { previous?.close() } catch (_: Exception) {}
 
         val deviceName = SUUNTO_PID_NAMES[pid] ?: device.productName ?: "Suunto (0x${pid.toString(16)})"
         val info = Arguments.createMap().apply {
@@ -411,6 +424,18 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     // Retourne un tableau de strings GPX (un par log).
     // Exécuté sur un thread dédié car nativeAmbitGetLogCount() peut bloquer
     // plusieurs minutes lors de la lecture des logs depuis la montre.
+    @ReactMethod
+    fun syncDisplay(on: Boolean, promise: Promise) {
+        // Takes (true) or releases (false) the watch's sync lock: the watch shows its "Syncing"
+        // message while held, and a "Sync now" pressed on the watch only reports success once a
+        // phone has taken and released it (Suunto app, btsnoop 2026-08-09: 0x0b19/0x0b1a 1 at
+        // the start of a sync, 0x0b19/0x0b1a 0 at the end). Best-effort: resolves false on error.
+        if (!jniLoaded) { promise.resolve(false); return }
+        executor.execute {
+            try { promise.resolve(nativeAmbitSyncDisplay(on)) } catch (e: Throwable) { promise.resolve(false) }
+        }
+    }
+
     @ReactMethod
     fun getLogs(knownIds: ReadableArray, promise: Promise) {
         if (!jniLoaded) {
@@ -709,6 +734,31 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
                 else promise.reject("POI_READ_FAILED", "Failed to read POI list (see logcat AmbitJNI)")
             } catch (e: Exception) {
                 promise.reject("POI_READ_ERROR", e.message ?: "Unknown error")
+            }
+        }
+    }
+
+    // Replaces the watch's POI list: `expectedB64` is the raw POI read (readPoiListRaw) the
+    // caller saved a copy of, `newListB64` the same shape holding the POIs to keep
+    // (PoiService.removePoisFromWatch). Nothing is written if the watch's list changed since
+    // `expectedB64`. Resolves the POI count written.
+    @ReactMethod
+    fun setPoiList(expectedB64: String, newListB64: String, promise: Promise) {
+        if (!jniLoaded) {
+            promise.reject("JNI_NOT_LOADED", "Native library unavailable")
+            return
+        }
+        executor.execute {
+            try {
+                val expected = android.util.Base64.decode(expectedB64, android.util.Base64.DEFAULT)
+                val newList = android.util.Base64.decode(newListB64, android.util.Base64.DEFAULT)
+                when (val n = nativeAmbitSetPoiList(expected, newList)) {
+                    -2 -> promise.reject("POI_LIST_CHANGED", "The POIs on the watch changed since they were read")
+                    -1 -> promise.reject("POI_SET_FAILED", "Writing the POI list failed (see logcat AmbitJNI)")
+                    else -> promise.resolve(n)
+                }
+            } catch (e: Exception) {
+                promise.reject("POI_SET_ERROR", e.message ?: "Unknown error")
             }
         }
     }
@@ -1314,6 +1364,9 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun disconnect(promise: Promise) {
         if (jniLoaded) nativeAmbitDisconnect()
+        // After the native side let go of the fd (hid_close leaves it to us), not before.
+        try { currentConnection?.close() } catch (_: Exception) {}
+        currentConnection = null
         currentDevice = null
         promise.resolve(true)
     }
