@@ -458,13 +458,31 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
         }
     }
 
+    // Fills the header's empty <Activity></Activity> with the name of the sport mode the move was
+    // recorded with: the CustomModeId of the first Activity event (within the first 64 KB) looked up in
+    // the watch's {CustomModeID: name} table, as Moveslink2 does. Leaves the bytes untouched otherwise.
+    private fun withActivityName(bytes: ByteArray, names: Map<String, String>): ByteArray {
+        if (names.isEmpty()) return bytes
+        val head = String(bytes, 0, minOf(bytes.size, 65536), Charsets.UTF_8)
+        val empty = "<Activity></Activity>"
+        val at = head.indexOf(empty)
+        if (at < 0) return bytes
+        val id = Regex("<CustomModeId>(\\d+)</CustomModeId>").find(head)?.groupValues?.get(1) ?: return bytes
+        val name = names[id] ?: return bytes
+        val esc = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        val pre = head.substring(0, at).toByteArray(Charsets.UTF_8)
+        val repl = "<Activity>$esc</Activity>".toByteArray(Charsets.UTF_8)
+        val cut = pre.size + empty.toByteArray(Charsets.UTF_8).size
+        return pre + repl + bytes.copyOfRange(cut, bytes.size)
+    }
+
     // ─── getLogSmlFiles() ─────────────────────────────────────────────────────
     // Writes the Moveslink2-style SML of each log read by the most recent getLogs() into `dirPath`
     // (sml_tmp_<index>.sml) and returns the paths, aligned index-for-index with the GPX array
     // ("" for a move with no SML). Files, not strings: an SML is several MB, so it never crosses
     // the JS bridge. Reads the native cache — does NOT re-read the watch.
     @ReactMethod
-    fun getLogSmlFiles(dirPath: String, promise: Promise) {
+    fun getLogSmlFiles(dirPath: String, modeNamesJson: String?, promise: Promise) {
         if (!jniLoaded) {
             promise.reject("JNI_NOT_LOADED", "Native library unavailable")
             return
@@ -473,6 +491,11 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
             try {
                 val dir = java.io.File(dirPath)
                 if (!dir.exists()) dir.mkdirs()
+                val modeNames = HashMap<String, String>()
+                try {
+                    val js = org.json.JSONObject(modeNamesJson ?: "{}")
+                    for (k in js.keys()) modeNames[k] = js.optString(k, "")
+                } catch (e: Exception) { /* no names: the <Activity> stays empty */ }
                 val results = Arguments.createArray()
                 var i = 0
                 while (true) {
@@ -481,7 +504,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
                         results.pushString("")
                     } else {
                         val f = java.io.File(dir, "sml_tmp_$i.sml")
-                        f.writeBytes(bytes)
+                        f.writeBytes(withActivityName(bytes, modeNames))
                         results.pushString(f.absolutePath)
                     }
                     i++
