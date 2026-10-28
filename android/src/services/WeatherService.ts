@@ -27,8 +27,13 @@ export interface WeatherData {
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 // Same real "no location configured yet" placeholder as weatherservice.h's own
 // m_latitude/m_longitude defaults - roughly central Europe, not 0,0 (the Gulf of Guinea).
-const DEFAULT_LAT = 48.85;
-const DEFAULT_LON = 2.35;
+// Default place: La Grande-Paroisse (77130). The IP lookup guessed the operator's gateway city
+// (Saint-Denis) instead, so the default is now a fixed place that the user can change in
+// Settings -> Weather (the choice is saved and survives a restart).
+const DEFAULT_LAT = 48.3862;
+const DEFAULT_LON = 2.9007;
+const DEFAULT_PLACE = 'La Grande-Paroisse';
+const LOCATION_PREF_KEY = 'weather_location_pref_v1';
 
 export async function fetchWeather(latitude: number, longitude: number): Promise<WeatherData | null> {
   // URLSearchParams + string concat, not `new URL()` - matches ApiStrava.ts's
@@ -165,9 +170,31 @@ export interface WeatherLocation {
   manual: boolean;
 }
 let currentLocation: WeatherLocation = {
-  latitude: DEFAULT_LAT, longitude: DEFAULT_LON, placeName: '', manual: false,
+  latitude: DEFAULT_LAT, longitude: DEFAULT_LON, placeName: DEFAULT_PLACE, manual: true,
 };
 let detectedOnce = false;
+
+// The saved choice: {mode:'manual', lat, lon} or {mode:'ip'}. AsyncStorage is required lazily and
+// every access is guarded, so a missing storage never breaks the weather (it just isn't saved).
+async function savePref(pref: { mode: 'manual'; lat: number; lon: number } | { mode: 'ip' }): Promise<void> {
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    await AS.setItem(LOCATION_PREF_KEY, JSON.stringify(pref));
+  } catch { /* not saved */ }
+}
+/** Applies the saved choice (once per start) and says whether the IP lookup is wanted. */
+async function loadPref(): Promise<'ip' | 'manual'> {
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    const raw = await AS.getItem(LOCATION_PREF_KEY);
+    const p = raw ? JSON.parse(raw) : null;
+    if (p?.mode === 'ip') return 'ip';
+    if (p?.mode === 'manual' && Number.isFinite(p.lat) && Number.isFinite(p.lon)) {
+      publishLocation({ latitude: p.lat, longitude: p.lon, placeName: '', manual: true });
+    }
+  } catch { /* keep the default place */ }
+  return 'manual';
+}
 const locationListeners = new Set<(l: WeatherLocation) => void>();
 
 function publishLocation(next: WeatherLocation) {
@@ -192,6 +219,7 @@ export function useWeatherLocation(): WeatherLocation {
 /** Settings -> Weather -> "This phone (IP-based)": detect the location from the IP again. */
 export async function locateByIp(): Promise<void> {
   detectedOnce = true;
+  savePref({ mode: 'ip' });
   const loc = await detectLocationFromIp();
   const next = loc ?? { latitude: currentLocation.latitude, longitude: currentLocation.longitude };
   publishLocation({ ...next, placeName: currentLocation.placeName, manual: false });
@@ -200,6 +228,7 @@ export async function locateByIp(): Promise<void> {
 /** Settings -> Weather -> Manual: use these coordinates. */
 export function setManualLocation(latitude: number, longitude: number): void {
   detectedOnce = true;
+  savePref({ mode: 'manual', lat: latitude, lon: longitude });
   publishLocation({ latitude, longitude, placeName: '', manual: true });
 }
 
@@ -242,8 +271,13 @@ export function useWeather() {
       refresh();
     };
     locationListeners.add(onLocation);
-    if (!detectedOnce) locateByIp().then(() => { if (!fetched) refresh(); });
-    else refresh();
+    if (!detectedOnce) {
+      detectedOnce = true;
+      loadPref().then(mode => {
+        if (mode === 'ip') locateByIp().then(() => { if (!fetched) refresh(); });
+        else if (!fetched) refresh();
+      });
+    } else refresh();
     const iv = setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => { clearInterval(iv); locationListeners.delete(onLocation); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
