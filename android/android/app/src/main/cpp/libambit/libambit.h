@@ -311,7 +311,7 @@ typedef struct ambit_log_sample_periodic_value_s {
 typedef struct ambit_log_gps_satellite_s {
     uint8_t sv;
     uint8_t snr;
-    uint8_t state;
+    uint16_t state;
 } ambit_log_gps_satellite_t;
 
 typedef struct ambit_log_sample_s {

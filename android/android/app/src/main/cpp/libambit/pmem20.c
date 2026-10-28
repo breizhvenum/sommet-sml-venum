@@ -924,8 +924,11 @@ static int parse_sample(uint8_t *buf, size_t offset, uint8_t **spec, ambit_log_e
             log_entry->samples[*sample_count].u.gps_base.satellites = calloc((sample_len - 40)/4, sizeof(ambit_log_gps_satellite_t));
             for (i=0; i<(sample_len - 40)/4; i++) {
                 log_entry->samples[*sample_count].u.gps_base.satellites[i].sv = read8inc(buf, &int_offset);
-                log_entry->samples[*sample_count].u.gps_base.satellites[i].state = read8inc(buf, &int_offset);
-                int_offset += 1;
+                /* 4-byte record: sv, state low byte, state high byte, snr. The high byte used to be
+                 * skipped; Moveslink2 writes the full 16-bit word ("State 0x82bf") in the SML. */
+                uint8_t state_lo = read8inc(buf, &int_offset);
+                uint8_t state_hi = read8inc(buf, &int_offset);
+                log_entry->samples[*sample_count].u.gps_base.satellites[i].state = (uint16_t)(state_lo | (state_hi << 8));
                 log_entry->samples[*sample_count].u.gps_base.satellites[i].snr = read8inc(buf, &int_offset);
             }
             log_entry->samples[*sample_count].u.gps_base.satellites_count = (sample_len - 40)/4;
