@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, Modal, useWindowDimensions } from 'react-native';
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
+import { convertSmlFileToGpx } from '../services/SmlToGpx';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { uploadFitToStrava, isAuthenticated as stravaIsAuthenticated } from '../services/ApiStrava';
 import { getRunalyzeApiKey, uploadFitToRunalyze } from '../services/ApiRunalyze';
@@ -24,9 +25,6 @@ import { LEAFLET_STYLE_TAG, LEAFLET_INJECT_JS } from '../services/leafletInline'
 import { writeMapPage, mapWebViewFileProps } from '../services/mapWebView';
 import { getCachedPois } from '../services/PoiService';
 import Icon from '../components/ui/Icon';
-import { weatherLabel } from '../components/WeatherCard';
-import { weatherEmoji } from '../services/WeatherService';
-import { fetchActivityWeather, ActivityWeather } from '../services/ActivityWeather';
 import ActivityPanel from '../components/activity/ActivityPanel';
 
 type Route = RouteProp<RootStackParamList, 'Map'>;
@@ -396,18 +394,6 @@ export default function MapScreen() {
 
   const stats = useMemo(() => computeElevationStats(points), [points]);
 
-  // The weather it was done in (André, 2026-09-27) - same line as the desktop's ActivityWeather.qml.
-  const [weather, setWeather] = useState<ActivityWeather | null>(null);
-  useEffect(() => {
-    let alive = true;
-    setWeather(null);
-    if (points.length === 0) return;
-    const track = points.map(p => ({ lat: p.latitude, lon: p.longitude }));
-    fetchActivityWeather(activity.id, Date.parse(activity.date), activity.duration_s, track)
-      .then(w => { if (alive) setWeather(w); });
-    return () => { alive = false; };
-  }, [points, activity.id, activity.date, activity.duration_s]);
-
   // Determine mode (time vs distance) based on whether timestamps exist
   const replayMode = useMemo(() => {
     if (points.length < 2) return 'time';
@@ -685,6 +671,36 @@ export default function MapScreen() {
       (status ? `Last sync (SML step):\n${status}` : 'No SML step has run yet on this install (sync the watch first).'));
   }
 
+  // GPX built from the activity's SML (the app's own GPX/FIT exports were removed from the menu).
+  async function makeGpxFromSml(): Promise<{ path: string; fileName: string } | null> {
+    if (!smlPath) { await explainNoSml(); return null; }
+    const base = (smlPath.split('/').pop() ?? `${activity.id}.sml`).replace(/\.sml$/i, '');
+    const { path } = await convertSmlFileToGpx(smlPath, base);
+    return { path, fileName: `${base}.gpx` };
+  }
+
+  async function handleShareGpxFromSml() {
+    setShowExportMenu(false);
+    try {
+      const g = await makeGpxFromSml();
+      if (g) await shareFile(g.path, 'application/gpx+xml');
+    } catch (e: any) {
+      Alert.alert(t.error, t.shareError + e?.message);
+    }
+  }
+
+  async function handleSaveGpxFromSmlToDownloads() {
+    setShowExportMenu(false);
+    try {
+      const g = await makeGpxFromSml();
+      if (!g) return;
+      await saveToDownloads(g.path, g.fileName, 'application/gpx+xml');
+      Alert.alert(t.savedOk, t.savedMsg(g.fileName));
+    } catch (e: any) {
+      Alert.alert(t.error, t.saveError + e?.message);
+    }
+  }
+
   async function handleShareSml() {
     setShowExportMenu(false);
     if (!smlPath) { await explainNoSml(); return; }
@@ -707,6 +723,30 @@ export default function MapScreen() {
       Alert.alert(t.error, t.saveError + e?.message);
     }
   }
+
+  // The export menu as a full-screen sheet over the screen (a Modal): it used to pop up inside the
+  // map area, which is shorter than the 10 entries, so the top ones were cut off. Scrolls if the
+  // screen is short; a tap outside closes it.
+  const exportSheet = (
+    <Modal transparent visible animationType="fade" onRequestClose={() => setShowExportMenu(false)}>
+      <TouchableOpacity
+        activeOpacity={1}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
+        onPress={() => setShowExportMenu(false)}
+      >
+        <View style={{ backgroundColor: theme.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: Math.round(win.height * 0.85), overflow: 'hidden' }}>
+          <ScrollView>
+            <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
+            <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
+            <ExportMenuItem styles={styles} label={t.shareGpxFromSml} onPress={handleShareGpxFromSml} />
+            <ExportMenuItem styles={styles} label={t.saveGpxFromSmlDownloads} onPress={handleSaveGpxFromSmlToDownloads} />
+            <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
+            <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
 
   if (loading) {
     return (
@@ -745,20 +785,7 @@ export default function MapScreen() {
             : <Icon name="upload" size={22} color={theme.primary} />}
         </TouchableOpacity>
 
-        {showExportMenu && (
-          <View style={styles.exportMenu}>
-            <ExportMenuItem styles={styles} label={t.shareGpx}       onPress={handleShareGpx} />
-            <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
-            <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
-            <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
-            <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
-            <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
-            <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
-            <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
-            <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
-            <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
-          </View>
-        )}
+        {showExportMenu && exportSheet}
 
         <GearPicker
           visible={showGearPicker}
@@ -797,13 +824,7 @@ export default function MapScreen() {
       />)}
 
       {/* ── Weather overlay ── (the numbers moved into the activity panel's Overview) */}
-      {weather && (
-        <View style={styles.overlay}>
-          <Text style={styles.weatherLine} numberOfLines={2}>
-            {weatherLine(weather)}
-          </Text>
-        </View>
-      )}
+      {/* The weather banner over the map was removed (it hid the track); the figures stay in the Overview. */}
 
       {/* ── Bouton téléchargement hors-ligne ── */}
       <TouchableOpacity
@@ -834,20 +855,7 @@ export default function MapScreen() {
       </TouchableOpacity>
 
       {/* ── Menu d'export ── */}
-      {showExportMenu && (
-        <View style={styles.exportMenu}>
-          <ExportMenuItem styles={styles} label={t.shareGpx}       onPress={handleShareGpx} />
-          <ExportMenuItem styles={styles} label={t.saveDownloads}  onPress={handleSaveToDownloads} />
-          <ExportMenuItem styles={styles} label={t.shareFit}       onPress={handleShareFit} />
-          <ExportMenuItem styles={styles} label={t.saveFitDownloads} onPress={handleSaveFitToDownloads} />
-          <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
-          <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
-          <ExportMenuItem styles={styles} label={t.uploadRunalyze} onPress={handleUploadRunalyze} />
-          <ExportMenuItem styles={styles} label={t.uploadIntervals} onPress={handleUploadIntervals} />
-          <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
-          <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
-        </View>
-      )}
+      {showExportMenu && exportSheet}
       </View>
 
       <GearPicker
@@ -902,15 +910,6 @@ export default function MapScreen() {
 
 // ─── Helpers Components ───────────────────────────────────────────────────────
 
-function weatherLine(w: ActivityWeather): string {
-  const lo = Math.round(w.tempMin), hi = Math.round(w.tempMax);
-  const temp = lo === hi ? `${hi} °C` : `${lo}–${hi} °C`;
-  const rain = w.rainMm >= 0.2 ? ` · ${w.rainMm.toFixed(1)} mm rain` : '';
-  const pct = (x?: number) => Math.round((x ?? 0) * 100);
-  const share = w.headShare !== undefined
-    ? ` · headwind ${pct(w.headShare)}% · crosswind ${pct(w.crossShare)}% · tailwind ${pct(w.tailShare)}%` : '';
-  return `${weatherEmoji(w.code)} ${weatherLabel(w.code)} · ${temp}${rain} · 💨 ${Math.round(w.windKmh)} km/h ${w.windCompass} (gusts ${Math.round(w.gustKmh)})${share}`;
-}
 
 
 function ExportMenuItem({ styles, label, onPress }: { styles: ReturnType<typeof createStyles>; label: string; onPress: () => void }) {
