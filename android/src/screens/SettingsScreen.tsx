@@ -32,7 +32,7 @@ import { CREDITS } from '../legal/credits';
 import {
   getRunalyzeApiKey, saveRunalyzeApiKey, removeRunalyzeApiKey,
 } from '../services/ApiRunalyze';
-import { getBdvCredentials, saveBdvCredentials, removeBdvCredentials, testBdvConnection } from '../services/ApiBaseDeVitesse';
+import { getBdvCredentials, saveBdvCredentials, removeBdvCredentials, testBdvConnection, loginAndListSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
 import {
   getIntervalsIcuCredentials, saveIntervalsIcuCredentials, removeIntervalsIcuCredentials,
 } from '../services/ApiIntervalsIcu';
@@ -64,7 +64,7 @@ import { ScaleSetupModal } from '../components/ScaleSetupModal';
 import {
   getMapProvider, setMapProvider, MapProvider, MAP_PROVIDER_LABELS,
 } from '../services/MapProviderService';
-import { detectAttachedDeviceType } from '../native/AmbitUsbModule';
+import { detectAttachedDeviceType, pickGpxFile } from '../native/AmbitUsbModule';
 import { getTileCacheSizeBytes, clearTileCache } from '../services/TileCache';
 import { t } from '../i18n';
 import { APP_VERSION } from '../config/version';
@@ -372,6 +372,32 @@ export default function SettingsScreen() {
   async function handleRemoveBdv() {
     await removeBdvCredentials();
     setBdvSaved(false); setBdvLogin(''); setBdvPassword(''); setBdvKey(''); setBdvOutput('');
+  }
+  const [bdvFile, setBdvFile] = useState<string | null>(null);
+  const [bdvSupports, setBdvSupports] = useState<{ idUser: string; supports: BdvSupport[] } | null>(null);
+  async function handlePickBdvFile() {
+    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
+    setBdvBusy(true); setBdvOutput('');
+    try {
+      const path = await pickGpxFile();
+      setBdvFile(path);
+      const r = await loginAndListSupports({ login: bdvLogin, password: bdvPassword, key: bdvKey });
+      setBdvSupports(r);
+      setBdvOutput(`Fichier : ${path.split('/').pop()}\nChoisis le support pour l'envoyer.`);
+    } catch (e: any) {
+      if (!String(e?.code ?? e?.message).includes('CANCEL')) setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
+    } finally { setBdvBusy(false); }
+  }
+  async function handleSendBdvFile(supportId: number) {
+    if (!bdvFile || !bdvSupports) return;
+    setBdvBusy(true); setBdvOutput('Envoi en cours…');
+    try {
+      const r = await uploadSessionToBdv({ login: bdvLogin, password: bdvPassword, key: bdvKey }, bdvSupports.idUser, supportId, bdvFile);
+      setBdvOutput(`Envoi → HTTP ${r.status}\n${r.text.slice(0, 800)}`);
+      setBdvSupports(null); setBdvFile(null);
+    } catch (e: any) {
+      setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
+    } finally { setBdvBusy(false); }
   }
   async function handleTestBdv() {
     if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
@@ -793,6 +819,10 @@ export default function SettingsScreen() {
                 <Button label={t.deleteBtn} icon="delete" variant="outline" tone="alert" grow={false} onPress={handleRemoveBdv} />
               )}
             </View>
+            <Button label="Envoyer un fichier…" variant="outline" loading={bdvBusy} onPress={handlePickBdvFile} />
+            {!!bdvSupports && bdvSupports.supports.map(sp => (
+              <Button key={sp.id} label={sp.name} variant="text" onPress={() => handleSendBdvFile(sp.id)} />
+            ))}
             {!!bdvOutput && <Text selectable style={styles.sectionDesc}>{bdvOutput}</Text>}
             <Button label={t.closeBtn} variant="text" onPress={() => setOpenConnection(null)} style={{ marginTop: 12 }} />
           </View>
