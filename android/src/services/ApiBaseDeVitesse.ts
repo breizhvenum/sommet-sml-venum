@@ -1,4 +1,5 @@
 import * as Keychain from 'react-native-keychain';
+import RNFS from 'react-native-fs';
 
 const KEYCHAIN_SERVICE = 'ambitvenum_basedevitesse';
 const LOGIN_URL = 'https://traitementbdv.com/api/login.php';
@@ -99,6 +100,18 @@ export async function testBdvConnection(c: BdvCredentials): Promise<BdvTestResul
   return res;
 }
 
+/** The site checks the file extension (it answered "extension non sml"): name the upload .sml / .gpx
+ *  from the real content, whatever the picked copy was called (a.sml.xml, no extension...). */
+async function uploadName(filePath: string): Promise<string> {
+  let base = (filePath.split('/').pop() ?? 'session').replace(/\.(xml|txt)$/i, '');
+  if (/\.(sml|gpx|fit)$/i.test(base)) return base.replace(/\.(sml|gpx|fit)$/i, m => m.toLowerCase());
+  base = base.replace(/\.[^.]*$/, '') || 'session';
+  let head = '';
+  try { head = (await RNFS.read(filePath.replace(/^file:\/\//, ''), 400, 0, 'utf8')).toLowerCase(); } catch {}
+  if (head.includes('<gpx')) return `${base}.gpx`;
+  return `${base}.sml`;
+}
+
 const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
 
 export interface BdvSupport { id: number; name: string }
@@ -137,7 +150,7 @@ export async function uploadSessionToBdv(
   fd.append('support', String(supportId));
   fd.append('Commentaires', comment);
   fd.append('key', c.key.trim());
-  const name = filePath.split('/').pop() ?? 'session.sml';
+  const name = await uploadName(filePath);
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
   const text = await r.text();
