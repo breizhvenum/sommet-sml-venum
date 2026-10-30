@@ -154,7 +154,7 @@ export async function uploadSessionToBdv(
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
   const text = await r.text();
-  return { status: r.status, text, summary: summarizeBdvAnswer(r.status, r.url, text) };
+  return { status: r.status, text, summary: `Fichier envoyé : ${name} (build envoi v3)\n` + summarizeBdvAnswer(r.status, r.url, text) };
 }
 
 /** Readable digest of the server answer: final URL, session id if any, then the page text without tags. */
