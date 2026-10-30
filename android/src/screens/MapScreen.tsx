@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, Modal, useWindowDimensions } from 'react-native';
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
+import { getBdvCredentials, loginAndListSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
 import { convertSmlFileToGpx } from '../services/SmlToGpx';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { uploadFitToStrava, isAuthenticated as stravaIsAuthenticated } from '../services/ApiStrava';
@@ -323,6 +324,8 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [bdvPicker, setBdvPicker] = useState<{ idUser: string; supports: BdvSupport[] } | null>(null);
+  const [bdvSending, setBdvSending] = useState(false);
   // The Moveslink2-style .sml written at sync time next to the GPX (only moves read from an Ambit
   // have one) - the two SML entries in the export menu show only when it exists.
   const [smlPath, setSmlPath] = useState<string | null>(null);
@@ -724,6 +727,50 @@ export default function MapScreen() {
     }
   }
 
+  async function handleUploadBdv() {
+    setShowExportMenu(false);
+    if (!smlPath) { await explainNoSml(); return; }
+    try {
+      const c = await getBdvCredentials();
+      if (!c) { Alert.alert('basedevitesse.com', 'Renseigne d\'abord tes identifiants dans Réglages → basedevitesse.com.'); return; }
+      setBdvSending(true);
+      const r = await loginAndListSupports(c);
+      setBdvPicker(r);
+    } catch (e: any) {
+      Alert.alert('basedevitesse.com', e?.message ?? String(e));
+    } finally { setBdvSending(false); }
+  }
+
+  async function sendToBdv(supportId: number) {
+    const picker = bdvPicker;
+    setBdvPicker(null);
+    if (!picker || !smlPath) return;
+    try {
+      setBdvSending(true);
+      const c = await getBdvCredentials();
+      if (!c) return;
+      const r = await uploadSessionToBdv(c, picker.idUser, supportId, smlPath);
+      Alert.alert('basedevitesse.com', `HTTP ${r.status}\n${r.text.slice(0, 500)}`);
+    } catch (e: any) {
+      Alert.alert('basedevitesse.com', e?.message ?? String(e));
+    } finally { setBdvSending(false); }
+  }
+
+  const bdvPickerSheet = bdvPicker ? (
+    <Modal transparent visible animationType="fade" onRequestClose={() => setBdvPicker(null)}>
+      <TouchableOpacity activeOpacity={1} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setBdvPicker(null)}>
+        <View style={{ backgroundColor: theme.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: Math.round(win.height * 0.85), overflow: 'hidden' }}>
+          <Text style={{ color: theme.text, fontWeight: '600', padding: 16 }}>Support utilisé</Text>
+          <ScrollView>
+            {bdvPicker.supports.map(sp => (
+              <ExportMenuItem key={sp.id} styles={styles} label={sp.name} onPress={() => sendToBdv(sp.id)} />
+            ))}
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  ) : null;
+
   // The export menu as a full-screen sheet over the screen (a Modal): it used to pop up inside the
   // map area, which is shorter than the 10 entries, so the top ones were cut off. Scrolls if the
   // screen is short; a tap outside closes it.
@@ -740,6 +787,7 @@ export default function MapScreen() {
             <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
             <ExportMenuItem styles={styles} label={t.shareGpxFromSml} onPress={handleShareGpxFromSml} />
             <ExportMenuItem styles={styles} label={t.saveGpxFromSmlDownloads} onPress={handleSaveGpxFromSmlToDownloads} />
+            <ExportMenuItem styles={styles} label="Envoyer à basedevitesse.com (SML)" onPress={handleUploadBdv} />
             <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
             <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
           </ScrollView>
@@ -786,6 +834,8 @@ export default function MapScreen() {
         </TouchableOpacity>
 
         {showExportMenu && exportSheet}
+        {bdvPickerSheet}
+        {bdvSending && <ActivityIndicator style={{ position: 'absolute', top: 12, alignSelf: 'center' }} color={theme.text} />}
 
         <GearPicker
           visible={showGearPicker}

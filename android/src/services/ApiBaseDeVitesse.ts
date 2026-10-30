@@ -98,3 +98,47 @@ export async function testBdvConnection(c: BdvCredentials): Promise<BdvTestResul
   }
   return res;
 }
+
+const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
+
+export interface BdvSupport { id: number; name: string }
+
+/** Login then supports list (for the picker). Throws a readable Error on failure. */
+export async function loginAndListSupports(c: BdvCredentials): Promise<{ idUser: string; supports: BdvSupport[] }> {
+  const l = await post(LOGIN_URL, { login: c.login.trim(), password: c.password, key: c.key.trim() });
+  const idUser = extractIdUser(l.text);
+  if (!idUser) throw new Error(`Connexion refusée (HTTP ${l.status}) : ${l.text.slice(0, 200)}`);
+  const r = await fetch(`${SUPPORTS_URL}?IDuser=${encodeURIComponent(idUser)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form({ key: c.key.trim() }),
+  });
+  const txt = await r.text();
+  let arr: any[] = [];
+  try { arr = JSON.parse(txt); } catch { throw new Error(`Liste des supports illisible : ${txt.slice(0, 200)}`); }
+  const supports = arr
+    .filter(x => x && x.IDsupport != null && x.NomSupport)
+    .map(x => ({ id: Number(x.IDsupport), name: String(x.NomSupport).trim() }));
+  return { idUser, supports };
+}
+
+/** Send one session file (.sml/.gpx/...) as the multipart field "gps". Returns the raw server answer. */
+export async function uploadSessionToBdv(
+  c: BdvCredentials,
+  idUser: string,
+  supportId: number,
+  filePath: string,
+  comment = '',
+): Promise<{ status: number; text: string }> {
+  const fd = new FormData();
+  fd.append('action', 'ajoutSessionDirect');
+  fd.append('IDuser', String(idUser));
+  fd.append('equipage', '0');
+  fd.append('support', String(supportId));
+  fd.append('Commentaires', comment);
+  fd.append('key', c.key.trim());
+  const name = filePath.split('/').pop() ?? 'session.sml';
+  fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
+  const r = await fetch(ADD_URL, { method: 'POST', body: fd });
+  return { status: r.status, text: await r.text() };
+}
