@@ -129,7 +129,7 @@ export async function uploadSessionToBdv(
   supportId: number,
   filePath: string,
   comment = '',
-): Promise<{ status: number; text: string }> {
+): Promise<{ status: number; text: string; summary: string }> {
   const fd = new FormData();
   fd.append('action', 'ajoutSessionDirect');
   fd.append('IDuser', String(idUser));
@@ -140,5 +140,19 @@ export async function uploadSessionToBdv(
   const name = filePath.split('/').pop() ?? 'session.sml';
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
-  return { status: r.status, text: await r.text() };
+  const text = await r.text();
+  return { status: r.status, text, summary: summarizeBdvAnswer(r.status, r.url, text) };
+}
+
+/** Readable digest of the server answer: final URL, session id if any, then the page text without tags. */
+export function summarizeBdvAnswer(status: number, url: string | undefined, html: string): string {
+  const id = (html.match(/IDresultat=(\d+)/) || (url || '').match(/IDresultat=(\d+)/) || [])[1];
+  const plain = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `HTTP ${status}\nURL finale : ${url ?? '?'}\nIDresultat : ${id ?? 'aucun'}\n\n${plain.slice(0, 700)}`;
 }

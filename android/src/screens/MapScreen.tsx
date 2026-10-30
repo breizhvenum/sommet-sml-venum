@@ -750,7 +750,7 @@ export default function MapScreen() {
       const c = await getBdvCredentials();
       if (!c) return;
       const r = await uploadSessionToBdv(c, picker.idUser, supportId, smlPath);
-      Alert.alert('basedevitesse.com', `HTTP ${r.status}\n${r.text.slice(0, 500)}`);
+      Alert.alert('basedevitesse.com', r.summary);
     } catch (e: any) {
       Alert.alert('basedevitesse.com', e?.message ?? String(e));
     } finally { setBdvSending(false); }

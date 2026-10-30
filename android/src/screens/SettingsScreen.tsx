@@ -393,7 +393,7 @@ export default function SettingsScreen() {
     setBdvBusy(true); setBdvOutput('Envoi en cours…');
     try {
       const r = await uploadSessionToBdv({ login: bdvLogin, password: bdvPassword, key: bdvKey }, bdvSupports.idUser, supportId, bdvFile);
-      setBdvOutput(`Envoi → HTTP ${r.status}\n${r.text.slice(0, 800)}`);
+      setBdvOutput(`Envoi →\n${r.summary}`);
       setBdvSupports(null); setBdvFile(null);
     } catch (e: any) {
       setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
