@@ -32,6 +32,7 @@ import { CREDITS } from '../legal/credits';
 import {
   getRunalyzeApiKey, saveRunalyzeApiKey, removeRunalyzeApiKey,
 } from '../services/ApiRunalyze';
+import { getBdvCredentials, saveBdvCredentials, removeBdvCredentials, testBdvConnection } from '../services/ApiBaseDeVitesse';
 import {
   getIntervalsIcuCredentials, saveIntervalsIcuCredentials, removeIntervalsIcuCredentials,
 } from '../services/ApiIntervalsIcu';
@@ -356,8 +357,36 @@ export default function SettingsScreen() {
   // a status-dot row per service, tap-to-open a Dialog with that service's own form - not
   // four separate always-expanded full-height sections like this screen had. Same real
   // handlers/state above, this only changes which one is visible at a time.
+  const [bdvLogin, setBdvLogin] = useState('');
+  const [bdvPassword, setBdvPassword] = useState('');
+  const [bdvKey, setBdvKey] = useState('');
+  const [bdvSaved, setBdvSaved] = useState(false);
+  const [bdvBusy, setBdvBusy] = useState(false);
+  const [bdvOutput, setBdvOutput] = useState('');
+  async function handleSaveBdv() {
+    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
+    await saveBdvCredentials({ login: bdvLogin, password: bdvPassword, key: bdvKey });
+    setBdvSaved(true);
+    setBdvOutput('Identifiants enregistrés.');
+  }
+  async function handleRemoveBdv() {
+    await removeBdvCredentials();
+    setBdvSaved(false); setBdvLogin(''); setBdvPassword(''); setBdvKey(''); setBdvOutput('');
+  }
+  async function handleTestBdv() {
+    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
+    setBdvBusy(true); setBdvOutput('Test en cours…');
+    try {
+      const r = await testBdvConnection({ login: bdvLogin, password: bdvPassword, key: bdvKey });
+      let out = `login.php → HTTP ${r.loginStatus}\n${r.loginRaw.slice(0, 600)}\n\nIDuser: ${r.idUser ?? 'non trouvé'}`;
+      if (r.supportsRaw !== undefined) out += `\n\nlisteSupports.php → HTTP ${r.supportsStatus}\n${r.supportsRaw.slice(0, 1500)}`;
+      setBdvOutput(out);
+    } catch (e: any) {
+      setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
+    } finally { setBdvBusy(false); }
+  }
   const [openConnection, setOpenConnection] = useState<
-    'strava' | 'runalyze' | 'intervals' | null
+    'strava' | 'runalyze' | 'intervals' | 'bdv' | null
   >(null);
 
   const [mapProvider, setMapProviderState] = useState<MapProvider>('ign');
@@ -421,6 +450,10 @@ export default function SettingsScreen() {
       setSavedKey(k);
       setRunalyzeKey(k ?? '');
     });
+    getBdvCredentials().then(c => {
+      setBdvSaved(!!c);
+      if (c) { setBdvLogin(c.login); setBdvPassword(c.password); setBdvKey(c.key); }
+    }).catch(() => {});
     stravaIsAuth().then(setStravaAuth);
     getScaleAddress().then(setScaleAddr);
     getSendWeighIns().then(setSendWeighInsState);
@@ -688,6 +721,13 @@ export default function SettingsScreen() {
           onPress={() => setOpenConnection('intervals')}
         />
         <ConnectionRow
+          name="basedevitesse.com"
+          connected={bdvSaved}
+          status={bdvSaved ? 'connected' : 'not connected'}
+          action={bdvSaved ? 'Manage' : 'Set up'}
+          onPress={() => setOpenConnection('bdv')}
+        />
+        <ConnectionRow
           name={t.runalyzeSection}
           connected={!!savedKey}
           status={savedKey ? 'connected' : 'not connected'}
@@ -733,6 +773,27 @@ export default function SettingsScreen() {
                 <Button label={t.connect} variant="filled" onPress={handleStravaConnect} />
               </View>
             )}
+            <Button label={t.closeBtn} variant="text" onPress={() => setOpenConnection(null)} style={{ marginTop: 12 }} />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={openConnection === 'bdv'} animationType="slide" transparent onRequestClose={() => setOpenConnection(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.cardTitle}>basedevitesse.com</Text>
+            <Text style={styles.sectionDesc}>Identifiant, mot de passe et clé API fournie par basedevitesse.com (stockés de façon sécurisée sur le téléphone).</Text>
+            <FieldRow icon="person" value={bdvLogin} onChangeText={setBdvLogin} placeholder="Identifiant" autoCapitalize="none" autoCorrect={false} />
+            <FieldRow icon="key" value={bdvPassword} onChangeText={setBdvPassword} placeholder="Mot de passe" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+            <FieldRow icon="key" value={bdvKey} onChangeText={setBdvKey} placeholder="Clé API" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+            <View style={styles.row}>
+              <Button label={t.saveBtn} variant="filled" onPress={handleSaveBdv} />
+              <Button label="Tester la connexion" variant="outline" loading={bdvBusy} onPress={handleTestBdv} />
+              {bdvSaved && (
+                <Button label={t.deleteBtn} icon="delete" variant="outline" tone="alert" grow={false} onPress={handleRemoveBdv} />
+              )}
+            </View>
+            {!!bdvOutput && <Text selectable style={styles.sectionDesc}>{bdvOutput}</Text>}
             <Button label={t.closeBtn} variant="text" onPress={() => setOpenConnection(null)} style={{ marginTop: 12 }} />
           </View>
         </View>
