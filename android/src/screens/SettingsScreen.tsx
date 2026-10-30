@@ -32,6 +32,7 @@ import { CREDITS } from '../legal/credits';
 import {
   getRunalyzeApiKey, saveRunalyzeApiKey, removeRunalyzeApiKey,
 } from '../services/ApiRunalyze';
+import { importSmlActivity } from '../services/ImportSml';
 import { getBdvCredentials, saveBdvCredentials, removeBdvCredentials, testBdvConnection, loginAndListSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
 import {
   getIntervalsIcuCredentials, saveIntervalsIcuCredentials, removeIntervalsIcuCredentials,
@@ -372,6 +373,19 @@ export default function SettingsScreen() {
   async function handleRemoveBdv() {
     await removeBdvCredentials();
     setBdvSaved(false); setBdvLogin(''); setBdvPassword(''); setBdvKey(''); setBdvOutput('');
+  }
+  const [importMsg, setImportMsg] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+  async function handleImportSml() {
+    setImportBusy(true); setImportMsg('');
+    try {
+      const r = await importSmlActivity();
+      if (r.status === 'imported') setImportMsg(`Activité ajoutée (${(r.distanceM / 1000).toFixed(2)} km, ${Math.round(r.durationS / 60)} min).`);
+      else if (r.status === 'exists') setImportMsg('Cette activité existe déjà dans l\'appli.');
+      else setImportMsg('Cette activité avait été supprimée : elle n\'est pas rajoutée.');
+    } catch (e: any) {
+      if (!String(e?.code ?? e?.message).includes('CANCEL')) setImportMsg(`Erreur : ${e?.message ?? String(e)}`);
+    } finally { setImportBusy(false); }
   }
   const [bdvFile, setBdvFile] = useState<string | null>(null);
   const [bdvSupports, setBdvSupports] = useState<{ idUser: string; supports: BdvSupport[] } | null>(null);
@@ -731,6 +745,15 @@ export default function SettingsScreen() {
           desktop app... proceed"). Ports SettingsPage.qml's real Connections card: one
           compact card, a status-dot row per service, tap opens that service's own form in
           a modal - not four always-expanded full-height sections. ── */}
+      <View style={styles.section}>
+        <View style={styles.cardHead}>
+          <IconBadge icon="sync" />
+          <Text style={styles.cardTitle}>Importer un SML</Text>
+        </View>
+        <Text style={styles.sectionDesc}>Ajoute une activité à partir d'un fichier .sml sauvegardé (Moveslink2 ou export de l'appli).</Text>
+        <Button label="Choisir un fichier SML…" variant="outline" loading={importBusy} onPress={handleImportSml} />
+        {!!importMsg && <Text selectable style={styles.sectionDesc}>{importMsg}</Text>}
+      </View>
       {/* 2026-10-21 (Settings split): first card on the screen, each account with its own button. */}
       <View style={styles.section} onLayout={recordCard('connections')}>
         <View style={styles.cardHead}>
