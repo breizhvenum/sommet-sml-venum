@@ -13,6 +13,7 @@ import { getFitFile } from '../services/FitExport';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
+import RNFS from 'react-native-fs';
 import { readGpxFile, smlPathForGpx } from '../services/GpxService';
 import { requestSmlRegen } from '../services/SmlRegen';
 import { loadSmlStatus } from '../services/SmlActivityNames';
@@ -682,7 +683,14 @@ export default function MapScreen() {
   async function makeGpxFromSml(): Promise<{ path: string; fileName: string } | null> {
     if (!smlPath) { await explainNoSml(); return null; }
     const base = (smlPath.split('/').pop() ?? `${activity.id}.sml`).replace(/\.sml$/i, '');
-    const { path } = await convertSmlFileToGpx(smlPath, base);
+    const { path: tmp } = await convertSmlFileToGpx(smlPath, base);
+    // The share sheet (mail, etc.) can only read files from the app's FileProvider folders
+    // (files/activities and files/exports), not from the cache folder the converter writes to.
+    const dir = `${RNFS.DocumentDirectoryPath}/exports`;
+    await RNFS.mkdir(dir);
+    const path = `${dir}/${base}.gpx`;
+    if (await RNFS.exists(path)) await RNFS.unlink(path);
+    await RNFS.copyFile(tmp, path);
     return { path, fileName: `${base}.gpx` };
   }
 
