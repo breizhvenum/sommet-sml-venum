@@ -27,6 +27,7 @@ import { writeMapPage, mapWebViewFileProps } from '../services/mapWebView';
 import { getCachedPois } from '../services/PoiService';
 import Icon from '../components/ui/Icon';
 import ActivityPanel from '../components/activity/ActivityPanel';
+import SpeedStatsPanel from '../components/SpeedStatsPanel';
 
 type Route = RouteProp<RootStackParamList, 'Map'>;
 type Nav   = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -329,9 +330,11 @@ export default function MapScreen() {
   // The Moveslink2-style .sml written at sync time next to the GPX (only moves read from an Ambit
   // have one) - the two SML entries in the export menu show only when it exists.
   const [smlPath, setSmlPath] = useState<string | null>(null);
+  const [smlResolved, setSmlResolved] = useState(false);
+  const [statsFailed, setStatsFailed] = useState(false);   // the SML could not be analysed -> the usual panel
   useEffect(() => {
     let alive = true;
-    smlPathForGpx(activity.gpx_path).then(p => { if (alive) setSmlPath(p); }).catch(() => { if (alive) setSmlPath(null); });
+    smlPathForGpx(activity.gpx_path).then(p => { if (alive) { setSmlPath(p); setSmlResolved(true); } }).catch(() => { if (alive) { setSmlPath(null); setSmlResolved(true); } });
     return () => { alive = false; };
   }, [activity.gpx_path]);
   const [showGearPicker, setShowGearPicker] = useState(false);
@@ -946,8 +949,13 @@ export default function MapScreen() {
       {/* (The old altitude profile / replay scrubber is gone, André 2026-09-29: the activity
           panel's own chart shows altitude now; the replay keeps its play/rewind/forward buttons.) */}
       {/* ── Overview / Charts / Laps ── (desktop parity: ActivityDetail.qml) */}
-      <ActivityPanel activity={activity} meta={meta} hasMap mapView={mapView}
-        onHover={onPanelHover} onStretch={onPanelStretch} onColoured={onPanelColoured} />
+      {/* Under the map: the analyzer-style stats from the SML (knots); the usual panel when the move has no SML */}
+      {smlPath && !statsFailed ? (
+        <SpeedStatsPanel smlPath={smlPath} onFailed={() => setStatsFailed(true)} />
+      ) : smlResolved ? (
+        <ActivityPanel activity={activity} meta={meta} hasMap mapView={mapView}
+          onHover={onPanelHover} onStretch={onPanelStretch} onColoured={onPanelColoured} />
+      ) : null}
       </ScrollView>
     </View>
   );
