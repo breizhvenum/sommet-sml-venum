@@ -103,13 +103,16 @@ export async function testBdvConnection(c: BdvCredentials): Promise<BdvTestResul
 /** The site checks the file extension (it answered "extension non sml"): name the upload .sml / .gpx
  *  from the real content, whatever the picked copy was called (a.sml.xml, no extension...). */
 async function uploadName(filePath: string): Promise<string> {
-  let base = (filePath.split('/').pop() ?? 'session').replace(/\.(xml|txt)$/i, '');
-  if (/\.(sml|gpx|fit)$/i.test(base)) return base.replace(/\.(sml|gpx|fit)$/i, m => m.toLowerCase());
-  base = base.replace(/\.[^.]*$/, '') || 'session';
+  // The file picker copies whatever the user chooses to "picked_route_<n>.gpx" (any content), so the
+  // name's own extension proves nothing: decide from the content first.
   let head = '';
-  try { head = (await RNFS.read(filePath.replace(/^file:\/\//, ''), 400, 0, 'utf8')).toLowerCase(); } catch {}
+  try { head = (await RNFS.read(filePath.replace(/^file:\/\//, ''), 600, 0, 'utf8')).toLowerCase(); } catch {}
+  let base = (filePath.split('/').pop() ?? 'session').replace(/\.(xml|txt)$/i, '').replace(/\.(sml|gpx|fit)$/i, '');
+  base = base.replace(/^picked_route_/, 'session_') || 'session';
+  if (/<sml[\s>]/.test(head)) return `${base}.sml`;
   if (head.includes('<gpx')) return `${base}.gpx`;
-  return `${base}.sml`;
+  const ext = (filePath.match(/\.(sml|gpx|fit)$/i) ?? [])[1];
+  return `${base}.${(ext ?? 'sml').toLowerCase()}`;
 }
 
 const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
@@ -154,7 +157,7 @@ export async function uploadSessionToBdv(
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
   const text = await r.text();
-  return { status: r.status, text, summary: `Fichier envoyé : ${name} (build envoi v3)\n` + summarizeBdvAnswer(r.status, r.url, text) };
+  return { status: r.status, text, summary: `Fichier envoyé : ${name} (build envoi v4)\n` + summarizeBdvAnswer(r.status, r.url, text) };
 }
 
 /** Readable digest of the server answer: final URL, session id if any, then the page text without tags. */
