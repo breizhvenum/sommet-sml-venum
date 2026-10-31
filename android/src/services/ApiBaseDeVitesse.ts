@@ -1,103 +1,76 @@
 import * as Keychain from 'react-native-keychain';
 import RNFS from 'react-native-fs';
+import { BDV_API_KEY } from '../config/bdvKey';
 
-const KEYCHAIN_SERVICE = 'ambitvenum_basedevitesse';
+// basedevitesse.com. The API key belongs to the APP (it is baked in at build time from a GitHub secret and
+// users never see it). Each user logs in with their own identifier + password ONCE: the app keeps only
+// their IDuser (never the password) and sends sessions with IDuser + the app key.
+
+const KEYCHAIN_SERVICE = 'ambitvenum_basedevitesse';   // kept as-is so an existing install keeps working
 const LOGIN_URL = 'https://traitementbdv.com/api/login.php';
 const SUPPORTS_URL = 'https://traitementbdv.com/api/listeSupports.php';
+const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
 
-export interface BdvCredentials {
-  login: string;
-  password: string;
-  key: string;
-}
+export interface BdvAccount { idUser: string; name: string; key: string }
+export interface BdvSupport { id: number; name: string }
 
-export async function getBdvCredentials(): Promise<BdvCredentials | null> {
+/** True when this build carries the app key (a release built with the BDV_API_KEY secret). */
+export const bdvHasBuildKey = (): boolean => !!BDV_API_KEY;
+
+async function readStored(): Promise<any | null> {
   const c = await Keychain.getGenericPassword({ service: KEYCHAIN_SERVICE });
   if (!c) return null;
-  try {
-    const o = JSON.parse(c.password);
-    if (o && o.login && o.password && o.key) return o as BdvCredentials;
-  } catch {}
-  return null;
+  try { return JSON.parse(c.password); } catch { return null; }
 }
 
-export async function saveBdvCredentials(c: BdvCredentials): Promise<void> {
-  await Keychain.setGenericPassword(
-    'basedevitesse',
-    JSON.stringify({ login: c.login.trim(), password: c.password, key: c.key.trim() }),
-    { service: KEYCHAIN_SERVICE },
-  );
+/** The logged-in account, with the key to use (the build's, else the one typed in Settings). null = not logged in. */
+export async function getBdvAccount(): Promise<BdvAccount | null> {
+  const o = await readStored();
+  if (!o || !o.idUser) return null;
+  const key = BDV_API_KEY || o.key || '';
+  return { idUser: String(o.idUser), name: String(o.name || ''), key };
 }
 
-export async function removeBdvCredentials(): Promise<void> {
+export async function removeBdvAccount(): Promise<void> {
   await Keychain.resetGenericPassword({ service: KEYCHAIN_SERVICE });
 }
 
 function form(params: Record<string, string>): string {
-  return Object.keys(params)
-    .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
-    .join('&');
+  return Object.keys(params).map(k => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join('&');
 }
-
 async function post(url: string, params: Record<string, string>): Promise<{ status: number; text: string }> {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form(params),
-  });
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form(params) });
   return { status: r.status, text: await r.text() };
 }
 
-export interface BdvTestResult {
-  loginStatus: number;
-  loginRaw: string;
-  idUser: string | null;
-  supportsStatus?: number;
-  supportsRaw?: string;
+/**
+ * Logs the user in on basedevitesse.com and keeps their IDuser (not the password). `typedKey` is only
+ * used when the build has no key of its own. Throws an Error with a readable message.
+ */
+export async function bdvLogin(login: string, password: string, typedKey = ''): Promise<BdvAccount> {
+  const key = BDV_API_KEY || typedKey.trim();
+  if (!key) throw new Error('Clé de l\'appli absente de cette version : renseigne-la ci-dessous, ou utilise une version compilée avec le secret BDV_API_KEY.');
+  if (!login.trim() || !password) throw new Error('Renseigne ton identifiant et ton mot de passe basedevitesse.');
+  const r = await post(LOGIN_URL, { login: login.trim(), password, key });
+  let o: any = null;
+  try { o = JSON.parse(r.text); } catch { /* not JSON */ }
+  if (!o || Number(o.login) !== 1 || !o.IDuser) {
+    throw new Error(r.status !== 200 ? `basedevitesse a répondu HTTP ${r.status}.` : 'Identifiant ou mot de passe refusé par basedevitesse.');
+  }
+  const name = [o.Prenom, o.Nom].filter(Boolean).join(' ').trim();
+  await Keychain.setGenericPassword('basedevitesse', JSON.stringify({ idUser: String(o.IDuser), name, key: BDV_API_KEY ? '' : key }), { service: KEYCHAIN_SERVICE });
+  return { idUser: String(o.IDuser), name, key };
 }
 
-/** Try to find the user id in the login response (JSON or plain text). Raw text is always returned too. */
-function extractIdUser(raw: string): string | null {
-  try {
-    const o = JSON.parse(raw);
-    const find = (x: any): string | null => {
-      if (x == null) return null;
-      if (typeof x === 'number' || (typeof x === 'string' && /^\d+$/.test(x))) return String(x);
-      if (typeof x === 'object') {
-        for (const k of Object.keys(x)) {
-          if (/^id_?user$/i.test(k) || /^iduser$/i.test(k) || /^id$/i.test(k)) {
-            const v = find(x[k]);
-            if (v) return v;
-          }
-        }
-        for (const k of Object.keys(x)) {
-          const v = typeof x[k] === 'object' ? find(x[k]) : null;
-          if (v) return v;
-        }
-      }
-      return null;
-    };
-    return find(o);
-  } catch {
-    const m = raw.trim().match(/^\d+$/);
-    return m ? m[0] : null;
-  }
-}
-
-/** Login, then fetch the supports list. Never throws: errors are returned as text. */
-export async function testBdvConnection(c: BdvCredentials): Promise<BdvTestResult> {
-  const l = await post(LOGIN_URL, { login: c.login.trim(), password: c.password, key: c.key.trim() });
-  const res: BdvTestResult = { loginStatus: l.status, loginRaw: l.text, idUser: extractIdUser(l.text) };
-  if (res.idUser) {
-    const r = await fetch(`${SUPPORTS_URL}?IDuser=${encodeURIComponent(res.idUser)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form({ key: c.key.trim() }),
-    });
-    res.supportsStatus = r.status;
-    res.supportsRaw = await r.text();
-  }
-  return res;
+/** The user's most practised supports (Windsurf, Windfoil...). */
+export async function fetchBdvSupports(key: string, idUser: string): Promise<BdvSupport[]> {
+  const r = await fetch(`${SUPPORTS_URL}?IDuser=${encodeURIComponent(idUser)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form({ key: key.trim() }),
+  });
+  const txt = await r.text();
+  let arr: any[] = [];
+  try { arr = JSON.parse(txt); } catch { throw new Error(`Liste des supports illisible : ${txt.slice(0, 200)}`); }
+  return arr.filter(x => x && x.IDsupport != null && x.NomSupport).map(x => ({ id: Number(x.IDsupport), name: String(x.NomSupport).trim() }));
 }
 
 /** The site checks the file extension (it answered "extension non sml"): name the upload .sml / .gpx
@@ -115,32 +88,9 @@ async function uploadName(filePath: string): Promise<string> {
   return `${base}.${(ext ?? 'sml').toLowerCase()}`;
 }
 
-const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
-
-export interface BdvSupport { id: number; name: string }
-
-/** Login then supports list (for the picker). Throws a readable Error on failure. */
-export async function loginAndListSupports(c: BdvCredentials): Promise<{ idUser: string; supports: BdvSupport[] }> {
-  const l = await post(LOGIN_URL, { login: c.login.trim(), password: c.password, key: c.key.trim() });
-  const idUser = extractIdUser(l.text);
-  if (!idUser) throw new Error(`Connexion refusée (HTTP ${l.status}) : ${l.text.slice(0, 200)}`);
-  const r = await fetch(`${SUPPORTS_URL}?IDuser=${encodeURIComponent(idUser)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form({ key: c.key.trim() }),
-  });
-  const txt = await r.text();
-  let arr: any[] = [];
-  try { arr = JSON.parse(txt); } catch { throw new Error(`Liste des supports illisible : ${txt.slice(0, 200)}`); }
-  const supports = arr
-    .filter(x => x && x.IDsupport != null && x.NomSupport)
-    .map(x => ({ id: Number(x.IDsupport), name: String(x.NomSupport).trim() }));
-  return { idUser, supports };
-}
-
-/** Send one session file (.sml/.gpx/...) as the multipart field "gps". Returns the raw server answer. */
+/** Send one session file (.sml) as the multipart field "gps". Returns the raw server answer. */
 export async function uploadSessionToBdv(
-  c: BdvCredentials,
+  key: string,
   idUser: string,
   supportId: number,
   filePath: string,
@@ -152,12 +102,12 @@ export async function uploadSessionToBdv(
   fd.append('equipage', '0');
   fd.append('support', String(supportId));
   fd.append('Commentaires', comment);
-  fd.append('key', c.key.trim());
+  fd.append('key', key.trim());
   const name = await uploadName(filePath);
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
   const text = await r.text();
-  return { status: r.status, text, summary: `Fichier envoyé : ${name} (build envoi v4)\n` + summarizeBdvAnswer(r.status, r.url, text) };
+  return { status: r.status, text, summary: `Fichier envoyé : ${name}\n` + summarizeBdvAnswer(r.status, r.url, text) };
 }
 
 /** Readable digest of the server answer: final URL, session id if any, then the page text without tags. */

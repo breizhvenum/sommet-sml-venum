@@ -33,7 +33,7 @@ import {
   getRunalyzeApiKey, saveRunalyzeApiKey, removeRunalyzeApiKey,
 } from '../services/ApiRunalyze';
 import { importSmlActivity } from '../services/ImportSml';
-import { getBdvCredentials, saveBdvCredentials, removeBdvCredentials, testBdvConnection, loginAndListSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
+import { getBdvAccount, bdvLogin, removeBdvAccount, bdvHasBuildKey, fetchBdvSupports, uploadSessionToBdv, BdvSupport, BdvAccount } from '../services/ApiBaseDeVitesse';
 import {
   getIntervalsIcuCredentials, saveIntervalsIcuCredentials, removeIntervalsIcuCredentials,
 } from '../services/ApiIntervalsIcu';
@@ -358,69 +358,47 @@ export default function SettingsScreen() {
   // a status-dot row per service, tap-to-open a Dialog with that service's own form - not
   // four separate always-expanded full-height sections like this screen had. Same real
   // handlers/state above, this only changes which one is visible at a time.
-  const [bdvLogin, setBdvLogin] = useState('');
+  const [bdvLoginTxt, setBdvLoginTxt] = useState('');
   const [bdvPassword, setBdvPassword] = useState('');
-  const [bdvKey, setBdvKey] = useState('');
-  const [bdvSaved, setBdvSaved] = useState(false);
+  const [bdvKeyTyped, setBdvKeyTyped] = useState('');   // only asked when this build has no key of its own
+  const [bdvAccount, setBdvAccount] = useState<BdvAccount | null>(null);
   const [bdvBusy, setBdvBusy] = useState(false);
   const [bdvOutput, setBdvOutput] = useState('');
-  async function handleSaveBdv() {
-    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
-    await saveBdvCredentials({ login: bdvLogin, password: bdvPassword, key: bdvKey });
-    setBdvSaved(true);
-    setBdvOutput('Identifiants enregistrés.');
-  }
-  async function handleRemoveBdv() {
-    await removeBdvCredentials();
-    setBdvSaved(false); setBdvLogin(''); setBdvPassword(''); setBdvKey(''); setBdvOutput('');
-  }
-  const [importMsg, setImportMsg] = useState('');
-  const [importBusy, setImportBusy] = useState(false);
-  async function handleImportSml() {
-    setImportBusy(true); setImportMsg('');
-    try {
-      const r = await importSmlActivity();
-      if (r.status === 'imported') setImportMsg(`Activité ajoutée (${(r.distanceM / 1000).toFixed(2)} km, ${Math.round(r.durationS / 60)} min).`);
-      else if (r.status === 'exists') setImportMsg('Cette activité existe déjà dans l\'appli.');
-      else setImportMsg('Cette activité avait été supprimée : elle n\'est pas rajoutée.');
-    } catch (e: any) {
-      if (!String(e?.code ?? e?.message).includes('CANCEL')) setImportMsg(`Erreur : ${e?.message ?? String(e)}`);
-    } finally { setImportBusy(false); }
-  }
   const [bdvFile, setBdvFile] = useState<string | null>(null);
-  const [bdvSupports, setBdvSupports] = useState<{ idUser: string; supports: BdvSupport[] } | null>(null);
+  const [bdvSupports, setBdvSupports] = useState<BdvSupport[] | null>(null);
+  async function handleLoginBdv() {
+    setBdvBusy(true); setBdvOutput('Connexion…');
+    try {
+      const acc = await bdvLogin(bdvLoginTxt, bdvPassword, bdvKeyTyped);
+      setBdvAccount(acc); setBdvPassword(''); setBdvKeyTyped('');
+      setBdvOutput(`Connecté${acc.name ? ' : ' + acc.name : ''}.`);
+    } catch (e: any) {
+      setBdvOutput(e?.message ?? String(e));
+    } finally { setBdvBusy(false); }
+  }
+  async function handleLogoutBdv() {
+    await removeBdvAccount();
+    setBdvAccount(null); setBdvSupports(null); setBdvFile(null); setBdvOutput('');
+  }
   async function handlePickBdvFile() {
-    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
+    if (!bdvAccount || !bdvAccount.key) { setBdvOutput('Connecte-toi d\'abord (et vérifie que la clé de l\'appli est présente).'); return; }
     setBdvBusy(true); setBdvOutput('');
     try {
       const path = await pickGpxFile();
       setBdvFile(path);
-      const r = await loginAndListSupports({ login: bdvLogin, password: bdvPassword, key: bdvKey });
-      setBdvSupports(r);
+      setBdvSupports(await fetchBdvSupports(bdvAccount.key, bdvAccount.idUser));
       setBdvOutput(`Fichier : ${path.split('/').pop()}\nChoisis le support pour l'envoyer.`);
     } catch (e: any) {
       if (!String(e?.code ?? e?.message).includes('CANCEL')) setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
     } finally { setBdvBusy(false); }
   }
   async function handleSendBdvFile(supportId: number) {
-    if (!bdvFile || !bdvSupports) return;
+    if (!bdvFile || !bdvAccount) return;
     setBdvBusy(true); setBdvOutput('Envoi en cours…');
     try {
-      const r = await uploadSessionToBdv({ login: bdvLogin, password: bdvPassword, key: bdvKey }, bdvSupports.idUser, supportId, bdvFile);
+      const r = await uploadSessionToBdv(bdvAccount.key, bdvAccount.idUser, supportId, bdvFile);
       setBdvOutput(`Envoi →\n${r.summary}`);
       setBdvSupports(null); setBdvFile(null);
-    } catch (e: any) {
-      setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
-    } finally { setBdvBusy(false); }
-  }
-  async function handleTestBdv() {
-    if (!bdvLogin.trim() || !bdvPassword || !bdvKey.trim()) { setBdvOutput('Renseigne identifiant, mot de passe et clé.'); return; }
-    setBdvBusy(true); setBdvOutput('Test en cours…');
-    try {
-      const r = await testBdvConnection({ login: bdvLogin, password: bdvPassword, key: bdvKey });
-      let out = `login.php → HTTP ${r.loginStatus}\n${r.loginRaw.slice(0, 600)}\n\nIDuser: ${r.idUser ?? 'non trouvé'}`;
-      if (r.supportsRaw !== undefined) out += `\n\nlisteSupports.php → HTTP ${r.supportsStatus}\n${r.supportsRaw.slice(0, 1500)}`;
-      setBdvOutput(out);
     } catch (e: any) {
       setBdvOutput(`Erreur : ${e?.message ?? String(e)}`);
     } finally { setBdvBusy(false); }
@@ -490,10 +468,7 @@ export default function SettingsScreen() {
       setSavedKey(k);
       setRunalyzeKey(k ?? '');
     });
-    getBdvCredentials().then(c => {
-      setBdvSaved(!!c);
-      if (c) { setBdvLogin(c.login); setBdvPassword(c.password); setBdvKey(c.key); }
-    }).catch(() => {});
+    getBdvAccount().then(setBdvAccount).catch(() => {});
     stravaIsAuth().then(setStravaAuth);
     getScaleAddress().then(setScaleAddr);
     getSendWeighIns().then(setSendWeighInsState);
@@ -774,9 +749,9 @@ export default function SettingsScreen() {
         />
         <ConnectionRow
           name="basedevitesse.com"
-          connected={bdvSaved}
-          status={bdvSaved ? 'connected' : 'not connected'}
-          action={bdvSaved ? 'Manage' : 'Set up'}
+          connected={!!bdvAccount}
+          status={bdvAccount ? (bdvAccount.name || `IDuser ${bdvAccount.idUser}`) : 'not connected'}
+          action={bdvAccount ? 'Manage' : 'Set up'}
           onPress={() => setOpenConnection('bdv')}
         />
         <ConnectionRow
@@ -834,21 +809,28 @@ export default function SettingsScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalBox}>
             <Text style={styles.cardTitle}>basedevitesse.com</Text>
-            <Text style={styles.sectionDesc}>Identifiant, mot de passe et clé API fournie par basedevitesse.com (stockés de façon sécurisée sur le téléphone).</Text>
-            <FieldRow icon="person" value={bdvLogin} onChangeText={setBdvLogin} placeholder="Identifiant" autoCapitalize="none" autoCorrect={false} />
-            <FieldRow icon="key" value={bdvPassword} onChangeText={setBdvPassword} placeholder="Mot de passe" autoCapitalize="none" autoCorrect={false} secureTextEntry />
-            <FieldRow icon="key" value={bdvKey} onChangeText={setBdvKey} placeholder="Clé API" autoCapitalize="none" autoCorrect={false} secureTextEntry />
-            <View style={styles.row}>
-              <Button label={t.saveBtn} variant="filled" onPress={handleSaveBdv} />
-              <Button label="Tester la connexion" variant="outline" loading={bdvBusy} onPress={handleTestBdv} />
-              {bdvSaved && (
-                <Button label={t.deleteBtn} icon="delete" variant="outline" tone="alert" grow={false} onPress={handleRemoveBdv} />
-              )}
-            </View>
-            <Button label="Envoyer un fichier…" variant="outline" loading={bdvBusy} onPress={handlePickBdvFile} />
-            {!!bdvSupports && bdvSupports.supports.map(sp => (
-              <Button key={sp.id} label={sp.name} variant="text" onPress={() => handleSendBdvFile(sp.id)} />
-            ))}
+            {bdvAccount ? (
+              <>
+                <Text style={styles.sectionDesc}>Connecté{bdvAccount.name ? ` : ${bdvAccount.name}` : ''} (IDuser {bdvAccount.idUser}). Ton mot de passe n'est pas conservé sur le téléphone.</Text>
+                <View style={styles.row}>
+                  <Button label="Envoyer un fichier…" variant="outline" loading={bdvBusy} onPress={handlePickBdvFile} />
+                  <Button label="Se déconnecter" icon="delete" variant="outline" tone="alert" grow={false} onPress={handleLogoutBdv} />
+                </View>
+                {!!bdvSupports && bdvSupports.map(sp => (
+                  <Button key={sp.id} label={sp.name} variant="text" onPress={() => handleSendBdvFile(sp.id)} />
+                ))}
+              </>
+            ) : (
+              <>
+                <Text style={styles.sectionDesc}>Connecte-toi avec ton compte basedevitesse.com pour envoyer tes sessions. L'appli garde seulement ton identifiant numérique, pas ton mot de passe.</Text>
+                <FieldRow icon="person" value={bdvLoginTxt} onChangeText={setBdvLoginTxt} placeholder="Identifiant" autoCapitalize="none" autoCorrect={false} />
+                <FieldRow icon="key" value={bdvPassword} onChangeText={setBdvPassword} placeholder="Mot de passe" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+                {!bdvHasBuildKey() && (
+                  <FieldRow icon="key" value={bdvKeyTyped} onChangeText={setBdvKeyTyped} placeholder="Clé API (version sans clé intégrée)" autoCapitalize="none" autoCorrect={false} secureTextEntry />
+                )}
+                <Button label="Se connecter" variant="filled" loading={bdvBusy} onPress={handleLoginBdv} />
+              </>
+            )}
             {!!bdvOutput && <Text selectable style={styles.sectionDesc}>{bdvOutput}</Text>}
             <Button label={t.closeBtn} variant="text" onPress={() => setOpenConnection(null)} style={{ marginTop: 12 }} />
           </View>

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, Modal, useWindowDimensions } from 'react-native';
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
-import { getBdvCredentials, loginAndListSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
+import { getBdvAccount, fetchBdvSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
 import { convertSmlFileToGpx } from '../services/SmlToGpx';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { uploadFitToStrava, isAuthenticated as stravaIsAuthenticated } from '../services/ApiStrava';
@@ -733,12 +733,13 @@ export default function MapScreen() {
   async function handleUploadBdv() {
     if (!smlPath) { setShowExportMenu(false); await explainNoSml(); return; }
     try {
-      const c = await getBdvCredentials();
-      if (!c) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Renseigne d\'abord tes identifiants dans Réglages → basedevitesse.com.'); return; }
+      const acc = await getBdvAccount();
+      if (!acc) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Connecte-toi d\'abord dans Réglages → basedevitesse.com.'); return; }
+      if (!acc.key) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Clé de l\'appli absente de cette version.'); return; }
       setBdvSending(true);
       // The support list replaces the menu entries INSIDE the same sheet (a second Modal opened while
       // the first one closes is silently dropped on Android).
-      setBdvPicker(await loginAndListSupports(c));
+      setBdvPicker({ idUser: acc.idUser, supports: await fetchBdvSupports(acc.key, acc.idUser) });
     } catch (e: any) {
       setShowExportMenu(false);
       Alert.alert('basedevitesse.com', e?.message ?? String(e));
@@ -752,9 +753,9 @@ export default function MapScreen() {
     if (!picker || !smlPath) return;
     try {
       setBdvSending(true);
-      const c = await getBdvCredentials();
-      if (!c) return;
-      const r = await uploadSessionToBdv(c, picker.idUser, supportId, smlPath);
+      const acc = await getBdvAccount();
+      if (!acc || !acc.key) return;
+      const r = await uploadSessionToBdv(acc.key, picker.idUser, supportId, smlPath);
       Alert.alert('basedevitesse.com', r.summary);
     } catch (e: any) {
       Alert.alert('basedevitesse.com', e?.message ?? String(e));
