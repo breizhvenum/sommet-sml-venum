@@ -735,6 +735,8 @@ export default function MapScreen() {
       if (!c) { Alert.alert('basedevitesse.com', 'Renseigne d\'abord tes identifiants dans Réglages → basedevitesse.com.'); return; }
       setBdvSending(true);
       const r = await loginAndListSupports(c);
+      // let the export sheet finish closing first: Android drops a Modal opened while another is dismissing
+      await new Promise(res => setTimeout(res, 400));
       setBdvPicker(r);
     } catch (e: any) {
       Alert.alert('basedevitesse.com', e?.message ?? String(e));
