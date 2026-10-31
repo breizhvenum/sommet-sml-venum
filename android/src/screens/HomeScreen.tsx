@@ -278,11 +278,11 @@ export default function HomeScreen() {
     if (mode === 'manual') return;
     const lines = diff.map(d => `${PROFILE_LABELS[d.field]}: ${fmtProfile(d.field, d.device)} → ${fmtProfile(d.field, d.intervals)}`);
     Alert.alert(
-      `Sync ${name} profile?`,
-      `Your ${name} has different values than intervals.icu:\n\n${lines.join('\n')}\n\n“Yes” keeps it in sync every time it’s connected. “No” leaves it as it is (you can still sync it by hand).`,
+      `Synchroniser le profil ${name} ?`,
+      `Ton ${name} a des valeurs différentes de intervals.icu :\n\n${lines.join('\n')}\n\n« Oui » le garde synchronisé à chaque connexion. « Non » le laisse tel quel (tu peux toujours le synchroniser à la main).`,
       [
-        { text: 'No, I’ll do it myself', style: 'cancel', onPress: () => setProfileSyncMode('manual', kind) },
-        { text: 'Yes, keep it in sync', onPress: async () => { await setProfileSyncMode('auto', kind); await apply(); } },
+        { text: 'Non, je le ferai moi-même', style: 'cancel', onPress: () => setProfileSyncMode('manual', kind) },
+        { text: 'Oui, garder synchronisé', onPress: async () => { await setProfileSyncMode('auto', kind); await apply(); } },
       ],
       { cancelable: false },
     );
@@ -339,7 +339,7 @@ export default function HomeScreen() {
   const applyMageneProfile = useCallback(async (m: KnownMagene, changes: Partial<MageneProfile>) => {
     try {
       const ok = await withMagene(m.address, () => setMageneProfile(changes));
-      setMageneMsg(ok ? 'Profile synced from intervals.icu ✓' : 'The Magene didn’t accept the profile');
+      setMageneMsg(ok ? 'Profil synchronisé depuis intervals.icu ✓' : 'Le Magene n’a pas accepté le profil');
     } catch (e: any) { setMageneMsg(String(e?.message ?? e)); }
   }, []);
 
@@ -1079,8 +1079,8 @@ export default function HomeScreen() {
     { id: 'activities', label: t.viewActivities, icon: 'list', onPress: () => navigation.navigate('LogList'), group: 'training' },
     // Totals + Calendar (2026-08-29, desktop parity): activity-analytics views, always reachable
     // (read the local activity DB, no watch needed) - like the desktop nav.
-    { id: 'totals', label: 'Totals', icon: 'chart', onPress: () => navigation.navigate('Totals') },
-    { id: 'calendar', label: 'Calendar', icon: 'calendar', onPress: () => navigation.navigate('Calendar') },
+    { id: 'totals', label: 'Totaux', icon: 'chart', onPress: () => navigation.navigate('Totals') },
+    { id: 'calendar', label: 'Calendrier', icon: 'calendar', onPress: () => navigation.navigate('Calendar') },
     // (The separate "Route" planner item is gone: Routes opens the one Routes screen, whose
     // "Open planner" leads to it - desktop parity, André 2026-09-29.)
     // Offline maps lives in Settings > Maps (desktop parity — moved out of the main menu,
@@ -1109,7 +1109,7 @@ export default function HomeScreen() {
     // now (mirrors the desktop split). Suunto family (Ambit1/2/3, Traverse, Kailash), USB or BLE;
     // not Garmin. The per-model write rules live in the settings services.
     ...(connected && deviceType === 'ambit'
-      ? [{ id: 'watchSettings', label: 'Watch settings', icon: 'watch' as const, onPress: () => navigation.navigate('WatchSettings') }]
+      ? [{ id: 'watchSettings', label: 'Réglages de la montre', icon: 'watch' as const, onPress: () => navigation.navigate('WatchSettings') }]
       : []),
     // Firmware (2026-08-29, desktop parity): USB-only, HIDDEN over Bluetooth - a bad flash can
     // brick the watch and flashing is cable/USB-OTG only (same brick-safety rule as the desktop's
@@ -1127,7 +1127,7 @@ export default function HomeScreen() {
     // Shown when either switch is on (Intervals = the builder, App Zone = the catalog), like the
     // desktop's NavRail (2026-10-22).
     ...((expFeatures.intervals || expFeatures.appZone) && connected && deviceType === 'ambit' && !isKailash(ambitInfo) && !isTraverse(ambitInfo) && !isAmbit12(ambitInfo)
-      ? [{ id: 'apps', label: 'Apps', icon: 'apps' as const, onPress: () => navigation.navigate('Apps') }]
+      ? [{ id: 'apps', label: 'Applis', icon: 'apps' as const, onPress: () => navigation.navigate('Apps') }]
       : []),
     ...(expFeatures.smartSensor
       ? [{ id: 'smartSensor', label: t.experimentalSmartSensor, icon: 'link' as const, onPress: () => navigation.navigate('SmartSensor'), group: 'adv' as const }]
@@ -1143,7 +1143,7 @@ export default function HomeScreen() {
     // Bryton Aero 60 — its own device-gated items, like the watch's Routes/Sport Modes. Only when
     // the head unit is plugged in. Workouts = the builder; Profile = FTP/LTHR/Max HR reconciliation.
     ...(deviceType === 'bryton'
-      ? [{ id: 'brytonProfile', label: 'GPS settings', icon: 'settings' as const, onPress: () => navigation.navigate('Bryton'), group: 'watch' as const }]
+      ? [{ id: 'brytonProfile', label: 'Réglages GPS', icon: 'settings' as const, onPress: () => navigation.navigate('Bryton'), group: 'watch' as const }]
       : []),
     ...(mageneOn
       ? [{ id: 'magene', label: deviceType === 'bryton' ? 'Magene settings' : 'GPS settings', icon: 'settings' as const, onPress: () => navigation.navigate('Magene'), group: 'watch' as const }]
@@ -1165,13 +1165,13 @@ export default function HomeScreen() {
     // (the 10-tap easter egg was retired 2026-08-29, matching the desktop). `emberUnlocked` is
     // that persisted opt-in flag - the storage key is unchanged, so an already-on install keeps it.
     ...(racePlanOn
-      ? [{ id: 'racePlan', label: 'Race Plan', icon: 'route' as const, onPress: () => navigation.navigate('RacePlan'), group: 'training' as const }]
+      ? [{ id: 'racePlan', label: 'Plan de course', icon: 'route' as const, onPress: () => navigation.navigate('RacePlan'), group: 'training' as const }]
       : []),
     ...(emberUnlocked
       ? [{ id: 'ember', label: 'Ember', icon: 'ember' as const, onPress: () => navigation.navigate('Ember'), group: 'training' as const }]
       : []),
-    { id: 'health', label: 'Health', icon: 'health' as const, onPress: () => navigation.navigate('Health'), group: 'training' as const },
-    { id: 'weight', label: 'Weight', icon: 'weight' as const, onPress: () => navigation.navigate('Weight'), group: 'training' as const },
+    { id: 'health', label: 'Santé', icon: 'health' as const, onPress: () => navigation.navigate('Health'), group: 'training' as const },
+    { id: 'weight', label: 'Poids', icon: 'weight' as const, onPress: () => navigation.navigate('Weight'), group: 'training' as const },
     { id: 'settings', label: t.settingsTitle, icon: 'settings', onPress: () => navigation.navigate('Settings') },
   ];
   // Same order as the desktop rail (NavRail.qml is the baseline - André, 2026-09-29: "the rest should
@@ -1349,7 +1349,7 @@ export default function HomeScreen() {
         <Card style={[roomy ? styles.deviceCardRoomy : styles.deviceCardCol, styles.deviceCardInner]}>
           <Text style={[styles.deviceName, v3TextStyle]}>Bryton Aero 60</Text>
           <View style={styles.deviceMetaRow}>
-            <Text style={[styles.deviceSub, v3MutedStyle]}>Connected over USB</Text>
+            <Text style={[styles.deviceSub, v3MutedStyle]}>Connecté en USB</Text>
             <Chip icon="check" label={t.homeDeviceConnectedStatus} />
           </View>
           <Text style={[styles.deviceSub, v3MutedStyle]}>GPS settings and Workouts are in the menu.</Text>
@@ -1363,7 +1363,7 @@ export default function HomeScreen() {
                 : 'All rides are already in your library.'} />
           )}
           <View style={styles.heroButtons}>
-            <Button label={brytonSyncing ? 'Syncing…' : 'Sync rides'} icon="sync" onPress={syncBryton} disabled={brytonSyncing} grow={false} />
+            <Button label={brytonSyncing ? 'Synchro…' : 'Synchroniser les sorties'} icon="sync" onPress={syncBryton} disabled={brytonSyncing} grow={false} />
           </View>
           {/* Bluetooth is a separate transport from the USB Bryton (André, 2026-09-24): you can
               still pair an Ambit watch over BLE while the head unit is plugged in. */}
@@ -1380,7 +1380,7 @@ export default function HomeScreen() {
         title={t.homeBleConnectBtn}
         onClose={() => setPairMenuOpen(false)}
         items={[
-          { label: 'Suunto watch', onPress: () => handleBleConnectRef.current() },
+          { label: 'Montre Suunto', onPress: () => handleBleConnectRef.current() },
           { label: magene ? 'Magene C406 (search again)' : 'Magene C406', onPress: findMagene,
             visible: isMageneAvailable() && expFeatures.magene, disabled: !!mageneBusy },
         ]}
@@ -1391,14 +1391,14 @@ export default function HomeScreen() {
           <Text style={[styles.deviceName, v3TextStyle]}>{mageneOn.name || 'Magene C406'}</Text>
           <Text style={[styles.deviceSub, v3MutedStyle]}>
             {mageneStatus
-              ? [mageneStatus.battery != null ? `Battery ${mageneStatus.battery}%` : null,
+              ? [mageneStatus.battery != null ? `Batterie ${mageneStatus.battery} %` : null,
                  mageneStatus.firmware ? `Firmware ${mageneStatus.firmware}` : null].filter(Boolean).join(' · ') || 'Bluetooth'
-              : 'Bluetooth · wake it to connect'}
+              : 'Bluetooth · réveille-le pour te connecter'}
           </Text>
           {mageneSync && mageneBusy === 'rides' && (
             <Text style={[styles.deviceSub, v3MutedStyle]}>
               {mageneSync.phase === 'writing' && mageneSync.total > 0
-                ? `Importing ${mageneSync.current}/${mageneSync.total}…`
+                ? `Import ${mageneSync.current}/${mageneSync.total}…`
                 : mageneSync.phase === 'reading' ? 'Reading rides…' : 'Connecting…'}
             </Text>
           )}
@@ -1408,7 +1408,7 @@ export default function HomeScreen() {
               disabled={!!mageneBusy} grow={false} />
             <Button label={mageneBusy === 'status' ? 'Connecting…' : 'Connect'} onPress={() => refreshMagene(mageneOn)}
               disabled={!!mageneBusy} variant="text" grow={false} />
-            <Button label="Forget" onPress={forgetMagene} disabled={!!mageneBusy} variant="text" grow={false} />
+            <Button label="Oublier" onPress={forgetMagene} disabled={!!mageneBusy} variant="text" grow={false} />
           </View>
         </Card>
       )}
@@ -1718,11 +1718,11 @@ export default function HomeScreen() {
             onLongPress={() => {
               if (isBusy) return;
               Alert.alert(
-                'Re-download activities',
+                'Retélécharger les activités',
                 'Re-read every activity from the watch and rebuild its track/GPX — this also RESTORES any activities you previously deleted (they come back from the watch). Use it to recover a move or apply a decode fix. This can take a while.',
                 [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Re-download', onPress: () => handleSync(true) },
+                  { text: 'Annuler', style: 'cancel' },
+                  { text: 'Retélécharger', onPress: () => handleSync(true) },
                 ],
               );
             }}

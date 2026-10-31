@@ -673,8 +673,8 @@ export default function MapScreen() {
   async function explainNoSml() {
     const status = await loadSmlStatus();
     Alert.alert('SML',
-      'No SML file exists for this activity yet.\n\nRe-read it from the watch: connect the watch, then LONG-PRESS the Sync button on the home screen and choose Re-download.\n\n' +
-      (status ? `Last sync (SML step):\n${status}` : 'No SML step has run yet on this install (sync the watch first).'));
+      'Aucun fichier SML n’existe encore pour cette activité.\n\nRelis-la depuis la montre : connecte la montre, puis fais un APPUI LONG sur le bouton Sync de l’accueil et choisis Retélécharger.\n\n' +
+      (status ? `Dernière synchro (étape SML) :\n${status}` : 'Aucune étape SML n’a encore tourné sur cette installation (synchronise d’abord la montre).'));
   }
 
   // GPX built from the activity's SML (the app's own GPX/FIT exports were removed from the menu).

@@ -106,11 +106,11 @@ export default function WeightScreen() {
     const iso = dm ? `${dm[3]}-${dm[2].padStart(2, '0')}-${dm[1].padStart(2, '0')}`
       : /^\d{4}-\d{2}-\d{2}$/.test(dateInput.trim()) ? dateInput.trim() : '';
     if (!iso || isNaN(new Date(iso).getTime())) {
-      Alert.alert('Invalid date', 'Enter the date as DD/MM/YYYY (for example 02/09/2026).');
+      Alert.alert('Date invalide', 'Saisis la date au format JJ/MM/AAAA (par exemple 02/09/2026).');
       return;
     }
     if (!(kg > 0)) {
-      Alert.alert('Invalid weight', 'Enter a valid weight in kg.');
+      Alert.alert('Poids invalide', 'Saisis un poids valide en kg.');
       return;
     }
     await addManualWeight(iso, kg);
@@ -219,7 +219,7 @@ export default function WeightScreen() {
 
       {series.length > 1 && (
         <MetricChart
-          label="Weight"
+          label="Poids"
           unit=" kg"
           decimals={1}
           series={series.map(p => ({ date: p.date, value: p.weightKg }))}
@@ -243,7 +243,7 @@ export default function WeightScreen() {
             <TextInput
               value={dateInput}
               onChangeText={setDateInput}
-              placeholder="DD/MM/YYYY"
+              placeholder="JJ/MM/AAAA"
               placeholderTextColor={t.mutedText}
               style={[styles.input, { color: t.text, backgroundColor: t.cardNested, borderColor: t.border, borderRadius: v3Radius.small, flex: 1.4 }]}
             />

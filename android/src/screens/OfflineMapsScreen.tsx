@@ -164,16 +164,16 @@ export default function OfflineMapsScreen() {
       const msg = result.failed
         ? `Saved ${result.done - result.failed} of ${result.total} tiles (${result.failed} failed — try again on better signal).`
         : `Saved ${result.done} tiles for offline use.`;
-      Alert.alert('Offline area', msg);
+      Alert.alert('Zone hors ligne', msg);
     } catch (err: any) {
-      Alert.alert('Download failed', err?.message ?? 'Could not download this area.');
+      Alert.alert('Échec du téléchargement', err?.message ?? 'Impossible de télécharger cette zone.');
     } finally {
       setProgress(null);
     }
   }
 
   function handleDelete(r: OfflineRegion) {
-    Alert.alert('Delete area', `Remove "${r.name}" and its downloaded tiles?`, [
+    Alert.alert('Supprimer la zone', `Supprimer « ${r.name} » et ses tuiles téléchargées ?`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive',
@@ -265,7 +265,7 @@ export default function OfflineMapsScreen() {
             <Text style={s.muted}>Downloading {progress.done}/{progress.total}{progress.failed ? ` · ${progress.failed} failed` : ''}</Text>
           </View>
         ) : (
-          <Button label="Download this area" icon="backup" variant="filled"
+          <Button label="Télécharger cette zone" icon="backup" variant="filled"
             onPress={handleDownload} disabled={!bbox || tooBig}
             style={{ marginTop: v3Spacing.small }} />
         )}

@@ -112,7 +112,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
       const w = ws.find(x => x.type === 'Ride' || x.type === 'VirtualRide') || ws[0];
       if (!w) return;
       const blocks = AVL.workoutBlocks(w.workout_doc, AVL.ftpFrom(zoneGroups));
-      setPlanned(blocks.length ? { name: w.name || 'Planned workout', blocks } : null);
+      setPlanned(blocks.length ? { name: w.name || 'Séance prévue', blocks } : null);
     }).catch(() => undefined);
   }, [st, zoneGroups]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -251,8 +251,8 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
   const focus = focusId || (cb ? ((chansOn.find(c => c.key === CFG.colour_modes[colourMode].key) || {}).id || '') : '');
   const colors = { text: t.text, muted: t.mutedText, border: t.border, borderStrong: t.borderStrong, card: t.card, cardNested: t.cardNested,
                    background: t.background, primary: t.primary, hard: t.hard, warning: t.warning, secondary: t.secondary, accent: t.accent };
-  const labels = { altitude: 'Altitude', fasterUp: '(faster is up)', plannedTarget: 'Planned target', avg: 'avg', max: 'max', best: 'best',
-                   top: 'top', target: 'Target', colour: 'Colour', stripHint: 'Whole activity · drag the box to move along', median: 'median' };
+  const labels = { altitude: 'Altitude', fasterUp: '(plus rapide = plus haut)', plannedTarget: 'Objectif prévu', avg: 'moy.', max: 'max', best: 'meilleur',
+                   top: 'top', target: 'Objectif', colour: 'Couleur', stripHint: 'Toute l’activité · fais glisser le cadre pour te déplacer', median: 'médiane' };
   useEffect(() => {
     if (!chartReady || !st) return;
     const d = swimMode
@@ -287,9 +287,9 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
   const hasPlot = chans.length > 0;
   const pressedLaps = !!(st && st.laps_kind === 'pressed') && sport !== 'pool_swim';
   const showCharts = !!sc.chart && (hasPlot || swimMode);
-  const tabs: ['overview' | 'charts' | 'laps', string][] = [['overview', 'Overview']];
-  if (showCharts) tabs.push(['charts', 'Charts']);
-  if (pressedLaps) tabs.push(['laps', 'Laps']);
+  const tabs: ['overview' | 'charts' | 'laps', string][] = [['overview', 'Aperçu']];
+  if (showCharts) tabs.push(['charts', 'Graphiques']);
+  if (pressedLaps) tabs.push(['laps', 'Tours']);
   const info = (label: string, text: string) => Alert.alert(label, text);
 
   const Stat = ({ m, big }: { m: any; big?: boolean }) => (
@@ -306,7 +306,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
         <View style={s.colourRow}>
           <View style={s.wrapRow}>
             {colourModes.map(m => <Seg key={m} t={t} label={CFG.colour_modes[m].label} on={colourMode === m} onPress={() => pickColour(m)} />)}
-            <Seg t={t} label="Off" on={colourMode === ''} onPress={() => setColourMode('')} />
+            <Seg t={t} label="Non" on={colourMode === ''} onPress={() => setColourMode('')} />
           </View>
           {!!cb && (
             <View style={s.wrapRow}>
@@ -362,7 +362,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
           {ov.more.length > 0 && (
             <View style={s.more}>
               <TouchableOpacity onPress={() => setMoreOpen(o => !o)} style={s.moreHead}>
-                <Text style={s.moreTitle}>More details</Text>
+                <Text style={s.moreTitle}>Plus de détails</Text>
                 <Text style={s.caption}>{ov.more.length === 1 ? '1 value' : `${ov.more.length} values`}  {moreOpen ? '▴' : '▾'}</Text>
               </TouchableOpacity>
               {moreOpen && ov.more.map((m: any) => (
@@ -378,11 +378,11 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
         <View style={s.card}>
           {swimMode ? (
             <View style={s.wrapRow}>
-              <Seg t={t} label="Time per length" on={swimY === 'len'} onPress={() => setSwimY('len')} />
-              <Seg t={t} label="Pace per 100 m" on={swimY === 'pace'} onPress={() => setSwimY('pace')} />
-              <Seg t={t} label="Colour: stroke" on={swimColour === 'stroke'} onPress={() => setSwimColour('stroke')} />
-              <Seg t={t} label="Colour: speed" on={swimColour === 'speed'} onPress={() => setSwimColour('speed')} />
-              <Seg t={t} label="Heart rate" on={swimHr} onPress={() => setSwimHr(v => !v)} />
+              <Seg t={t} label="Temps par longueur" on={swimY === 'len'} onPress={() => setSwimY('len')} />
+              <Seg t={t} label="Allure aux 100 m" on={swimY === 'pace'} onPress={() => setSwimY('pace')} />
+              <Seg t={t} label="Couleur : nage" on={swimColour === 'stroke'} onPress={() => setSwimColour('stroke')} />
+              <Seg t={t} label="Couleur : vitesse" on={swimColour === 'speed'} onPress={() => setSwimColour('speed')} />
+              <Seg t={t} label="Fréquence cardiaque" on={swimHr} onPress={() => setSwimHr(v => !v)} />
             </View>
           ) : (
             <>
@@ -396,19 +396,19 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
               <View style={s.wrapRow}>
                 {!!st?.streams?.dist && sc.chart?.x !== 'time' && (<>
                   <Seg t={t} label="Distance" on={xDist} onPress={() => setXDist(true)} />
-                  <Seg t={t} label="Time" on={!xDist} onPress={() => setXDist(false)} />
+                  <Seg t={t} label="Temps" on={!xDist} onPress={() => setXDist(false)} />
                 </>)}
                 <Seg t={t} label="−" on={false} onPress={() => zoomBy(2)} />
                 <Seg t={t} label="+" on={false} onPress={() => zoomBy(0.5)} />
                 {!hasMap && colourModes.map(m => <Seg key={m} t={t} label={CFG.colour_modes[m].label} on={colourMode === m} onPress={() => pickColour(m)} />)}
-                {!hasMap && colourModes.length > 0 && <Seg t={t} label="Off" on={colourMode === ''} onPress={() => setColourMode('')} />}
+                {!hasMap && colourModes.length > 0 && <Seg t={t} label="Non" on={colourMode === ''} onPress={() => setColourMode('')} />}
               </View>
               <View style={s.zoomInfo}>
                 <Text style={[s.caption, { flex: 1, color: zoom ? t.text : t.mutedText }]}>
                   {zoom && st ? 'Selected: ' + AVL.sectionSummary(st, chansOn, zoom[0], zoom[1])
                               : 'Drag a finger across the chart to read the values; pinch to zoom; double-tap to see everything.'}
                 </Text>
-                {!!zoom && <Seg t={t} label="Show all" on={false} onPress={() => { setZoom(null); stretchOnMap(null);
+                {!!zoom && <Seg t={t} label="Tout afficher" on={false} onPress={() => { setZoom(null); stretchOnMap(null);
                   chartRef.current?.injectJavaScript('window.ChartPage.setState({"zoom":null}); true;'); }} />}
               </View>
             </>
@@ -461,7 +461,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
               <Text style={s.lapCell}>{l.avg_hr || ''}</Text>
               <Text style={s.lapCell}>{l.max_hr || ''}</Text>
             </TouchableOpacity>))}
-          <Text style={s.caption}>Tap a lap to see it on the map.</Text>
+          <Text style={s.caption}>Touche un tour pour le voir sur la carte.</Text>
         </View>)}
     </View>
   );

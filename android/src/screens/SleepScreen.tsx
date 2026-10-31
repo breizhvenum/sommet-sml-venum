@@ -209,10 +209,10 @@ records on its own. Tap "Get last night" in the morning.`);
       )}
 
       {hrvSeries.length >= 2 && (
-        <MetricChart label="Overnight HRV (RMSSD)" unit=" ms" series={hrvSeries} decimals={0} />
+        <MetricChart label="VFC nocturne (RMSSD)" unit=" ms" series={hrvSeries} decimals={0} />
       )}
       {rhrSeries.length >= 2 && (
-        <MetricChart label="Resting HR (overnight)" unit=" bpm" series={rhrSeries} decimals={0} />
+        <MetricChart label="FC au repos (nuit)" unit=" bpm" series={rhrSeries} decimals={0} />
       )}
     </ScrollView>
   );

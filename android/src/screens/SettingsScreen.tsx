@@ -17,10 +17,10 @@ import { useExperimental } from '../config/ExperimentalContext';
 // sidebar" card - Intervals, App Zone, Smart Sensor, Coach. Training Program is Android-only here
 // (the desktop shows it without a switch). GPS Track Pod isn't on Android; T6/X6 is desktop-only.
 const EXP_FEATURE_ROWS = [
-  { flag: 'intervals' as const,   label: 'Intervals',    desc: 'Build interval workouts.',              screen: 'Intervals' as const },
-  { flag: 'appZone' as const,     label: 'App Zone',     desc: 'Build & install Suunto Apps.',          screen: 'AppZone' as const },
-  { flag: 'smartSensor' as const, label: 'Smart Sensor', desc: 'Suunto HR belt over Bluetooth.',        screen: 'SmartSensor' as const },
-  { flag: 'coach' as const,       label: 'Coach',        desc: 'Readiness beacon + chat, v2 concept.',  screen: 'Coach' as const },
+  { flag: 'intervals' as const,   label: 'Intervals',    desc: 'Crée des séances d’intervalles.',              screen: 'Intervals' as const },
+  { flag: 'appZone' as const,     label: 'App Zone',     desc: 'Crée et installe des applis Suunto.',          screen: 'AppZone' as const },
+  { flag: 'smartSensor' as const, label: 'Smart Sensor', desc: 'Ceinture cardiaque Suunto en Bluetooth.',        screen: 'SmartSensor' as const },
+  { flag: 'coach' as const,       label: 'Coach',        desc: 'Indicateur de forme + discussion (concept v2).',  screen: 'Coach' as const },
   { flag: 'workoutCalendar' as const, label: t.experimentalWorkoutCalendar, desc: t.experimentalWorkoutCalendarDesc, screen: 'WorkoutCalendar' as const },
 ];
 import { isMarkSyncedEnabled, setMarkSyncedEnabled as persistMarkSynced } from '../services/MarkSynced';
@@ -318,7 +318,7 @@ export default function SettingsScreen() {
     const lat = parseFloat(latText.replace(',', '.'));
     const lon = parseFloat(lonText.replace(',', '.'));
     if (isNaN(lat) || isNaN(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-      Alert.alert('Weather', 'Enter a latitude (-90 to 90) and a longitude (-180 to 180).');
+      Alert.alert('Météo', 'Saisis une latitude (-90 à 90) et une longitude (-180 à 180).');
       return;
     }
     setWeatherManual(true);
@@ -549,9 +549,9 @@ export default function SettingsScreen() {
     try {
       const url = emberSyncUrl.trim();
       await setEmberSyncCfg(url ? { url, token: emberSyncToken.trim() } : null);
-      Alert.alert('Ember', url ? 'Ember sync saved.' : 'Ember sync cleared (local only).');
+      Alert.alert('Ember', url ? 'Synchro Ember enregistrée.' : 'Synchro Ember effacée (local uniquement).');
     } catch (e: any) {
-      Alert.alert('Error', e?.message ?? 'Failed to save');
+      Alert.alert('Erreur', e?.message ?? 'Échec de l’enregistrement');
     } finally {
       setSavingEmberSync(false);
     }
@@ -565,7 +565,7 @@ export default function SettingsScreen() {
       setSommetStatus(url ? 'Saved.' : 'Sync turned off.');
       setSommetSaved(!!url);
     } catch (e: any) {
-      setSommetStatus(e?.message ?? 'Failed to save');
+      setSommetStatus(e?.message ?? 'Échec de l’enregistrement');
     } finally {
       setSavingSommet(false);
     }
@@ -596,10 +596,10 @@ export default function SettingsScreen() {
       setSommetSaved(!!url);
       const r = await runSommetSync();
       setSommetStatus(r.ok
-        ? `Synced — ${r.pulled} received, ${r.pushed} sent.`
+        ? `Synchronisé — ${r.pulled} reçus, ${r.pushed} envoyés.`
         : 'Couldn’t reach the server — will retry later.');
     } catch (e: any) {
-      setSommetStatus(e?.message ?? 'Sync failed');
+      setSommetStatus(e?.message ?? 'Échec de la synchronisation');
     } finally {
       setSyncingSommet(false);
     }
@@ -700,7 +700,7 @@ export default function SettingsScreen() {
     try {
       const r = await importActivitiesFromIntervals();
       Alert.alert(t.intervalsSection,
-        `Imported ${r.imported} activit${r.imported === 1 ? 'y' : 'ies'} from intervals.icu.`);
+        `${r.imported} activité${r.imported === 1 ? '' : 's'} importée${r.imported === 1 ? '' : 's'} depuis intervals.icu.`);
     } catch (e: any) {
       Alert.alert(t.error, e?.message ?? String(e));
     } finally {
@@ -757,28 +757,28 @@ export default function SettingsScreen() {
           status={intervalsSaved
             ? (intervalsAthleteId ? `connected (athlete ${intervalsAthleteId})` : 'connected')
             : 'not connected'}
-          action={intervalsSaved ? 'Manage' : 'Set up'}
+          action={intervalsSaved ? 'Gérer' : 'Configurer'}
           onPress={() => setOpenConnection('intervals')}
         />
         <ConnectionRow
           name="basedevitesse.com"
           connected={!!bdvAccount}
           status={bdvAccount ? (bdvAccount.name || `IDuser ${bdvAccount.idUser}`) : 'not connected'}
-          action={bdvAccount ? 'Manage' : 'Set up'}
+          action={bdvAccount ? 'Gérer' : 'Configurer'}
           onPress={() => setOpenConnection('bdv')}
         />
         <ConnectionRow
           name={t.runalyzeSection}
           connected={!!savedKey}
           status={savedKey ? 'connected' : 'not connected'}
-          action={savedKey ? 'Manage' : 'Set up'}
+          action={savedKey ? 'Gérer' : 'Configurer'}
           onPress={() => setOpenConnection('runalyze')}
         />
         <ConnectionRow
           name={t.stravaSection}
           connected={stravaAuth}
           status={stravaAuth ? 'connected' : 'not connected'}
-          action={stravaAuth ? 'Manage' : 'Connect'}
+          action={stravaAuth ? 'Gérer' : 'Connecter'}
           onPress={() => setOpenConnection('strava')}
         />
         {/* Bluetooth body scale (Etekcity FIT 8S): listened to directly, no account. */}
@@ -786,7 +786,7 @@ export default function SettingsScreen() {
           name="Bluetooth scale"
           connected={!!scaleAddr && scaleStatus().listening}
           status={!scaleAddr ? 'not set up' : scaleStatus().listening ? 'listening' : 'not listening'}
-          action={scaleAddr ? 'Manage' : 'Set up'}
+          action={scaleAddr ? 'Gérer' : 'Configurer'}
           onPress={() => setScaleOpen(true)}
         />
         <ScaleSetupModal visible={scaleOpen} onClose={() => setScaleOpen(false)}
@@ -925,20 +925,20 @@ export default function SettingsScreen() {
                 </View>
                 <Text style={styles.sectionDesc}>{t.gearImportHint}</Text>
                 {/* Import ALL activities from intervals.icu into the app (André, 2026-08-18). */}
-                <Text style={[styles.cardTitle, { marginTop: 16 }]}>Activities</Text>
+                <Text style={[styles.cardTitle, { marginTop: 16 }]}>Activités</Text>
                 <View style={styles.row}>
-                  <Button label="Import activities" variant="filled" loading={actsImporting} onPress={handleImportActivities} />
+                  <Button label="Importer les activités" variant="filled" loading={actsImporting} onPress={handleImportActivities} />
                 </View>
                 <Text style={styles.sectionDesc}>
                   Pulls every activity from intervals.icu into the app (list, Totals, Calendar).
                   Already-synced watch moves are skipped, so nothing double-counts.
                 </Text>
                 {/* 🟣76 (2026-10-27): Sommet's own weigh-ins go to intervals.icu; devices never do. */}
-                <Text style={[styles.cardTitle, { marginTop: 16 }]}>Weigh-ins</Text>
-                <SwitchLine value={sendWeighIns} label="Send my weigh-ins to intervals.icu"
+                <Text style={[styles.cardTitle, { marginTop: 16 }]}>Pesées</Text>
+                <SwitchLine value={sendWeighIns} label="Envoyer mes pesées à intervals.icu"
                   onValueChange={v => { setSendWeighInsState(v); setSendWeighIns(v); }} />
                 {sendWeighIns && (
-                  <SwitchLine value={sendBodyFat} label="Also send the estimated body fat"
+                  <SwitchLine value={sendBodyFat} label="Envoyer aussi la masse grasse estimée"
                     onValueChange={v => { setSendBodyFatState(v); setSendBodyFat(v); }} />
                 )}
                 <Text style={styles.sectionDesc}>
@@ -985,12 +985,12 @@ export default function SettingsScreen() {
           are still experimental. ── */}
       <View style={styles.section} onLayout={recordCard('sidebar')}>
         <View style={styles.cardHead}>
-          <Text style={styles.cardTitle}>Show in the sidebar</Text>
+          <Text style={styles.cardTitle}>Afficher dans le menu</Text>
         </View>
         {/* Race Plan (2026-09-29, desktop parity: same wording, off by default). */}
         <SidebarSwitch
-          title="Race Plan"
-          description="BRM/ultra race planner: import a GPX + roadbook, then get realistic arrival times, cutoff margins, weather, sleep and resupply along the route. Still rough — turn it on to try it."
+          title="Plan de course"
+          description="Planificateur de courses BRM/ultra : importe un GPX + roadbook et obtiens des heures d’arrivée réalistes, les marges sur les barrières horaires, la météo, le sommeil et le ravitaillement le long du parcours. Encore brut — active-le pour l’essayer."
           value={racePlanOn}
           onValueChange={async v => { await setRacePlanEnabled(v); setRacePlanOn(v); }}
         />
@@ -998,7 +998,7 @@ export default function SettingsScreen() {
             settings are in the Ember row below, shown once it's on. */}
         <SidebarSwitch
           title="Ember"
-          description="Fast & calorie tracking companion. Logs made on your phone show here as charts. Still rough — turn it on to try it."
+          description="Suivi du jeûne et des calories. Les saisies faites sur ton téléphone s’affichent ici en graphiques. Encore brut — active-le pour l’essayer."
           value={emberOn}
           onValueChange={async v => { await setEmberUnlocked(v); setEmberOn(v); }}
         />
@@ -1022,14 +1022,14 @@ export default function SettingsScreen() {
         {isMageneAvailable() && (
           <>
             <View style={{ marginTop: 10 }}>
-              <Text style={[styles.connRowText, { fontWeight: '700' }]}>Devices</Text>
+              <Text style={[styles.connRowText, { fontWeight: '700' }]}>Appareils</Text>
               <Text style={{ fontSize: 12, color: theme.mutedText, marginTop: 2 }}>
                 A card on Home and a choice in the Bluetooth pairing list. Plugged-in devices always show.
               </Text>
             </View>
             <SidebarSwitch
               title="Magene C406"
-              description="Bike GPS over Bluetooth."
+              description="GPS vélo en Bluetooth."
               value={features.magene}
               onValueChange={v => setFeature('magene', v)}
             />
@@ -1059,13 +1059,13 @@ export default function SettingsScreen() {
       <View style={[styles.section, styles.rowsCard]} onLayout={recordCard('rows')}>
         {/* Activities - the extra power numbers most rides don't need (desktop parity). */}
         <SettingsSection
-          title="Activities"
-          summary={`Advanced power numbers: ${advancedPower ? 'on' : 'off'}`}
+          title="Activités"
+          summary={`Chiffres de puissance avancés : ${advancedPower ? 'oui' : 'non'}`}
           open={isOpen('activities')}
           onToggle={toggleSection('activities')}
           onLayout={recordRow('activities')}
         >
-          <SwitchLine value={advancedPower} onValueChange={handleToggleAdvancedPower} label="Advanced power numbers" />
+          <SwitchLine value={advancedPower} onValueChange={handleToggleAdvancedPower} label="Chiffres de puissance avancés" />
           <Text style={styles.sectionDesc}>
             Adds normalized power, training load (TSS), intensity factor and work to rides with a power
             meter. Uses the FTP from your intervals.icu settings.
@@ -1078,8 +1078,8 @@ export default function SettingsScreen() {
             appears on the Health screen. Any strap advertising the HR service works (Verity Sense,
             COOSPO, …) - the reader is device-agnostic. ── */}
         <SettingsSection
-          title="Health"
-          summary={`Sleep score: ${icuSleepScore ? 'from intervals.icu' : "Sommet's own"} · strap HRV: ${strapHrvEnabled ? 'on' : 'off'}`}
+          title="Santé"
+          summary={`Score de sommeil : ${icuSleepScore ? 'depuis intervals.icu' : 'celui de l’appli'} · VFC ceinture : ${strapHrvEnabled ? 'oui' : 'non'}`}
           icon="health"
           open={isOpen('health')}
           onToggle={toggleSection('health')}
@@ -1092,10 +1092,10 @@ export default function SettingsScreen() {
           </Text>
           {/* Which sleep score Health shows (André, 2026-10-04: "can we make it selectable?"). */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
-            <Text style={[styles.connRowText, { flex: 1 }]}>Sleep score</Text>
+            <Text style={[styles.connRowText, { flex: 1 }]}>Score de sommeil</Text>
             <Dropdown
               value={icuSleepScore ? 1 : 0}
-              choices={[{ value: 0, label: "Sommet's own" }, { value: 1, label: 'From intervals.icu' }]}
+              choices={[{ value: 0, label: 'Celui de l’appli' }, { value: 1, label: 'Depuis intervals.icu' }]}
               onSelect={v => { setIcuSleepScore(v === 1); setSleepScoreSource(v === 1 ? 'intervals' : 'sommet').catch(() => {}); }}
             />
           </View>
@@ -1138,7 +1138,7 @@ export default function SettingsScreen() {
           {/* Offline maps — desktop parity: SettingsPage.qml's Maps card has this button; on Android
               it used to be a top-level menu item (moved here, André 2026-09-24). Download any area of
               the world so the map works with no signal. */}
-          <Button label="Download offline maps…" icon="download" variant="outline"
+          <Button label="Télécharger des cartes hors ligne…" icon="download" variant="outline"
             onPress={() => navigation.navigate('OfflineMaps')} style={{ marginTop: 10 }} />
           {/* placed after the provider chips; the tile-cache readout follows below */}
           {/* Real, 2026-08-10 ("let's go for the offline maps solution") - TileCache.ts's own
@@ -1164,17 +1164,17 @@ export default function SettingsScreen() {
 
         {/* ── Weather (desktop parity, 2026-10-22): where Home's forecast is for. ── */}
         <SettingsSection
-          title="Weather"
-          summary={weatherLoc.placeName ? `Open-Meteo · ${weatherLoc.placeName}` : 'Provider: Open-Meteo'}
+          title="Météo"
+          summary={weatherLoc.placeName ? `Open-Meteo · ${weatherLoc.placeName}` : 'Fournisseur : Open-Meteo'}
           icon="sun"
           open={isOpen('weather')}
           onToggle={toggleSection('weather')}
           onLayout={recordRow('weather')}
         >
           <Text style={[styles.sectionDesc, { fontSize: 12 }]}>Provider: Open-Meteo</Text>
-          <Text style={[styles.connRowText, { marginTop: 4 }]}>Location source</Text>
+          <Text style={[styles.connRowText, { marginTop: 4 }]}>Source de la position</Text>
           <View style={[styles.chipRow, { justifyContent: 'flex-start', marginTop: 6 }]}>
-            {[{ manual: false, label: 'This phone (IP-based)' }, { manual: true, label: 'Manual' }].map(o => {
+            {[{ manual: false, label: 'Ce téléphone (via IP)' }, { manual: true, label: 'Manuel' }].map(o => {
               const on = weatherManual === o.manual;
               return (
                 <TouchableOpacity
@@ -1200,7 +1200,7 @@ export default function SettingsScreen() {
             </View>
           </View>
           <View style={styles.row}>
-            <Button label="Apply" variant="outline" grow={false} onPress={handleApplyWeather} />
+            <Button label="Appliquer" variant="outline" grow={false} onPress={handleApplyWeather} />
           </View>
         </SettingsSection>
 
@@ -1208,13 +1208,13 @@ export default function SettingsScreen() {
         {emberOn && (
         <SettingsSection
           title="Ember"
-          summary="Ember sync · food search key"
+          summary="Synchro Ember · clé de recherche d’aliments"
           icon="ember"
           open={isOpen('ember')}
           onToggle={toggleSection('ember')}
           onLayout={recordRow('ember')}
         >
-          <Text style={styles.cardTitle}>Ember sync</Text>
+          <Text style={styles.cardTitle}>Synchro Ember</Text>
           <Text style={styles.sectionDesc}>
             Shared store URL + token so Ember logs merge with your other devices (the same
             ember/sync.json the desktop uses). Leave blank to log on this device only.
@@ -1240,7 +1240,7 @@ export default function SettingsScreen() {
             <Button label={t.saveBtn} variant="filled" loading={savingEmberSync} onPress={handleSaveEmberSync} />
           </View>
 
-          <Text style={[styles.cardTitle, { marginTop: 12 }]}>Food search</Text>
+          <Text style={[styles.cardTitle, { marginTop: 12 }]}>Recherche d’aliments</Text>
           <Text style={styles.sectionDesc}>
             Generic foods come from USDA FoodData Central. Without your own key a shared demo key
             is used, limited to about 30 searches an hour. The key is free and stays on this phone.
@@ -1249,16 +1249,16 @@ export default function SettingsScreen() {
             icon="key"
             value={usdaKey}
             onChangeText={setUsdaKey}
-            placeholder="USDA API key (optional)"
+            placeholder="Clé API USDA (facultative)"
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
           />
           <View style={styles.row}>
-            <Button label="Get a free key" variant="outline"
+            <Button label="Obtenir une clé gratuite" variant="outline"
               onPress={() => Linking.openURL('https://fdc.nal.usda.gov/api-key-signup')} />
             <Button label={t.saveBtn} variant="filled"
-              onPress={async () => { await setUsdaApiKey(usdaKey); Alert.alert('Ember', usdaKey.trim() ? 'USDA key saved.' : 'USDA key cleared (demo key).'); }} />
+              onPress={async () => { await setUsdaApiKey(usdaKey); Alert.alert('Ember', usdaKey.trim() ? 'Clé USDA enregistrée.' : 'Clé USDA effacée (clé de démo).'); }} />
           </View>
         </SettingsSection>
         )}
@@ -1274,7 +1274,7 @@ export default function SettingsScreen() {
           onToggle={toggleSection('coach')}
           onLayout={recordRow('coach')}
         >
-          <Text style={[styles.connRowText, { fontWeight: '700' }]}>Chat with a real AI coach</Text>
+          <Text style={[styles.connRowText, { fontWeight: '700' }]}>Discuter avec un vrai coach IA</Text>
           <Text style={[styles.sectionDesc, { fontSize: 11, lineHeight: 16, marginTop: 2 }]}>
             Off, the coach replies from a few pre-written answers. On, it talks to Claude about your
             real training. This needs an API key you create at console.anthropic.com — that's a
@@ -1285,7 +1285,7 @@ export default function SettingsScreen() {
             value={chatBackend === 'claude'}
             onValueChange={handleChatBackend}
             label={chatBackend === 'claude' ? 'Claude API' : 'Canned replies'}
-            a11yLabel="Chat with a real AI coach"
+            a11yLabel="Discuter avec un vrai coach IA"
             accent
           />
           {chatBackend === 'claude' && (
@@ -1294,22 +1294,22 @@ export default function SettingsScreen() {
                 icon="key"
                 value={anthropicKey}
                 onChangeText={setAnthropicKeyInput}
-                placeholder={anthropicSaved ? 'Key saved (enter to replace)' : 'Anthropic API key'}
+                placeholder={anthropicSaved ? 'Clé enregistrée (saisir pour remplacer)' : 'Clé API Anthropic'}
                 autoCapitalize="none"
                 autoCorrect={false}
                 secureTextEntry
-                accessibilityLabel="Anthropic API key"
+                accessibilityLabel="Clé API Anthropic"
               />
               <View style={styles.row}>
                 <Button label={t.saveBtn} variant="filled" grow={false} loading={savingAnthropic}
                         disabled={!anthropicKey.trim()} onPress={handleSaveAnthropic} />
                 {anthropicSaved && (
-                  <Button label="Clear" variant="outline" grow={false} onPress={handleRemoveAnthropic} />
+                  <Button label="Effacer" variant="outline" grow={false} onPress={handleRemoveAnthropic} />
                 )}
               </View>
             </>
           )}
-          <Text style={[styles.connRowText, { fontWeight: '700', marginTop: 16 }]}>Workout catalogue</Text>
+          <Text style={[styles.connRowText, { fontWeight: '700', marginTop: 16 }]}>Catalogue d’entraînements</Text>
           <Text style={[styles.sectionDesc, { marginTop: 2 }]}>
             Bundled sample ({COACH_SAMPLE_SESSIONS} sessions). The live wahoo-systm-mcp catalogue is on
             the desktop app only.
@@ -1322,8 +1322,8 @@ export default function SettingsScreen() {
             phone (offline-first). No folder option here: phones can't keep their DB in a synced
             folder (OS sandbox) — that's desktop-only. ── */}
         <SettingsSection
-          title="Database"
-          summary={`Sync across devices: ${sommetSaved ? 'on' : 'off'}`}
+          title="Base de données"
+          summary={`Synchro entre appareils : ${sommetSaved ? 'oui' : 'non'}`}
           icon="sync"
           open={isOpen('database')}
           onToggle={toggleSection('database')}
@@ -1353,10 +1353,10 @@ export default function SettingsScreen() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
             <Button label="Test" variant="outline" onPress={handleTestSommet} />
             <Button label={t.saveBtn} variant="filled" loading={savingSommet} onPress={handleSaveSommet} />
-            <Button label="Sync now" variant="outline" loading={syncingSommet} disabled={!sommetSaved} onPress={handleSyncNow} />
+            <Button label="Synchroniser maintenant" variant="outline" loading={syncingSommet} disabled={!sommetSaved} onPress={handleSyncNow} />
           </View>
           {sommetSaved && (
-            <Button label="Stop syncing" variant="outline" grow={false} onPress={handleStopSommet}
+            <Button label="Arrêter la synchro" variant="outline" grow={false} onPress={handleStopSommet}
               style={{ marginTop: 8, alignSelf: 'flex-start' }} />
           )}
           {sommetStatus ? <StatusLine text={sommetStatus} /> : null}
@@ -1367,8 +1367,8 @@ export default function SettingsScreen() {
         <SettingsSection
           title="Suunto Apps Catalog"
           summary={catalogEntries === null ? ''
-            : catalogImported ? `Imported - ${catalogEntries} apps available`
-            : 'Not imported - only apps you create are available'}
+            : catalogImported ? `Importé - ${catalogEntries} applis disponibles`
+            : 'Non importé - seules les applis que tu crées sont disponibles'}
           icon="download"
           open={isOpen('catalog')}
           onToggle={toggleSection('catalog')}
@@ -1388,14 +1388,14 @@ export default function SettingsScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
               {catalogImported && <Icon name="check" size={16} color={theme.success} />}
               <Text style={{ fontSize: 12, color: theme.mutedText }}>
-                {catalogImported ? `Imported - ${catalogEntries} apps available`
-                  : 'Not imported - only apps you create are available'}
+                {catalogImported ? `Importé - ${catalogEntries} applis disponibles`
+                  : 'Non importé - seules les applis que tu crées sont disponibles'}
               </Text>
             </View>
           )}
           {!!catalogError && <StatusLine text={catalogError} tone="alert" />}
           <Button
-            label={catalogImporting ? 'Importing…' : catalogImported ? 'Import a different copy' : 'Import Catalog'}
+            label={catalogImporting ? 'Import…' : catalogImported ? 'Importer une autre copie' : 'Importer le catalogue'}
             icon="download" variant="outline" grow={false} loading={catalogImporting}
             disabled={catalogImporting || catalogEntries === null}
             onPress={handleImportCatalog} style={{ marginTop: 10, alignSelf: 'flex-start' }} />
@@ -1405,7 +1405,7 @@ export default function SettingsScreen() {
         {/* The feature switches moved to "Show in the sidebar" (2026-10-21). */}
         <SettingsSection
           title={t.experimentalSection}
-          summary={`Mark synced workouts: ${markSyncedEnabled ? 'on' : 'off'}`}
+          summary={`Marquer les entraînements synchronisés : ${markSyncedEnabled ? 'oui' : 'non'}`}
           icon="watch"
           open={isOpen('experimental')}
           onToggle={toggleSection('experimental')}
@@ -1417,7 +1417,7 @@ export default function SettingsScreen() {
           <Text style={[styles.connRowText, { fontWeight: '700' }]}>{t.markSyncedLabel}</Text>
           <Text style={[styles.sectionDesc, { marginTop: 2 }]}>{t.markSyncedDesc}</Text>
           <SwitchLine value={markSyncedEnabled} onValueChange={handleToggleMarkSynced}
-            label={markSyncedEnabled ? 'On' : 'Off'} a11yLabel={t.markSyncedLabel} accent />
+            label={markSyncedEnabled ? 'Oui' : 'Non'} a11yLabel={t.markSyncedLabel} accent />
         </SettingsSection>
 
         {/* ── Testing mode (2026-08-16, ported from desktop): pretend a device is connected so
@@ -1425,7 +1425,7 @@ export default function SettingsScreen() {
             (Ambit3 family / Traverse / Kailash). Default OFF. ── */}
         <SettingsSection
           title={t.testingSection}
-          summary={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Off'}
+          summary={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Non'}
           icon="watch"
           open={isOpen('testing')}
           onToggle={toggleSection('testing')}
@@ -1433,7 +1433,7 @@ export default function SettingsScreen() {
         >
           <Text style={styles.sectionDesc}>{t.testingDesc}</Text>
           <SwitchLine value={demo.enabled} onValueChange={demo.setEnabled}
-            label={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Off'} a11yLabel={t.testingSection} accent />
+            label={demo.enabled ? t.testingOnShowing(demo.device.name) : 'Non'} a11yLabel={t.testingSection} accent />
           {demo.enabled && (
             <View style={{ marginTop: 10 }}>
               <Button label={t.testingChange} onPress={() => setDemoPickerOpen(true)} variant="outline" grow={false}
@@ -1456,7 +1456,7 @@ export default function SettingsScreen() {
             Flash watch firmware over USB. Advanced and irreversible — intended for a supervised
             session. Opens the firmware tool.
           </Text>
-          <Button label="Open firmware tool" icon="upload" variant="outline"
+          <Button label="Ouvrir l’outil de firmware" icon="upload" variant="outline"
             onPress={() => navigation.navigate('Firmware')} style={{ marginTop: 10 }} />
         </SettingsSection>
         )}
@@ -1464,8 +1464,8 @@ export default function SettingsScreen() {
         {/* ── Supported devices (desktop parity, 2026-10-22): shown while a Garmin eTrex is plugged in. ── */}
         {isGarminAttached && (
         <SettingsSection
-          title="Supported devices"
-          summary="What Sommet can read, and how it connects"
+          title="Appareils compatibles"
+          summary="Ce que l’appli sait lire et comment elle se connecte"
           icon="settings"
           open={isOpen('devices')}
           onToggle={toggleSection('devices')}

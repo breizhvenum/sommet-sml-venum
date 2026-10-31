@@ -22,7 +22,7 @@ function deviceLocale(): string {
 export const locale   = deviceLocale();
 export const isFrench = locale.toLowerCase().startsWith('fr');
 // Kept in sync with the forced English `t` above (see note there).
-export const dateLocale = 'en-GB';
+export const dateLocale = isFrench ? 'fr-FR' : 'en-GB';
 
 // Day-first dates, everywhere, regardless of the device locale - the Android counterpart of the
 // desktop DateFormat.qml singleton (André, 2026-08-27: "it should be DD/MM/YYYY everywhere").
@@ -1796,7 +1796,4 @@ const en: typeof fr = {
   gearSoonCount: (n: number) => n === 1 ? '1 service due soon' : `${n} services due soon`,
 };
 
-// Forced to English regardless of device locale (was `isFrench ? fr : en`,
-// which picked French because the device's system locale resolves to fr-*).
-// Revert to `isFrench ? fr : en` to restore automatic locale detection.
-export const t = en;
+export const t = isFrench ? fr : en;
