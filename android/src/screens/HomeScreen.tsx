@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
+import { smlRegenPending, clearSmlRegen } from '../services/SmlRegen';
 import { runSync, SyncState } from '../services/SyncService';
 import { initFitReimport, isFitReimportPending, markFitReimportDone } from '../services/FitReimport';
 import { runSommetSync } from '../services/SommetSync';
@@ -972,6 +973,21 @@ export default function HomeScreen() {
   }
   const autoSyncOnConnectRef = useRef(autoSyncOnConnect);
   autoSyncOnConnectRef.current = autoSyncOnConnect;
+
+  // "Générer le SML" pressed in an activity that has none: as soon as the watch is connected (now, or
+  // when it gets plugged in), run the full re-read, which writes the .sml files.
+  const phaseNowRef = useRef<string>('');
+  const busyNowRef = useRef(false);
+  const maybeRegenSml = useCallback(() => {
+    if (smlRegenPending() && phaseNowRef.current === 'connected' && !busyNowRef.current) {
+      clearSmlRegen();
+      handleSyncRef.current(true).catch(() => {});
+    }
+  }, []);
+  phaseNowRef.current = String(phase);
+  busyNowRef.current = isBusy;
+  useEffect(() => { maybeRegenSml(); }, [phase, isBusy]);
+  useFocusEffect(useCallback(() => { maybeRegenSml(); }, [maybeRegenSml]));
 
   // v2.3 beta: USB_DEVICE_ATTACHED now also fires for Garmin devices
   // (device_filter.xml) — it no longer implies "the Ambit was plugged in" by

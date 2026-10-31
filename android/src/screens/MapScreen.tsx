@@ -14,6 +14,7 @@ import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { readGpxFile, smlPathForGpx } from '../services/GpxService';
+import { requestSmlRegen } from '../services/SmlRegen';
 import { loadSmlStatus } from '../services/SmlActivityNames';
 import { parseTrackPoints, computeElevationStats, extractGpxMetadata, GpxMetadata, TrackPoint } from '../services/GpxParser';
 import { t, fmtDate } from '../i18n';
@@ -954,8 +955,22 @@ export default function MapScreen() {
       {smlPath && !statsFailed ? (
         <SpeedStatsPanel smlPath={smlPath} onFailed={() => setStatsFailed(true)} />
       ) : smlResolved ? (
+        <>
+        {!smlPath && (
+          <View style={{ margin: 12, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
+            <Text style={{ color: theme.text, fontSize: 15, fontWeight: '700' }}>Pas de fichier SML pour cette activité</Text>
+            <Text style={{ color: theme.mutedText, fontSize: 13, marginTop: 6 }}>
+              Les statistiques rom1rv Speed et l’envoi à basedevitesse.com ont besoin du SML. Rebranche la montre (câble fourni + adaptateur OTG), puis appuie sur le bouton : l’appli relit la montre et crée le SML.
+            </Text>
+            <TouchableOpacity activeOpacity={0.8} onPress={() => { requestSmlRegen(); navigation.navigate('Home' as any); }}
+              style={{ marginTop: 10, backgroundColor: theme.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>Générer le SML</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         <ActivityPanel activity={activity} meta={meta} hasMap mapView={mapView}
           onHover={onPanelHover} onStretch={onPanelStretch} onColoured={onPanelColoured} />
+        </>
       ) : null}
       </ScrollView>
     </View>
