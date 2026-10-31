@@ -358,6 +358,19 @@ export default function SettingsScreen() {
   // a status-dot row per service, tap-to-open a Dialog with that service's own form - not
   // four separate always-expanded full-height sections like this screen had. Same real
   // handlers/state above, this only changes which one is visible at a time.
+  const [importMsg, setImportMsg] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+  async function handleImportSml() {
+    setImportBusy(true); setImportMsg('');
+    try {
+      const r = await importSmlActivity();
+      if (r.status === 'imported') setImportMsg(`Activité ajoutée (${(r.distanceM / 1000).toFixed(2)} km, ${Math.round(r.durationS / 60)} min).`);
+      else if (r.status === 'exists') setImportMsg('Cette activité existe déjà dans l\'appli.');
+      else setImportMsg('Cette activité avait été supprimée : elle n\'est pas rajoutée.');
+    } catch (e: any) {
+      if (!String(e?.code ?? e?.message).includes('CANCEL')) setImportMsg(`Erreur : ${e?.message ?? String(e)}`);
+    } finally { setImportBusy(false); }
+  }
   const [bdvLoginTxt, setBdvLoginTxt] = useState('');
   const [bdvPassword, setBdvPassword] = useState('');
   const [bdvKeyTyped, setBdvKeyTyped] = useState('');   // only asked when this build has no key of its own
