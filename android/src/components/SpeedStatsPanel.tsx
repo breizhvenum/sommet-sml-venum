@@ -10,6 +10,17 @@ import { readSmlPoints, analyseSession, fetchMeteoVent, SpeedStats } from '../se
 
 const cache = new Map<string, SpeedStats>();
 
+// The result is also kept on the phone (reading the SML takes ~5 s, so it is done once per activity).
+// Bump the version when the calculation changes so old figures are not shown.
+const STORE_PREFIX = 'speedstats_v1:';
+function store(): any { try { return require('@react-native-async-storage/async-storage').default; } catch (e) { return null; } }
+async function loadStored(path: string): Promise<SpeedStats | null> {
+  try { const st = store(); if (!st) return null; const v = await st.getItem(STORE_PREFIX + path); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+async function saveStored(path: string, r: SpeedStats): Promise<void> {
+  try { const st = store(); if (st) await st.setItem(STORE_PREFIX + path, JSON.stringify(r)); } catch (e) { /* not kept: recomputed next time */ }
+}
+
 const kts = (v: number | null | undefined, d = 2) => (v !== null && v !== undefined && v > 0 ? v.toFixed(d) : '--');
 const hms = (ms: number) => {
   const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -23,10 +34,15 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
   const [stats, setStats] = useState<SpeedStats | null>(cache.get(smlPath) ?? null);
   const [busy, setBusy] = useState(false);
   const [meteo, setMeteo] = useState('');
-  const [times, setTimes] = useState('');
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { setStats(cache.get(smlPath) ?? null); setMeteo(''); setTimes(''); setBusy(false); }, [smlPath]);
+  useEffect(() => {
+    setStats(cache.get(smlPath) ?? null); setMeteo(''); setBusy(false);
+    if (cache.has(smlPath)) return;
+    loadStored(smlPath).then(r => {
+      if (r && alive.current && !cache.has(smlPath)) { cache.set(smlPath, r); setStats(r); setMeteo('résultat enregistré'); }
+    });
+  }, [smlPath]);
 
   // Nothing is computed when the activity opens (it is slow on a phone): the button starts it.
   function compute() {
@@ -35,20 +51,15 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
     // let "please wait..." draw first: the computation below is synchronous
     setTimeout(async () => {
       try {
-        const t0 = Date.now();
         const xml = await RNFS.readFile(smlPath, 'utf8');
-        const t1 = Date.now();
         const raw = readSmlPoints(xml);
-        const t2 = Date.now();
         // wind of the day first (5 s at most), so the alpha is computed only once
         const m = await Promise.race([fetchMeteoVent(raw), new Promise<null>(r => setTimeout(() => r(null), 5000))]);
         if (!alive.current) return;
-        const t3 = Date.now();
         const res = analyseSession(raw, m ? m.dir : null, true);
-        const t4 = Date.now();
-        setTimes(`lecture ${((t1 - t0) / 1000).toFixed(1)} s · décodage ${((t2 - t1) / 1000).toFixed(1)} s · météo ${((t3 - t2) / 1000).toFixed(1)} s · calcul ${((t4 - t3) / 1000).toFixed(1)} s`);
         if (!res) { setBusy(false); onFailed(); return; }
         cache.set(smlPath, res);
+        saveStored(smlPath, res);
         setStats(res); setBusy(false);
         setMeteo(m ? `météo ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts` : 'météo indisponible');
       } catch (e) {
@@ -107,10 +118,9 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
           <Tile label="V100m" value={kts(stats.v100m)} unit="kts" />
           <Tile label="V500m" value={kts(stats.v500m)} unit="kts" />
           <Tile label="V10km" value={kts(stats.v10000m)} unit="kts" />
-          <Tile label="Alpha 500 (250–500 m)" value={kts(stats.a500)} unit="kts" big />
+          <Tile label="Alpha 500" value={kts(stats.a500)} unit="kts" big />
         </View>
         <Text style={s.note}>{stats.useDoppler ? 'Vitesses de la montre (Doppler)' : 'Calcul par les positions GPS'} · vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}</Text>
-        {!!times && <Text style={s.note}>Durées : {times}</Text>}
       </View>
     </View>
   );

@@ -760,6 +760,9 @@ export default function SettingsScreen() {
           <IconBadge icon="sync" />
           <Text style={styles.cardTitle}>{t.connectionsSection}</Text>
         </View>
+        <Text style={styles.sectionDesc}>
+          Pour la première synchronisation de vos activités, merci de connecter la montre avec le câble fourni et l'adaptateur OTG correspondant à votre téléphone.
+        </Text>
         <ConnectionRow
           name={t.intervalsSection}
           connected={intervalsSaved}
