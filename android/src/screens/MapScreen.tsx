@@ -728,17 +728,16 @@ export default function MapScreen() {
   }
 
   async function handleUploadBdv() {
-    setShowExportMenu(false);
-    if (!smlPath) { await explainNoSml(); return; }
+    if (!smlPath) { setShowExportMenu(false); await explainNoSml(); return; }
     try {
       const c = await getBdvCredentials();
-      if (!c) { Alert.alert('basedevitesse.com', 'Renseigne d\'abord tes identifiants dans Réglages → basedevitesse.com.'); return; }
+      if (!c) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Renseigne d\'abord tes identifiants dans Réglages → basedevitesse.com.'); return; }
       setBdvSending(true);
-      const r = await loginAndListSupports(c);
-      // let the export sheet finish closing first: Android drops a Modal opened while another is dismissing
-      await new Promise(res => setTimeout(res, 400));
-      setBdvPicker(r);
+      // The support list replaces the menu entries INSIDE the same sheet (a second Modal opened while
+      // the first one closes is silently dropped on Android).
+      setBdvPicker(await loginAndListSupports(c));
     } catch (e: any) {
+      setShowExportMenu(false);
       Alert.alert('basedevitesse.com', e?.message ?? String(e));
     } finally { setBdvSending(false); }
   }
@@ -746,6 +745,7 @@ export default function MapScreen() {
   async function sendToBdv(supportId: number) {
     const picker = bdvPicker;
     setBdvPicker(null);
+    setShowExportMenu(false);
     if (!picker || !smlPath) return;
     try {
       setBdvSending(true);
@@ -758,32 +758,25 @@ export default function MapScreen() {
     } finally { setBdvSending(false); }
   }
 
-  const bdvPickerSheet = bdvPicker ? (
-    <Modal transparent visible animationType="fade" onRequestClose={() => setBdvPicker(null)}>
-      <TouchableOpacity activeOpacity={1} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setBdvPicker(null)}>
-        <View style={{ backgroundColor: theme.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: Math.round(win.height * 0.85), overflow: 'hidden' }}>
-          <Text style={{ color: theme.text, fontWeight: '600', padding: 16 }}>Support utilisé</Text>
-          <ScrollView>
-            {bdvPicker.supports.map(sp => (
-              <ExportMenuItem key={sp.id} styles={styles} label={sp.name} onPress={() => sendToBdv(sp.id)} />
-            ))}
-          </ScrollView>
-        </View>
-      </TouchableOpacity>
-    </Modal>
-  ) : null;
-
   // The export menu as a full-screen sheet over the screen (a Modal): it used to pop up inside the
   // map area, which is shorter than the 10 entries, so the top ones were cut off. Scrolls if the
   // screen is short; a tap outside closes it.
   const exportSheet = (
-    <Modal transparent visible animationType="fade" onRequestClose={() => setShowExportMenu(false)}>
+    <Modal transparent visible animationType="fade" onRequestClose={() => { setShowExportMenu(false); setBdvPicker(null); }}>
       <TouchableOpacity
         activeOpacity={1}
         style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }}
-        onPress={() => setShowExportMenu(false)}
+        onPress={() => { setShowExportMenu(false); setBdvPicker(null); }}
       >
         <View style={{ backgroundColor: theme.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: Math.round(win.height * 0.85), overflow: 'hidden' }}>
+          {bdvPicker ? (
+            <ScrollView>
+              <Text style={{ color: theme.text, fontWeight: '600', padding: 16 }}>Support utilisé</Text>
+              {bdvPicker.supports.map(sp => (
+                <ExportMenuItem key={sp.id} styles={styles} label={sp.name} onPress={() => sendToBdv(sp.id)} />
+              ))}
+            </ScrollView>
+          ) : (
           <ScrollView>
             <ExportMenuItem styles={styles} label={t.shareSml} onPress={handleShareSml} />
             <ExportMenuItem styles={styles} label={t.saveSmlDownloads} onPress={handleSaveSmlToDownloads} />
@@ -793,6 +786,7 @@ export default function MapScreen() {
             <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
             <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
           </ScrollView>
+          )}
         </View>
       </TouchableOpacity>
     </Modal>
@@ -835,8 +829,7 @@ export default function MapScreen() {
             : <Icon name="upload" size={22} color={theme.primary} />}
         </TouchableOpacity>
 
-        {showExportMenu && exportSheet}
-        {bdvPickerSheet}
+        {(showExportMenu || !!bdvPicker) && exportSheet}
         {bdvSending && <ActivityIndicator style={{ position: 'absolute', top: 12, alignSelf: 'center' }} color={theme.text} />}
 
         <GearPicker
@@ -907,7 +900,7 @@ export default function MapScreen() {
       </TouchableOpacity>
 
       {/* ── Menu d'export ── */}
-      {showExportMenu && exportSheet}
+      {(showExportMenu || !!bdvPicker) && exportSheet}
       </View>
 
       <GearPicker
