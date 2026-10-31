@@ -93,7 +93,7 @@ export function smlToGpx(xml: string): SmlGpxResult {
 
   const gpx =
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    '<gpx version="1.1" creator="Ambit Venum (from SML)" xmlns="http://www.topografix.com/GPX/1/1"' +
+    '<gpx version="1.1" creator="Ambit rom1rv (from SML)" xmlns="http://www.topografix.com/GPX/1/1"' +
     ' xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">\n' +
     (firstTime ? `  <metadata><time>${firstTime}</time></metadata>\n` : '') +
     `  <trk><name>${esc(activity)}</name>\n  <trkseg>\n` + pts.join('\n') + '\n  </trkseg></trk>\n</gpx>\n';

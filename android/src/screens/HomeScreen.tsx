@@ -1197,9 +1197,23 @@ export default function HomeScreen() {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <Text style={styles.appName}>Ambit Venum</Text>
+        <Text style={styles.appName}>Ambit rom1rv</Text>
         <Badge label={`v${APP_VERSION}`} />
       </View>
+
+      {/* First-sync notice, shown before the watch is connected. */}
+      {!connected && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginHorizontal: 16, marginBottom: 12,
+          paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, borderWidth: 1,
+          backgroundColor: theme.warning + '14', borderColor: theme.warning + '80',
+        }}>
+          <Icon name="warning" size={16} color={theme.warning} />
+          <Text style={{ flex: 1, fontSize: 13, color: theme.text }}>
+            Pour la première synchronisation de vos activités, merci de connecter la montre avec le câble fourni et l'adaptateur OTG correspondant à votre téléphone.
+          </Text>
+        </View>
+      )}
 
       {/* Gear maintenance summary — only when something needs attention; taps through to Gear. */}
       {(gearAlerts.due > 0 || gearAlerts.soon > 0) && (
