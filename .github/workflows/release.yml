@@ -44,6 +44,7 @@ jobs:
         env:
           STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
           STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          BDV_API_KEY: ${{ secrets.BDV_API_KEY }}
         run: |
           V=$(node -p "require('./package.json').version")
           mkdir -p src/config
@@ -51,6 +52,8 @@ jobs:
             "${GITHUB_SHA::7}" "$V" > src/config/version.ts
           printf "export const STRAVA_CLIENT_ID = '%s';\nexport const STRAVA_CLIENT_SECRET = '%s';\n" \
             "$STRAVA_CLIENT_ID" "$STRAVA_CLIENT_SECRET" > src/config/secrets.ts
+          # basedevitesse.com app key (repository secret BDV_API_KEY); empty when the secret is not set
+          printf "export const BDV_API_KEY = '%s';\n" "$BDV_API_KEY" > src/config/bdvKey.ts
       - name: Build the standalone release APK (bundle baked in)
         working-directory: android/android
         run: ./gradlew :app:assembleRelease --no-daemon
