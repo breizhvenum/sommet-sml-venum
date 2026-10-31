@@ -12,7 +12,7 @@ const cache = new Map<string, SpeedStats>();
 
 // The result is also kept on the phone (reading the SML takes ~5 s, so it is done once per activity).
 // Bump the version when the calculation changes so old figures are not shown.
-const STORE_PREFIX = 'speedstats_v1:';
+const STORE_PREFIX = 'speedstats_v2:';
 function store(): any { try { return require('@react-native-async-storage/async-storage').default; } catch (e) { return null; } }
 async function loadStored(path: string): Promise<SpeedStats | null> {
   try { const st = store(); if (!st) return null; const v = await st.getItem(STORE_PREFIX + path); return v ? JSON.parse(v) : null; } catch (e) { return null; }
@@ -56,7 +56,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
         // wind of the day first (5 s at most), so the alpha is computed only once
         const m = await Promise.race([fetchMeteoVent(raw), new Promise<null>(r => setTimeout(() => r(null), 5000))]);
         if (!alive.current) return;
-        const res = analyseSession(raw, m ? m.dir : null, true);
+        const res = analyseSession(raw, m ? m.dir : null, true, false);   // Doppler unticked: positions only
         if (!res) { setBusy(false); onFailed(); return; }
         cache.set(smlPath, res);
         saveStored(smlPath, res);
@@ -120,7 +120,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
           <Tile label="V10km" value={kts(stats.v10000m)} unit="kts" />
           <Tile label="Alpha 500" value={kts(stats.a500)} unit="kts" big />
         </View>
-        <Text style={s.note}>{stats.useDoppler ? 'Vitesses de la montre (Doppler)' : 'Calcul par les positions GPS'} · vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}</Text>
+        <Text style={s.note}>Vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}</Text>
       </View>
     </View>
   );

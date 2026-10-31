@@ -817,10 +817,10 @@ export async function fetchMeteoVent(points: any[]): Promise<MeteoVent | null> {
 /** Same pipeline as the analyzer's recalculer(); `meteoDir` = wind direction from fetchMeteoVent (or null).
  *  `light` skips Alpha 250 and the manoeuvre stats (turns, jibes, tacks); every other figure is the same
  *  as in the full run - lighter on a phone. */
-export function analyseSession(rawPoints: any[], meteoDir: number | null = null, light = false): SpeedStats | null {
+export function analyseSession(rawPoints: any[], meteoDir: number | null = null, light = false, doppler = true): SpeedStats | null {
   if (!rawPoints || rawPoints.length < 2) return null;
   const withSpeed = rawPoints.filter(p => p.dopplerSpeed !== null && p.dopplerSpeed !== undefined).length;
-  const useDoppler = withSpeed > 0;
+  const useDoppler = doppler && withSpeed > 0;   // doppler=false: the analyzer with "Utiliser le Doppler" unticked (positions only)
   let points: any[] = rawPoints.map(p => ({ ...p }));
   if (!useDoppler) {
     const qualite = filtrerQualiteGPS(points);
