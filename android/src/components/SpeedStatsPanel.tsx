@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity } from 'react-native';
 import RNFS from 'react-native-fs';
 import { useV3Theme } from '../theme/v3';
 import { readSmlPoints, analyseSession, fetchMeteoVent, SpeedStats } from '../services/SpeedAnalysis';
@@ -21,38 +21,41 @@ const card = (deg: number | null) => deg === null ? '--' : `${CARD[Math.round(((
 export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string; onFailed: () => void }) {
   const theme = useV3Theme();
   const [stats, setStats] = useState<SpeedStats | null>(cache.get(smlPath) ?? null);
-  const [busy, setBusy] = useState(!cache.has(smlPath));
+  const [busy, setBusy] = useState(false);
   const [meteo, setMeteo] = useState('');
+  const [times, setTimes] = useState('');
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => { setStats(cache.get(smlPath) ?? null); setMeteo(''); setTimes(''); setBusy(false); }, [smlPath]);
 
-  useEffect(() => {
-    let alive = true;
-    if (cache.has(smlPath)) { setStats(cache.get(smlPath)!); setBusy(false); return; }
+  // Nothing is computed when the activity opens (it is slow on a phone): the button starts it.
+  function compute() {
+    if (busy) return;
     setBusy(true);
-    // let the screen draw first: the computation is synchronous
-    const timer = setTimeout(async () => {
+    // let "please wait..." draw first: the computation below is synchronous
+    setTimeout(async () => {
       try {
+        const t0 = Date.now();
         const xml = await RNFS.readFile(smlPath, 'utf8');
+        const t1 = Date.now();
         const raw = readSmlPoints(xml);
-        const first = analyseSession(raw, null);
-        if (!alive) return;
-        if (!first) { onFailed(); return; }
-        cache.set(smlPath, first);
-        setStats(first); setBusy(false);
-        const m = await fetchMeteoVent(raw);
-        if (!alive) return;
-        if (m) {
-          const second = analyseSession(raw, m.dir);
-          if (second && alive) {
-            cache.set(smlPath, second); setStats(second);
-            setMeteo(`météo ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts`);
-          }
-        } else if (alive) setMeteo('météo indisponible');
+        const t2 = Date.now();
+        // wind of the day first (5 s at most), so the alpha is computed only once
+        const m = await Promise.race([fetchMeteoVent(raw), new Promise<null>(r => setTimeout(() => r(null), 5000))]);
+        if (!alive.current) return;
+        const t3 = Date.now();
+        const res = analyseSession(raw, m ? m.dir : null, true);
+        const t4 = Date.now();
+        setTimes(`lecture ${((t1 - t0) / 1000).toFixed(1)} s · décodage ${((t2 - t1) / 1000).toFixed(1)} s · météo ${((t3 - t2) / 1000).toFixed(1)} s · calcul ${((t4 - t3) / 1000).toFixed(1)} s`);
+        if (!res) { setBusy(false); onFailed(); return; }
+        cache.set(smlPath, res);
+        setStats(res); setBusy(false);
+        setMeteo(m ? `météo ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts` : 'météo indisponible');
       } catch (e) {
-        if (alive) onFailed();
+        if (alive.current) { setBusy(false); onFailed(); }
       }
-    }, 50);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [smlPath]);   // eslint-disable-line react-hooks/exhaustive-deps
+    }, 80);
+  }
 
   const s = StyleSheet.create({
     wrap: { padding: 12 },
@@ -75,11 +78,18 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
     </View></View>
   );
 
-  if (busy || !stats) {
+  if (!stats) {
     return (
-      <View style={[s.wrap, { alignItems: 'center', paddingVertical: 32 }]}>
-        <ActivityIndicator color={theme.text} />
-        <Text style={s.note}>Calcul des statistiques…</Text>
+      <View style={[s.wrap, { alignItems: 'center', paddingVertical: 24 }]}>
+        <TouchableOpacity onPress={compute} disabled={busy} activeOpacity={0.8}
+          style={{ backgroundColor: theme.primary, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20, opacity: busy ? 0.7 : 1 }}>
+          {busy
+            ? <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <ActivityIndicator color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '700', marginLeft: 10 }}>(please wait...)</Text>
+              </View>
+            : <Text style={{ color: '#fff', fontWeight: '700', textAlign: 'center' }}>Calculer les statistiques vitesses by Venum</Text>}
+        </TouchableOpacity>
       </View>
     );
   }
@@ -88,46 +98,19 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
   return (
     <View style={s.wrap}>
       <View style={s.card}>
-        <Text style={s.h}>Général · session du {date}</Text>
+        <Text style={s.h}>Statistiques vitesses by Venum · {date}</Text>
         <View style={s.grid}>
-          <Tile label="Durée" value={hms(stats.durationMs)} />
-          <Tile label="Distance" value={(stats.distanceM / 1000).toFixed(2)} unit="km" />
+          <Tile label="Distance totale" value={(stats.distanceM / 1000).toFixed(2)} unit="km" />
+          <Tile label="Vmax" value={kts(stats.vmax)} unit="kts" big />
+          <Tile label="V10s" value={kts(stats.v10s)} unit="kts" big />
+          <Tile label="Top 5 × 10s (moy.)" value={kts(stats.top5x10s)} unit="kts" big />
+          <Tile label="V100m" value={kts(stats.v100m)} unit="kts" />
+          <Tile label="V500m" value={kts(stats.v500m)} unit="kts" />
+          <Tile label="V10km" value={kts(stats.v10000m)} unit="kts" />
+          <Tile label="Alpha 500 (250–500 m)" value={kts(stats.a500)} unit="kts" big />
         </View>
-      </View>
-      <View style={s.card}>
-        <Text style={s.h}>Vitesses (nœuds)</Text>
-        <View style={s.grid}>
-          <Tile label="Vmax" value={kts(stats.vmax)} big />
-          <Tile label="V10s" value={kts(stats.v10s)} big />
-          <Tile label="Top 5 × 10s (moy.)" value={kts(stats.top5x10s)} big />
-          <Tile label="V100m" value={kts(stats.v100m)} />
-          <Tile label="V500m" value={kts(stats.v500m)} />
-          <Tile label="V1000m" value={kts(stats.v1000m)} />
-          <Tile label="V1852m (mille)" value={kts(stats.v1852m)} />
-          <Tile label="V5km" value={kts(stats.v5000m)} />
-          <Tile label="V10km" value={kts(stats.v10000m)} />
-        </View>
-        <Text style={s.note}>{stats.useDoppler ? 'Vitesses de la montre (Doppler)' : 'Calcul par les positions GPS'}</Text>
-      </View>
-      <View style={s.card}>
-        <Text style={s.h}>Alphas (nœuds)</Text>
-        <View style={s.grid}>
-          <Tile label="Alpha 250 (125–250 m)" value={kts(stats.a250)} big />
-          <Tile label="Alpha 500 (250–500 m)" value={kts(stats.a500)} big />
-        </View>
-      </View>
-      <View style={s.card}>
-        <Text style={s.h}>Manœuvres</Text>
-        <View style={s.grid}>
-          <Tile label="Demi-tours" value={stats.turns > 0 ? String(stats.turns) : '--'}
-                sub={stats.turns > 0 ? `${stats.jibes} jibe${stats.jibes > 1 ? 's' : ''} · ${stats.tacks} tack${stats.tacks > 1 ? 's' : ''}` : undefined} />
-          <Tile label="Vent" value={card(stats.windDir)} />
-          <Tile label="Meilleur jibe" value={kts(stats.vminJibe, 1)} unit="kts"
-                sub={stats.nJibe ? `sur ${stats.nJibe} empannage(s)${stats.moyJibe != null ? ' · moy ' + stats.moyJibe.toFixed(1) : ''}` : undefined} />
-          <Tile label="Meilleur virement" value={kts(stats.vminTack, 1)} unit="kts"
-                sub={stats.nTack ? `sur ${stats.nTack} virement(s)${stats.moyTack != null ? ' · moy ' + stats.moyTack.toFixed(1) : ''}` : undefined} />
-        </View>
-        <Text style={s.note}>Vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}</Text>
+        <Text style={s.note}>{stats.useDoppler ? 'Vitesses de la montre (Doppler)' : 'Calcul par les positions GPS'} · vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}</Text>
+        {!!times && <Text style={s.note}>Durées : {times}</Text>}
       </View>
     </View>
   );

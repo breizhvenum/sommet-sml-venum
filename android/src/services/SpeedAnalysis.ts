@@ -68,20 +68,32 @@ function lireDate(txt: any): number {
 }
 const lireNombre = (t: any): number | null => { if (t === null || t === undefined) return null; const v = parseFloat(String(t).trim()); return isFinite(v) ? v : null; };
 
+// Plain indexOf scans (no regular expressions): on a phone's JS engine a regex over a multi-MB SML is very slow.
 function tag(block: string, name: string): string | null {
-  const m = block.match(new RegExp('<' + name + '>([^<]*)</' + name + '>'));
-  return m ? m[1] : null;
+  const open = '<' + name + '>';
+  const a = block.indexOf(open);
+  if (a < 0) return null;
+  const from = a + open.length;
+  const b = block.indexOf('</' + name + '>', from);
+  if (b < 0) return null;
+  const v = block.substring(from, b);
+  return v.indexOf('<') >= 0 ? null : v;   // same as the former [^<]* match
 }
 
 /** Points (lat, lon, time, dopplerSpeed m/s, sat) read from a Suunto SML, same rules as the analyzer. */
 export function readSmlPoints(smlText: string): any[] {
-  if (!/<sml[\s>]/.test(smlText)) throw new Error('not an SML');
-  const hdr = smlText.match(/<Header>([\s\S]*?)<\/Header>/);
-  const debutLocal = hdr ? lireDate(tag(hdr[1], 'DateTime')) : NaN;
+  if (smlText.indexOf('<sml') < 0) throw new Error('not an SML');
+  const h0 = smlText.indexOf('<Header>'), h1 = h0 >= 0 ? smlText.indexOf('</Header>', h0) : -1;
+  const debutLocal = h0 >= 0 && h1 > h0 ? lireDate(tag(smlText.substring(h0, h1), 'DateTime')) : NaN;
   const samples: string[] = [];
-  const re = /<Sample>([\s\S]*?)<\/Sample>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(smlText))) samples.push(m[1]);
+  for (let pos = 0; ;) {
+    const a = smlText.indexOf('<Sample>', pos);
+    if (a < 0) break;
+    const b = smlText.indexOf('</Sample>', a);
+    if (b < 0) break;
+    samples.push(smlText.substring(a + 8, b));
+    pos = b + 9;
+  }
   const tempsSample = (s: string) => {
     const u = tag(s, 'UTC');
     if (u !== null) { const t = lireDate(u); if (isFinite(t)) return t; }
@@ -802,8 +814,10 @@ export async function fetchMeteoVent(points: any[]): Promise<MeteoVent | null> {
 }
 
 // ───────────────────────── main ─────────────────────────
-/** Same pipeline as the analyzer's recalculer(); `meteoDir` = wind direction from fetchMeteoVent (or null). */
-export function analyseSession(rawPoints: any[], meteoDir: number | null = null): SpeedStats | null {
+/** Same pipeline as the analyzer's recalculer(); `meteoDir` = wind direction from fetchMeteoVent (or null).
+ *  `light` skips Alpha 250 and the manoeuvre stats (turns, jibes, tacks); every other figure is the same
+ *  as in the full run - lighter on a phone. */
+export function analyseSession(rawPoints: any[], meteoDir: number | null = null, light = false): SpeedStats | null {
   if (!rawPoints || rawPoints.length < 2) return null;
   const withSpeed = rawPoints.filter(p => p.dopplerSpeed !== null && p.dopplerSpeed !== undefined).length;
   const useDoppler = withSpeed > 0;
@@ -831,6 +845,7 @@ export function analyseSession(rawPoints: any[], meteoDir: number | null = null)
     }
     points[0].speed = points[1] ? points[1].speed : 0;
   }
+  const none: any = { speed: 0, ranges: [] };
   const vent = choisirVent(points, meteoDir);
   const windUsed = vent.dir;
   let v100m = getBestSpeedDistance(points, 100, useDoppler);
@@ -863,9 +878,9 @@ export function analyseSession(rawPoints: any[], meteoDir: number | null = null)
   const v10sRange = (v10s.ranges && v10s.ranges.length > 0) ? v10s.ranges[0] : null;
   let top5 = getTopNAvgSpeedWindowSingleHeading(points, 10, 5, useDoppler, useDoppler ? null : v10s.speed, useDoppler ? null : v10sRange);
   if (!useDoppler && v10s.speed > 0 && top5.speed > v10s.speed + 0.01) top5 = { speed: v10s.speed, ranges: top5.ranges };
-  const a250 = getAlphaExclu(ptsLong, distLong, 250, 125, useDoppler, windUsed);
+  const a250 = light ? none : getAlphaExclu(ptsLong, distLong, 250, 125, useDoppler, windUsed);
   const a500 = getAlphaExclu(ptsLong, distLong, 500, 250, useDoppler, windUsed);
-  const ss = statsSession(points, windUsed);
+  const ss = light ? { tot: 0, jib: 0, tack: 0, nJibe: 0, nTack: 0, vminJibe: null, vminTack: null, moyJibe: null, moyTack: null } : statsSession(points, windUsed);
   return {
     date: rawPoints[0].time,
     durationMs: rawPoints[rawPoints.length - 1].time - rawPoints[0].time,
