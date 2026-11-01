@@ -47,6 +47,8 @@ jobs:
           BDV_API_KEY: ${{ secrets.BDV_API_KEY }}
         run: |
           V=$(node -p "require('./package.json').version")
+          # Shown in the app: the real release tag (e.g. v0.2.50-sml -> 0.2.50-sml), not package.json's number
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ -n "${GITHUB_REF_NAME}" ]; then V="${GITHUB_REF_NAME#v}"; fi
           mkdir -p src/config
           printf "export const BUILD_SHA = '%s';\nexport const APP_VERSION = '%s';\n" \
             "${GITHUB_SHA::7}" "$V" > src/config/version.ts
