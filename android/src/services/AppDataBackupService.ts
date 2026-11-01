@@ -103,7 +103,7 @@ export function isRestorableBundle(b: any): b is AppDataBundle {
 
 function timestampName(now = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `Sommet-data-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+  return `rom1rv-data-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
     + `-${pad(now.getHours())}${pad(now.getMinutes())}.sommetdata`;
 }
 
@@ -176,7 +176,7 @@ export interface RestoreResult { activities: number; gear: number; files: number
  * so a restored activity row always has its GPX/FIT on disk. */
 export async function applyAppDataBundle(bundle: AppDataBundle): Promise<RestoreResult> {
   if (!isRestorableBundle(bundle)) {
-    throw new Error('This file is not a Sommet app-data backup.');
+    throw new Error('This file is not a rom1rv app-data backup.');
   }
   const db = await getDb();  // ensures every table exists before we insert
   for (const [k, v] of Object.entries(bundle.extras ?? {})) {
@@ -226,7 +226,7 @@ export async function restoreAppDataFromFile(): Promise<RestoreResult> {
   try {
     bundle = JSON.parse(text);
   } catch {
-    throw new Error('This file could not be read as a Sommet backup.');
+    throw new Error('This file could not be read as a rom1rv backup.');
   }
   return applyAppDataBundle(bundle);
 }

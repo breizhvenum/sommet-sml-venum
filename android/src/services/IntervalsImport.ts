@@ -41,7 +41,7 @@ export async function importActivitiesFromIntervals(afterDate?: string): Promise
   const url = `${API_BASE}/athlete/${encodeURIComponent(creds.athleteId)}/activities`
     + `?oldest=${oldest}&newest=${newest}`;
   const resp = await fetch(url, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) throw new Error(`intervals.icu activities: HTTP ${resp.status}`);
   const acts = await resp.json();

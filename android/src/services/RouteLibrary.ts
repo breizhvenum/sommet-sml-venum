@@ -112,5 +112,5 @@ export async function deleteLibraryRoute(id: string): Promise<void> {
 export function pointsToGpx(name: string, points: { lat: number; lon: number; ele?: number | null }[]): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const pts = points.map(p => `<trkpt lat="${p.lat}" lon="${p.lon}">${p.ele != null ? `<ele>${p.ele}</ele>` : ''}</trkpt>`);
-  return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Sommet"><trk><name>${esc(name)}</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="rom1rv"><trk><name>${esc(name)}</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
 }

@@ -98,7 +98,7 @@ export async function deleteIntervalsIcuActivity(activityId: string): Promise<bo
     method: 'DELETE',
     headers: {
       Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`),
-      'User-Agent': 'Sommet/1.0',
+      'User-Agent': 'rom1rv/1.0',
     },
   });
   return resp.ok || resp.status === 404;
@@ -122,7 +122,7 @@ export interface AthleteThresholds {
 async function estimateMap(athleteId: string, apiKey: string, ftp?: number): Promise<{ map?: number; mapSource?: string }> {
   try {
     const r = await fetch(`${API_BASE}/athlete/${encodeURIComponent(athleteId)}/power-curves?type=Ride&curves=90d`, {
-      headers: { Authorization: authHeader(apiKey), 'User-Agent': 'Sommet/1.0' },
+      headers: { Authorization: authHeader(apiKey), 'User-Agent': 'rom1rv/1.0' },
     });
     if (r.ok) {
       const d: any = await r.json();
@@ -151,7 +151,7 @@ export async function getAthleteThresholds(): Promise<AthleteThresholds | null> 
   const creds = await getIntervalsIcuCredentials();
   if (!creds) return null;
   const resp = await fetch(`${API_BASE}/athlete/${encodeURIComponent(creds.athleteId)}`, {
-    headers: { Authorization: authHeader(creds.apiKey), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: authHeader(creds.apiKey), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) return null;
   let prof: any = await resp.json();
@@ -178,7 +178,7 @@ export async function putAthleteThresholds(
   const creds = await getIntervalsIcuCredentials();
   if (!creds) return false;
   const headers = {
-    Authorization: authHeader(creds.apiKey), 'User-Agent': 'Sommet/1.0',
+    Authorization: authHeader(creds.apiKey), 'User-Agent': 'rom1rv/1.0',
     'Content-Type': 'application/json',
   };
   const ss: any = {};

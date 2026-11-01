@@ -91,7 +91,7 @@ export async function fetchPlaceName(latitude: number, longitude: number): Promi
     // Nominatim's usage policy requires a real identifying User-Agent - same real header
     // weatherservice.cpp's own fetchPlaceName() sends.
     const res = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
-      headers: { 'User-Agent': 'Sommet/2.0' },
+      headers: { 'User-Agent': 'rom1rv/2.0' },
     });
     if (!res.ok) return '';
     const body = await res.json();
@@ -117,7 +117,7 @@ const IP_LOCATION_SERVICES = [
 export async function detectLocationFromIp(): Promise<{ latitude: number; longitude: number } | null> {
   for (const url of IP_LOCATION_SERVICES) {
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'Sommet/2.0' } });
+      const res = await fetch(url, { headers: { 'User-Agent': 'rom1rv/2.0' } });
       if (!res.ok) continue;
       const body = await res.json();
       if (body?.error) continue;

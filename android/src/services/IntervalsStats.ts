@@ -36,7 +36,7 @@ export async function computeActivityClass(weeks = 4): Promise<number | null> {
   // Basic auth, same as the rest of ApiIntervalsIcu; an explicit UA (intervals.icu 403s some
   // default agents).
   const resp = await fetch(url, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) throw new Error(`intervals.icu activities: HTTP ${resp.status}`);
   const acts = await resp.json();

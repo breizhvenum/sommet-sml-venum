@@ -112,7 +112,7 @@ const fr = {
   // what the user now sees instead of a silently stale "Connected" label.
   homeBleDisconnectedError: 'La montre a fermé la liaison Bluetooth. Sur la montre, choisissez « Sync now », puis touchez « Connecter … en Bluetooth ».',
   homeBleAdapterOffError: 'Le Bluetooth de cet appareil a été coupé. Rallumez-le, choisissez « Sync now » sur la montre, puis touchez « Connecter … en Bluetooth ».',
-  homeBleSessionEnded: 'La montre a terminé la session Bluetooth. Choisissez « Sync now » sur la montre : Sommet se reconnecte tout seul.',
+  homeBleSessionEnded: 'La montre a terminé la session Bluetooth. Choisissez « Sync now » sur la montre : rom1rv se reconnecte tout seul.',
   watchBleClosedError: 'La montre a fermé la liaison Bluetooth. Sur la montre, choisissez « Sync now », puis touchez « Connecter … en Bluetooth » dans Accueil, et réessayez.',
   sportModesBackupFailed: 'Impossible d’enregistrer une copie des modes sport de la montre, rien n’a été écrit',
   homePairWatchPill: 'Associer',
@@ -447,7 +447,7 @@ const fr = {
   poiSection:    'Ajouter un POI',
   poiDesc:       "Envoie un point d'intérêt à la montre par câble, en préservant ceux déjà présents.",
   poiName:       'Nom',
-  poiNamePlaceholder: 'ex : Sommet',
+  poiNamePlaceholder: 'ex : Spot',
   poiLat:        'Latitude',
   poiType:       'Type',
   poiLon:        'Longitude',
@@ -473,7 +473,7 @@ const fr = {
   poiItemExportBtn: 'Exporter',
   poiItemRemoveBtn: 'Retirer',
   poiRemoveTitle: 'Retirer de la montre',
-  poiRemoveConfirm: (name: string) => `Retirer « ${name} » de la montre ? Sommet garde d’abord une copie des POI.`,
+  poiRemoveConfirm: (name: string) => `Retirer « ${name} » de la montre ? rom1rv garde d’abord une copie des POI.`,
   poiRemoved: (name: string, left: number, empty: number) =>
     `« ${name} » retiré. Il reste ${left} POI sur la montre.` +
     (empty > 0 ? ` ${empty > 1 ? `${empty} entrées vides` : 'Une entrée vide'} (un nom trop long pour la montre) ${empty > 1 ? 'ont aussi été retirées' : 'a aussi été retirée'}.` : ''),
@@ -498,7 +498,7 @@ const fr = {
   ambitSettingsReadOnly: 'Modifiables via le câble USB — vérifié sur du matériel réel. Quelques réglages sans offset d\'écriture connu restent en lecture seule.',
   orbitalDataTitle: 'Données orbitales',
   ephemerisGpsOnly: 'Éphémérides GPS uniquement',
-  ephemerisGpsOnlyInfo: 'Cette montre peut aussi utiliser les satellites GLONASS et dispose de sa propre mémoire pour leurs données orbitales. Les logiciels Suunto ne les lui envoient jamais, donc ces satellites démarrent « à froid » à chaque fois. Sommet envoie les données orbitales GPS et GLONASS, ce qui peut accélérer l\'acquisition d\'une position. Cochez pour n\'envoyer que le GPS.',
+  ephemerisGpsOnlyInfo: 'Cette montre peut aussi utiliser les satellites GLONASS et dispose de sa propre mémoire pour leurs données orbitales. Les logiciels Suunto ne les lui envoient jamais, donc ces satellites démarrent « à froid » à chaque fois. rom1rv envoie les données orbitales GPS et GLONASS, ce qui peut accélérer l\'acquisition d\'une position. Cochez pour n\'envoyer que le GPS.',
 
   // SportModesScreen — Ambit3 CustomModes (2026-08-08), Ambit3-only, pas disponible sur Kailash
   sportModesButton:      'Modes sport',
@@ -574,9 +574,9 @@ const fr = {
 
   // SettingsScreen — À propos / mentions légales
   aboutSection: 'À propos',
-  aboutVersion: (v: string) => `Sommet v${v}`,
+  aboutVersion: (v: string) => `rom1rv v${v}`,
   aboutDisclaimer:
-    "Sommet est un projet personnel, indépendant et open source. Il n'est ni affilié à, " +
+    "rom1rv est un projet personnel, indépendant et open source. Il n'est ni affilié à, " +
     "ni approuvé, ni sponsorisé par Suunto Oy ou Garmin Ltd. Suunto, Ambit, Traverse, " +
     "Kailash, Garmin, eTrex, ainsi que tout autre nom de produit ou marque mentionné dans " +
     "l'application, sont des marques déposées ou non déposées de leurs détenteurs " +
@@ -746,7 +746,7 @@ const fr = {
   totalsActivitiesCount: (n: number) => `${n} activité${n !== 1 ? 's' : ''}`,
   totalsEnergyTitle: 'Énergie dépensée',
   totalsEnergySubtitle: (n: number, of: number) => `Sur ${n} des ${of} activités (celles qui ont des calories)`,
-  totalsEnergyUnavailable: "Aucune calorie enregistrée pour cette année. Elles arrivent avec les activités d'intervals.icu ou de Sommet Sync.",
+  totalsEnergyUnavailable: "Aucune calorie enregistrée pour cette année. Elles arrivent avec les activités d'intervals.icu ou de rom1rv Sync.",
   totalsMore: 'Bientôt plus !',
   calendarScreenTitle: 'Calendrier',
   calendarTitle: 'Calendrier',
@@ -797,7 +797,7 @@ const fr = {
   appZoneNativeMissing: 'Le module App Zone n’est pas dans cette build — recompilez l’app.',
   appZoneNoCatalogTitle: 'Aucun catalogue importé',
   appZoneInstructions:
-    'Sommet ne distribue aucune app Suunto (contenu propriétaire). Importez votre propre ' +
+    'rom1rv ne distribue aucune app Suunto (contenu propriétaire). Importez votre propre ' +
     'catalogue depuis SuuntoLink : sur l’ordinateur où SuuntoLink est installé, trouvez le ' +
     'dossier « suunto-apps » et son fichier « index.json » (~29 Mo), copiez-le sur cet ' +
     'appareil, puis touchez Importer.',
@@ -840,7 +840,7 @@ const fr = {
   intervalsSourceShownMsg: 'La source est affichée ci-dessous : sélectionnez-la et copiez-la. Sur le site du compilateur qui va s’ouvrir : collez-la à la place de l’exemple, touchez « Compile », copiez tout le cadre du bas, puis revenez et collez-le sous « Importer l’app compilée ».',
   compiledPasteLabel: 'Ou collez ici le résultat compilé (tout le cadre du bas du site)',
   compiledPasteBad: 'Ce n’est pas un résultat compilé. Sur le site, après « Compile », copiez tout le cadre du bas.',
-  intervalsCompilerNote: 'La compilation se fait sur un site communautaire tiers (ni Suunto, ni nous). Sommet génère seulement la source et ouvre le site ; vous compilez là-bas et importez le résultat.',
+  intervalsCompilerNote: 'La compilation se fait sur un site communautaire tiers (ni Suunto, ni nous). rom1rv génère seulement la source et ouvre le site ; vous compilez là-bas et importez le résultat.',
   intervalsPlannedSection: 'Séance planifiée (natif)',
   intervalsPlannedDesc: 'Format non confirmé — peut ne pas apparaître sur la montre.',
   intervalsName: 'Nom',
@@ -997,7 +997,7 @@ const en: typeof fr = {
   homeBleConnectWatchBtn: (name: string) => `Connect ${name} via Bluetooth`,
   homeBleDisconnectedError: 'The watch closed the Bluetooth link. Choose "Sync now" on the watch, then tap "Connect … via Bluetooth".',
   homeBleAdapterOffError: 'Bluetooth was turned off on this device. Turn it back on, choose "Sync now" on the watch, then tap "Connect … via Bluetooth".',
-  homeBleSessionEnded: 'The watch ended the Bluetooth session. Choose "Sync now" on the watch and Sommet reconnects by itself.',
+  homeBleSessionEnded: 'The watch ended the Bluetooth session. Choose "Sync now" on the watch and rom1rv reconnects by itself.',
   watchBleClosedError: 'The watch closed the Bluetooth link. Choose "Sync now" on the watch, tap "Connect … via Bluetooth" on Home, then try again.',
   sportModesBackupFailed: 'Could not save a copy of the watch’s sport modes, so nothing was written',
   homePairWatchPill: 'Pair',
@@ -1341,7 +1341,7 @@ const en: typeof fr = {
   poiItemExportBtn: 'Export',
   poiItemRemoveBtn: 'Remove',
   poiRemoveTitle: 'Remove from the watch',
-  poiRemoveConfirm: (name: string) => `Remove “${name}” from the watch? Sommet saves a copy of the POIs first.`,
+  poiRemoveConfirm: (name: string) => `Remove “${name}” from the watch? rom1rv saves a copy of the POIs first.`,
   poiRemoved: (name: string, left: number, empty: number) =>
     `“${name}” removed. ${left} POI${left === 1 ? '' : 's'} left on the watch.` +
     (empty > 0 ? ` ${empty > 1 ? `${empty} empty entries` : 'An empty entry'} (a name too long for the watch) ${empty > 1 ? 'were' : 'was'} removed too.` : ''),
@@ -1366,7 +1366,7 @@ const en: typeof fr = {
   ambitSettingsReadOnly: 'Editable over the USB cable — verified on real hardware. A few fields with no known write offset stay read-only.',
   orbitalDataTitle: 'Orbital data',
   ephemerisGpsOnly: 'Ephemeris GPS only',
-  ephemerisGpsOnlyInfo: 'This watch can also use GLONASS satellites, and has its own storage for their orbital data. Suunto\'s software never sends it to this model, so those satellites start cold every time. Sommet sends both GPS and GLONASS orbital data, which can speed up getting a fix. Tick this to send GPS only.',
+  ephemerisGpsOnlyInfo: 'This watch can also use GLONASS satellites, and has its own storage for their orbital data. Suunto\'s software never sends it to this model, so those satellites start cold every time. rom1rv sends both GPS and GLONASS orbital data, which can speed up getting a fix. Tick this to send GPS only.',
 
   // SportModesScreen — Ambit3 CustomModes (2026-08-08), Ambit3-only, not available on Kailash
   sportModesButton:      'Sport Modes',
@@ -1442,9 +1442,9 @@ const en: typeof fr = {
 
   // SettingsScreen — About / legal
   aboutSection: 'About',
-  aboutVersion: (v: string) => `Sommet v${v}`,
+  aboutVersion: (v: string) => `rom1rv v${v}`,
   aboutDisclaimer:
-    "Sommet is an independent, open-source personal project. It is not affiliated " +
+    "rom1rv is an independent, open-source personal project. It is not affiliated " +
     "with, endorsed by, or sponsored by Suunto Oy or Garmin Ltd. Suunto, Ambit, Traverse, " +
     "Kailash, Garmin, eTrex, and any other product name or trademark referenced in this app " +
     "are registered or unregistered trademarks of their respective owners (Suunto Oy and " +
@@ -1610,7 +1610,7 @@ const en: typeof fr = {
   totalsActivitiesCount: (n: number) => `${n} activit${n !== 1 ? 'ies' : 'y'}`,
   totalsEnergyTitle: 'Energy spent',
   totalsEnergySubtitle: (n: number, of: number) => `Across ${n} of ${of} activities (the ones with calories)`,
-  totalsEnergyUnavailable: 'No calories recorded for this year. They come with activities from intervals.icu or Sommet Sync.',
+  totalsEnergyUnavailable: 'No calories recorded for this year. They come with activities from intervals.icu or rom1rv Sync.',
   totalsMore: 'More to come!',
   calendarScreenTitle: 'Calendar',
   calendarTitle: 'Calendar',
@@ -1661,7 +1661,7 @@ const en: typeof fr = {
   appZoneNativeMissing: "The App Zone module isn't in this build yet - rebuild the app.",
   appZoneNoCatalogTitle: 'No catalog imported',
   appZoneInstructions:
-    'Sommet ships no Suunto apps (proprietary content). Import your own catalog from ' +
+    'rom1rv ships no Suunto apps (proprietary content). Import your own catalog from ' +
     'SuuntoLink: on the computer where SuuntoLink is installed, find the "suunto-apps" folder ' +
     'and its "index.json" file (~29 MB), copy it to this device, then tap Import.',
   appZoneImportBtn: 'Import from SuuntoLink',
@@ -1703,7 +1703,7 @@ const en: typeof fr = {
   intervalsSourceShownMsg: 'The source is shown below: select and copy it. On the compiler site that opens next: paste it in place of the sample, tap Compile, copy everything in the lower box, then come back and paste it under "Import compiled app".',
   compiledPasteLabel: "Or paste the compiled result here (everything in the site's lower box)",
   compiledPasteBad: "That isn't a compiled result. On the site, after Compile, copy everything in the lower box.",
-  intervalsCompilerNote: 'Compiling runs on a third-party community site (not Suunto, not us). Sommet only generates the source and opens the site; you compile there and import the result.',
+  intervalsCompilerNote: 'Compiling runs on a third-party community site (not Suunto, not us). rom1rv only generates the source and opens the site; you compile there and import the result.',
   intervalsPlannedSection: 'Planned move (native)',
   intervalsPlannedDesc: 'Format unconfirmed - may not appear on the watch.',
   intervalsName: 'Name',

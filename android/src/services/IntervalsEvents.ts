@@ -73,7 +73,7 @@ export function eventBody(e: MirrorEntry) {
     type: sportType(e),
     external_id: `sommet:${e.uid}`,
     // Wahoo refuses a plan without one - see tools/intervals_events.py's event_body.
-    description: 'Made in Sommet.',
+    description: 'Made in rom1rv.',
     workout_doc: workoutDoc(e.workout),
   };
 }
@@ -83,7 +83,7 @@ async function call(method: string, path: string, body?: any): Promise<Response 
   if (!creds) return null;
   return fetch(`${API_BASE}/athlete/${encodeURIComponent(creds.athleteId)}${path}`, {
     method,
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0',
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0',
       ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });

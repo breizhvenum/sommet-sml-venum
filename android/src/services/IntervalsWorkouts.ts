@@ -203,7 +203,7 @@ export function convertWorkout(
 async function icuGet(path: string, athleteId: string, apiKey: string, query = ''): Promise<any> {
   const url = `${API_BASE}/athlete/${encodeURIComponent(athleteId)}${path}${query ? `?${query}` : ''}`;
   const resp = await fetch(url, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) throw new Error(`intervals.icu ${path || '/athlete'}: HTTP ${resp.status}`);
   return resp.json();

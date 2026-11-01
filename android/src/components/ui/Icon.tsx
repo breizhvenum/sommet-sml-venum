@@ -7,7 +7,7 @@ import Svg, { Path, Circle, Line, Rect } from 'react-native-svg';
 export type IconName =
   | 'sync' | 'satellite' | 'route' | 'poi' | 'backup' | 'settings'
   | 'list' | 'link' | 'map' | 'chart' | 'apps' | 'activity' | 'key' | 'person'
-  | 'delete' | 'check' | 'info' | 'battery' | 'warning' | 'mountain'
+  | 'delete' | 'check' | 'info' | 'battery' | 'warning' | 'home'
   | 'watch' | 'etrex' | 'bryton' | 'magene' | 'sun' | 'moon' | 'auto' | 'chevronLeft' | 'chevronRight'
   | 'cycling' | 'running' | 'walking'
   | 'play' | 'pause' | 'skipBack' | 'skipForward'
@@ -330,16 +330,15 @@ export default function Icon({ name, size = 20, color = '#000' }: Props) {
           <Circle cx={12} cy={17.3} r={0.9} fill={color} stroke="none" />
         </Svg>
       );
-    case 'mountain':
+    case 'home':
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">
-          <Path d="M2 18.5L6.5 9.5L9.5 13L13.5 5.5L17.5 12L20 9L22 18.5Z" {...s} />
+          <Path d="M3.5 11.2L12 4l8.5 7.2M6 9.8V20h12V9.8M10 20v-5.5h4V20" {...s} />
         </Svg>
       );
     case 'watch':
       // Suunto Ambit3 Peak silhouette — round bezel, top/bottom strap
-      // lugs, four side buttons, and a small mountain on the dial to tie
-      // it back to the app mark (see Ambit3_Peak_Icon.png reference).
+      // lugs and four side buttons (plain watch; no mountain, rom1rv).
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">
           <Rect x={9.3} y={0.8} width={5.4} height={5} rx={1.6} stroke={color} strokeWidth={1.9} fill="none" />
@@ -349,7 +348,6 @@ export default function Icon({ name, size = 20, color = '#000' }: Props) {
           <Circle cx={17.6} cy={15.4} r={1} fill={color} stroke="none" />
           <Circle cx={6.4} cy={8.6} r={1} fill={color} stroke="none" />
           <Circle cx={6.4} cy={15.4} r={1} fill={color} stroke="none" />
-          <Path d="M8 15.2l2-4 1.6 2 2.4-5 2 4.7" stroke={color} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" fill="none" />
         </Svg>
       );
     case 'etrex':

@@ -79,7 +79,7 @@ export async function fetchWellness(days = 365): Promise<WellnessDay[]> {
   // Basic auth + an explicit UA, same as ApiIntervalsIcu/IntervalsStats: intervals.icu sits
   // behind Cloudflare and 403s some default agents.
   const resp = await fetch(url, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) throw new Error(`intervals.icu wellness: HTTP ${resp.status}`);
   const rows = await resp.json();

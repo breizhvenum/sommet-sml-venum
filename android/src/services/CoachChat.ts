@@ -82,7 +82,7 @@ function systemPrompt(r: Readiness | null): string {
     : `Today's readiness: not available (intervals.icu not connected or no training load yet).`;
 
   return (
-    "You are Sommet's training coach for a Suunto Ambit3 watch user. Be concise and warm, "
+    "You are rom1rv's training coach for a Suunto Ambit3 watch user. Be concise and warm, "
     + 'like a knowledgeable training partner, not a corporate assistant. Never use jargon '
     + '(no "TSS"/"CTL"/"TSB" in your reply - translate to plain language).\n\n'
     + state + '\n\n'

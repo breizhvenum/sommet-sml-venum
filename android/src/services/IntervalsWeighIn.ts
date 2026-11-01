@@ -38,7 +38,7 @@ export async function sendWeighInToIntervals(date: string, weightKg: number, bod
       headers: {
         Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`),
         'Content-Type': 'application/json',
-        'User-Agent': 'Sommet/1.0',
+        'User-Agent': 'rom1rv/1.0',
       },
       body: JSON.stringify(body),
     });

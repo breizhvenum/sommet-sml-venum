@@ -51,7 +51,7 @@ export async function updateWatchSgee(
     fromUrl: SGEE_URL,
     toFile: SGEE_LOCAL_PATH,
     headers: {
-      'User-Agent': 'Sommet/1.0',
+      'User-Agent': 'rom1rv/1.0',
       'Accept': 'application/octet-stream',
     },
     progress: onProgress
@@ -197,7 +197,7 @@ async function writeGlonassIfSupported(): Promise<'unsupported' | 'skipped' | 'w
   const dl = await RNFS.downloadFile({
     fromUrl: GLONASS_URL,
     toFile: GLONASS_LOCAL_PATH,
-    headers: { 'User-Agent': 'Sommet/1.0', 'Accept': 'application/octet-stream' },
+    headers: { 'User-Agent': 'rom1rv/1.0', 'Accept': 'application/octet-stream' },
   }).promise;
   if (dl.statusCode !== 200) throw new Error(`GLONASS download failed: HTTP ${dl.statusCode}`);
 

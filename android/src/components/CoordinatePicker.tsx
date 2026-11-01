@@ -98,7 +98,7 @@ export function CoordinatePicker({
           source={{ uri: mapUri }}
           injectedJavaScriptBeforeContentLoaded={LEAFLET_INJECT_JS}
           onMessage={onMessage}
-          userAgent="Sommet/2.0"
+          userAgent="rom1rv/2.0"
           {...mapWebViewFileProps()}
           style={{ flex: 1 }}
         />)}

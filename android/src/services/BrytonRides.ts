@@ -42,7 +42,7 @@ export async function syncBrytonRides(onState: (s: BrytonRideSync) => void): Pro
         const start = ride.startTime ? Date.parse(ride.startTime) / 1000 : NaN;
         const junk = ride.durationSeconds < 60 && ride.distanceMeters < 100;   // desktop rule
         if (!junk && !(isFinite(start) && dedup.hasRide(start, ride.durationSeconds))
-            && (await writeGpxFile(id, rideToGpx(ride, 'Sommet (Bryton Aero 60)')))) {
+            && (await writeGpxFile(id, rideToGpx(ride, 'rom1rv (Bryton Aero 60)')))) {
           await writeFitFile(id, b64);
           if (isFinite(start)) dedup.add(id, start, ride.durationSeconds);
           newCount++;

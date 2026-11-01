@@ -876,7 +876,7 @@ export default function MapScreen() {
         {...mapWebViewFileProps()}
         // tile.openstreetmap.org's usage policy requires an identifying User-Agent on every tile
         // request, or it's treated as bulk/anonymous traffic (same as desktop's main.cpp).
-        userAgent="Sommet/2.0"
+        userAgent="rom1rv/2.0"
         onLoad={onWebViewLoad}
         onMessage={onMessage}
       />)}

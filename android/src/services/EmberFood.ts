@@ -26,7 +26,7 @@ export interface Food {
 
 export interface Portion { kcal: number; protein: number; carbs: number; fat: number }
 
-const UA = 'Sommet/0.2 (https://github.com/skinnie/sommet)';
+const UA = 'rom1rv/0.2 (https://github.com/skinnie/sommet)';
 const RECENT_KEY = 'ember.recentFoods';
 const USDA_KEY = 'ember.usdaApiKey';
 

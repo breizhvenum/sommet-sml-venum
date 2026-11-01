@@ -160,7 +160,7 @@ export async function backupNavToFile(): Promise<void> {
     });
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    const name = `Sommet-nav-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
+    const name = `rom1rv-nav-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
       + `-${pad(d.getHours())}${pad(d.getMinutes())}.ambitbak`;
     const tmp = `${RNFS.CachesDirectoryPath}/${name}`;
     await RNFS.writeFile(tmp, bundle, 'utf8');

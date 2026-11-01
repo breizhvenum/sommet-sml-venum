@@ -115,7 +115,7 @@ export async function fetchActivityWeather(
   });
   const base = archived ? 'https://archive-api.open-meteo.com/v1/archive' : 'https://api.open-meteo.com/v1/forecast';
   try {
-    const res = await fetch(`${base}?${params.toString()}`, { headers: { 'User-Agent': 'Sommet/1.0' } });
+    const res = await fetch(`${base}?${params.toString()}`, { headers: { 'User-Agent': 'rom1rv/1.0' } });
     if (!res.ok) return null;
     const body = await res.json();
     const w = body?.hourly ? summarizeHourly(body.hourly, startMs, endMs, track) : null;

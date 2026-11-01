@@ -291,7 +291,7 @@ export default function RouteWeatherScreen() {
                   domStorageEnabled={false}
                   {...mapWebViewFileProps()}
                   // OSM's tile policy wants an identifying UA on every request (same as MapScreen).
-                  userAgent="Sommet/2.0"
+                  userAgent="rom1rv/2.0"
                   androidLayerType="hardware"
                 />)}
               </View>

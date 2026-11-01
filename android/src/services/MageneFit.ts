@@ -141,7 +141,7 @@ export function decodeFit(fit: Uint8Array): FitRide {
   };
 }
 
-export function rideToGpx(r: FitRide, creator = 'Sommet (Magene C406)'): string {
+export function rideToGpx(r: FitRide, creator = 'rom1rv (Magene C406)'): string {
   const ext = [
     ['duration', r.durationSeconds], ['distance', Math.round(r.distanceMeters)], ['energy', r.energyKcal],
     ['avg_hr', r.avgHr], ['max_hr', r.maxHr], ['avg_cadence', r.avgCadence], ['max_cadence', r.maxCadence],

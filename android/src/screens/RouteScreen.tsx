@@ -28,7 +28,7 @@ import { sendRoute as sendRouteToMagene } from '../services/MageneRoute';
 // both take GPX text, like their desktop tools).
 function pendingToGpx(r: PendingRoute): string {
   const pts = r.points.map(p => `<trkpt lat="${p.lat}" lon="${p.lon}">${p.alt != null ? `<ele>${p.alt}</ele>` : ''}</trkpt>`);
-  return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Sommet"><trk><name>${r.name}</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="rom1rv"><trk><name>${r.name}</name><trkseg>${pts.join('')}</trkseg></trk></gpx>`;
 }
 
 // v3.0 UI port (2026-08-09, "re do routes... to match entirely desktop") - real structural

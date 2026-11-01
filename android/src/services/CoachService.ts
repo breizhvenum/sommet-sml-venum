@@ -149,7 +149,7 @@ async function recentlyDoneNames(days = 7): Promise<Set<string>> {
     const url = `https://intervals.icu/api/v1/athlete/${encodeURIComponent(creds.athleteId)}/activities`
       + `?oldest=${ymd(oldest)}&newest=${ymd(newest)}`;
     const resp = await fetch(url, {
-      headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0' },
+      headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0' },
     });
     if (!resp.ok) return done;   // exclusion is a bonus; never let it break the picks
     const acts = await resp.json();
@@ -285,7 +285,7 @@ async function fetchWellnessRaw(days: number): Promise<LoadDay[]> {
   const url = `https://intervals.icu/api/v1/athlete/${encodeURIComponent(creds.athleteId)}/wellness`
     + `?oldest=${ymd(oldest)}&newest=${ymd(newest)}`;
   const resp = await fetch(url, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${creds.apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   if (!resp.ok) throw new Error(`intervals.icu wellness: HTTP ${resp.status}`);
   const rows = await resp.json();

@@ -20,7 +20,7 @@ const API = 'https://intervals.icu/api/v1';
 const cache = new Map<string, Streams>();
 
 function authHeader(apiKey: string): Record<string, string> {
-  return { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'Sommet/1.0' };
+  return { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'rom1rv/1.0' };
 }
 
 function isFit(b: Uint8Array): boolean {

@@ -18,7 +18,7 @@ type Status = 'asking' | 'granted' | 'denied';
 async function askCamera(): Promise<boolean> {
   if (Platform.OS === 'android') {
     const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA, {
-      title: 'Camera', message: 'Sommet uses the camera only to read a food barcode for your meal log.',
+      title: 'Camera', message: 'rom1rv uses the camera only to read a food barcode for your meal log.',
       buttonPositive: 'OK',
     });
     return r === PermissionsAndroid.RESULTS.GRANTED;

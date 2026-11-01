@@ -203,7 +203,7 @@ export default function OfflineMapsScreen() {
                 webRef.current?.injectJavaScript(`window.showPois && window.showPois(${JSON.stringify(pts)}); true;`);
               }).catch(() => {});
             }}
-            userAgent="Sommet/2.0"
+            userAgent="rom1rv/2.0"
             androidLayerType="hardware"
             // Read cached tiles off disk (iOS grants read to cachesRoot; Android needs the file
             // flags). allowUniversalAccess… lets the file:// page fetch remote tiles on a miss.

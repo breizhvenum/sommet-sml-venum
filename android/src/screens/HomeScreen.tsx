@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Alert, ActivityIndicator, useWindowDimensions, ScrollView, Linking, Platform,
+  Alert, ActivityIndicator, useWindowDimensions, ScrollView, Linking, Platform, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -1091,7 +1091,7 @@ export default function HomeScreen() {
   // Which devices the Workout Calendar may create for / send to (its long-press menu).
   const calendarDevices = { watch: showWatchCalendar, bryton: deviceType === 'bryton', magene: mageneOn?.address ?? null };
   const navItems: NavShellItem[] = [
-    { id: 'home', label: t.homeNavHome, icon: 'mountain', onPress: () => {} },
+    { id: 'home', label: t.homeNavHome, icon: 'home', onPress: () => {} },
     { id: 'activities', label: t.viewActivities, icon: 'list', onPress: () => navigation.navigate('LogList'), group: 'training' },
     // Totals + Calendar (2026-08-29, desktop parity): activity-analytics views, always reachable
     // (read the local activity DB, no watch needed) - like the desktop nav.
@@ -1212,12 +1212,15 @@ export default function HomeScreen() {
     >
 
       {/* ── Header ── */}
-      <View style={styles.header}>
-        <Text style={styles.appName}>
-          <Text style={{ fontWeight: '300', color: theme.mutedText }}>Ambit </Text>
-          <Text style={{ fontWeight: '800', color: theme.primary }}>rom1rv</Text>
+      <View style={[styles.header, { marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', minHeight: 190, justifyContent: 'center', paddingVertical: 22 }]}>
+        <Image source={require('../assets/hero_photo.jpg')} resizeMode="cover"
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }} />
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.42)' }} />
+        <Text style={[styles.appName, { color: '#fff', textShadowColor: '#000', textShadowRadius: 10 }]}>
+          <Text style={{ fontWeight: '300', color: '#fff' }}>Ambit </Text>
+          <Text style={{ fontWeight: '800', color: '#FF4B55' }}>rom1rv</Text>
         </Text>
-        <View style={{ width: 44, height: 3, borderRadius: 2, backgroundColor: theme.primary }} />
+        <View style={{ width: 44, height: 3, borderRadius: 2, backgroundColor: '#FF4B55' }} />
         <Badge label={`v${APP_VERSION}`} />
       </View>
 

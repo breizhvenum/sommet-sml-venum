@@ -1,5 +1,6 @@
 import { DeviceProvider } from './devices/DeviceProvider';
 import { ambitDeviceProvider } from './devices/AmbitDeviceProvider';
+import RNFS from 'react-native-fs';
 import { writeGpxFile, writeFitFile, adoptSmlFile, clearSmlTmp, SML_TMP_DIR } from './GpxService';
 import { readCustomModeNames, saveSmlStatus, withTimeout } from './SmlActivityNames';
 import { extractGpxMetadata } from './GpxParser';
@@ -208,6 +209,18 @@ export async function runSync(
       }
     }
 
+    // The sport mode the move was recorded with ("Windsurf IDF"...) is in the SML's <Activity>; the
+    // watch's own log only gives the base sport ("Windsurfing"). Read it BEFORE the temp file is
+    // moved, so the list shows the mode name, as an imported SML already does.
+    let modeName = '';
+    if (smlLogs[i]) {
+      try {
+        const head = await RNFS.read(smlLogs[i], 20000, 0, 'utf8');
+        const a0 = head.indexOf('<Activity>');
+        if (a0 >= 0) { const a1 = head.indexOf('</Activity>', a0); if (a1 > a0) modeName = head.substring(a0 + 10, a1).trim(); }
+      } catch { /* keep the base sport name */ }
+    }
+    if (modeName && modeName.indexOf('<') < 0) meta.activityType = modeName;   // list + gear use the mode name
     // The Moveslink2-style .sml, next to the GPX/FIT (best-effort, index-aligned with gpxLogs).
     if (smlLogs[i]) {
       try {

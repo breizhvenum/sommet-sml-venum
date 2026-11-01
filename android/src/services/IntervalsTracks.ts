@@ -71,7 +71,7 @@ async function backfillOne(
 ): Promise<string | 'none' | null> {
   const raw = icuId.replace(/^icu:/, '');
   const resp = await fetch(`${API_BASE}/activity/${encodeURIComponent(raw)}/streams?types=latlng,altitude`, {
-    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'Sommet/1.0' },
+    headers: { Authorization: 'Basic ' + btoa(`API_KEY:${apiKey}`), 'User-Agent': 'rom1rv/1.0' },
   });
   // No streams for it, gone, or refused for good: don't ask again. Login, rate-limit and server
   // errors can clear up, so those are asked again on the next run.

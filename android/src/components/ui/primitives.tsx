@@ -358,15 +358,15 @@ export function ActionTile({
   );
 }
 
-// ── Logo — mountain mark + optional "Sommet" wordmark ────────────────────
+// ── Logo — watch mark + optional "rom1rv" wordmark ────────────────────
 export function Logo({ size = 64, wordmark = true }: { size?: number; wordmark?: boolean }) {
   const t = useV3Theme();
   return (
     <View style={{ alignItems: 'center' }}>
-      <Icon name="mountain" size={size} color={t.primary} />
+      <Icon name="watch" size={size} color={t.primary} />
       {wordmark && (
         <Text style={{ marginTop: 3, fontSize: Math.round(size * 0.26), fontWeight: '800', color: t.text, letterSpacing: 0.4 }}>
-          Sommet
+          rom1rv
         </Text>
       )}
     </View>
