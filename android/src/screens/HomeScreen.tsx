@@ -239,6 +239,9 @@ export default function HomeScreen() {
   const [attachedDevices, setAttachedDevices] = useState<AmbitUsbDevice[]>([]);
   const [bondedWatches, setBondedWatches] = useState<BondedWatch[]>([]);
   const [selectedWatch, setSelectedWatch] = useState<string | null>(null);   // USB path of active cabled watch
+  const [hdrBox, setHdrBox] = useState({ w: 0, h: 0 });
+  const [rowBox, setRowBox] = useState<{ x: number; y: number } | null>(null);
+  const [rBox, setRBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [connectedBleAddress, setConnectedBleAddress] = useState<string | null>(null); // MAC of active BLE watch
   const [garminInfo, setGarminInfo] = useState<GarminConnectResult | null>(null);
 
@@ -1212,15 +1215,33 @@ export default function HomeScreen() {
     >
 
       {/* ── Header ── */}
-      <View style={[styles.header, { marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', minHeight: 190, justifyContent: 'center', paddingVertical: 22 }]}>
-        <Image source={require('../assets/hero_photo.jpg')} resizeMode="cover"
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }} />
+      {/* The photo is placed so the windsurfer's head sits just above the "r" of "rom1rv",
+          whatever the phone's width or font size: the "r" is measured, then the photo is moved. */}
+      <View
+        onLayout={e => setHdrBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+        style={[styles.header, { marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', minHeight: 190, justifyContent: 'center', paddingVertical: 22 }]}>
+        {(() => {
+          const HEAD_X = 0.490, HEAD_Y = 0.483, RATIO = 1360 / 764;   // head position in the photo (fractions)
+          const ready = hdrBox.w > 0 && rowBox && rBox;
+          const w = Math.max(hdrBox.w * 1.45, 1);
+          const h = w / RATIO;
+          const rx = ready ? rowBox!.x + rBox!.x + rBox!.width / 2 : hdrBox.w / 2;
+          const ry = ready ? rowBox!.y + rBox!.y + rBox!.height / 2 : hdrBox.h / 2;
+          const left = Math.min(0, Math.max(hdrBox.w - w, rx - HEAD_X * w));
+          const HEAD_ABOVE = 36;   // the head sits just above the text line
+          const top = Math.min(0, Math.max(hdrBox.h - h, ry - HEAD_ABOVE - HEAD_Y * h));
+          return <Image source={require('../assets/hero_photo.jpg')} resizeMode="stretch"
+            style={{ position: 'absolute', left, top, width: w, height: h }} />;
+        })()}
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.42)' }} />
-        <Text style={[styles.appName, { color: '#fff', textShadowColor: '#000', textShadowRadius: 10 }]}>
-          <Text style={{ fontWeight: '300', color: '#fff' }}>Ambit </Text>
-          <Text style={{ fontWeight: '800', color: '#FF4B55' }}>rom1rv</Text>
-        </Text>
-        <View style={{ width: 44, height: 3, borderRadius: 2, backgroundColor: '#FF4B55' }} />
+        <View onLayout={e => setRowBox({ x: e.nativeEvent.layout.x, y: e.nativeEvent.layout.y })}
+          style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+          <Text style={[styles.appName, { fontWeight: '300', color: '#fff', textShadowColor: '#000', textShadowRadius: 10 }]}>Ambit </Text>
+          <Text onLayout={e => setRBox(e.nativeEvent.layout)}
+            style={[styles.appName, { fontWeight: '800', color: '#FF4B55', textShadowColor: '#000', textShadowRadius: 10 }]}>r</Text>
+          <Text style={[styles.appName, { fontWeight: '800', color: '#FF4B55', textShadowColor: '#000', textShadowRadius: 10 }]}>om1rv</Text>
+        </View>
+        <View style={{ width: 44, height: 3, borderRadius: 2, backgroundColor: '#FF4B55', marginTop: 6 }} />
         <Badge label={`v${APP_VERSION}`} />
       </View>
 
