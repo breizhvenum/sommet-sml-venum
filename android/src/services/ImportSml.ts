@@ -1,5 +1,5 @@
 import RNFS from 'react-native-fs';
-import { pickGpxFile } from '../native/AmbitUsbModule';
+import { pickGpxFile, pickSmlFolder } from '../native/AmbitUsbModule';
 import { smlToGpx } from './SmlToGpx';
 import { extractGpxMetadata } from './GpxParser';
 import { writeGpxFile, adoptSmlFile } from './GpxService';
@@ -19,6 +19,24 @@ export type ImportSmlResult =
  */
 export async function importSmlActivity(): Promise<ImportSmlResult> {
   const picked = await pickGpxFile();   // rejects GPX_PICK_CANCELLED when the user backs out
+  return importSmlFromPath(picked);
+}
+
+/** Same import for every .sml found in a folder the user picks (Moveslink2's, say). */
+export async function importSmlFolder(): Promise<{ imported: number; exists: number; deleted: number; failed: number; total: number }> {
+  const paths = await pickSmlFolder();   // rejects GPX_PICK_CANCELLED when the user backs out
+  const res = { imported: 0, exists: 0, deleted: 0, failed: 0, total: paths.length };
+  for (const p of paths) {
+    try {
+      const r = await importSmlFromPath(p);
+      if (r.status === 'imported') res.imported++; else if (r.status === 'exists') res.exists++; else res.deleted++;
+    } catch { res.failed++; }
+    if (await RNFS.exists(p).catch(() => false)) await RNFS.unlink(p).catch(() => {});   // temp copy not adopted
+  }
+  return res;
+}
+
+async function importSmlFromPath(picked: string): Promise<ImportSmlResult> {
   const xml = await RNFS.readFile(picked, 'utf8');
   if (!/<sml[\s>]/i.test(xml)) throw new Error('Ce fichier n\'est pas un SML.');
 

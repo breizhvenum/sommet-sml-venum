@@ -167,6 +167,11 @@ export function pickGpxFile(): Promise<string> {
   return NativeAmbit.pickGpxFile();
 }
 
+/** Opens the folder picker; returns the local paths of every .sml found in the chosen folder (copied to the cache). */
+export function pickSmlFolder(): Promise<string[]> {
+  return NativeAmbit.pickSmlFolder();
+}
+
 export interface NativeRoutePoint {
   lat: number;
   lon: number;

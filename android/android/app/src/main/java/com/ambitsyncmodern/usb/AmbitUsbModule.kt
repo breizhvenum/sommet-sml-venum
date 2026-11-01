@@ -19,6 +19,7 @@ import java.util.concurrent.Executors
 
 private const val PICK_GPX_REQUEST_CODE = 4242
 private const val SAVE_FILE_AS_REQUEST_CODE = 4243
+private const val PICK_SML_FOLDER_REQUEST_CODE = 4299
 
 private const val SUUNTO_VID = 0x1493
 
@@ -134,6 +135,7 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
     @Volatile private var currentConnection: android.hardware.usb.UsbDeviceConnection? = null
     private var pendingConnectPromise: Promise? = null
     private var pendingPickGpxPromise: Promise? = null
+    private var pendingPickFolderPromise: Promise? = null
     private var pendingSaveAsPromise: Promise? = null
     private var pendingSaveAsSourcePath: String? = null
     private val executor = Executors.newSingleThreadExecutor()
@@ -158,6 +160,50 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
                         promise.resolve(destFile.absolutePath)
                     } catch (e: Exception) {
                         promise.reject("GPX_PICK_FAILED", e.message ?: "Unknown error")
+                    }
+                }
+                PICK_SML_FOLDER_REQUEST_CODE -> {
+                    val promise = pendingPickFolderPromise ?: return
+                    pendingPickFolderPromise = null
+                    val tree: Uri? = if (resultCode == Activity.RESULT_OK) data?.data else null
+                    if (tree == null) {
+                        promise.reject("GPX_PICK_CANCELLED", "No folder selected")
+                        return
+                    }
+                    // Copy off the main thread: a folder can hold hundreds of files.
+                    executor.execute {
+                        try {
+                            val out = Arguments.createArray()
+                            val stamp = System.currentTimeMillis()
+                            var n = 0
+                            fun walk(parentDocId: String, depth: Int) {
+                                val children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentDocId)
+                                val cols = arrayOf(
+                                    android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                                    android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
+                                val entries = ArrayList<Triple<String, String, String>>()
+                                reactContext.contentResolver.query(children, cols, null, null, null)?.use { c ->
+                                    while (c.moveToNext()) entries.add(Triple(c.getString(0) ?: "", c.getString(1) ?: "", c.getString(2) ?: ""))
+                                }
+                                for ((id, name, mime) in entries) {
+                                    if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) {
+                                        if (depth < 4) walk(id, depth + 1)
+                                    } else if (name.lowercase().endsWith(".sml")) {
+                                        val docUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                                        val dest = java.io.File(reactContext.cacheDir, "picked_sml_${stamp}_${n++}.sml")
+                                        reactContext.contentResolver.openInputStream(docUri)?.use { input ->
+                                            dest.outputStream().use { output -> input.copyTo(output) }
+                                        }
+                                        if (dest.exists()) out.pushString(dest.absolutePath)
+                                    }
+                                }
+                            }
+                            walk(android.provider.DocumentsContract.getTreeDocumentId(tree), 0)
+                            promise.resolve(out)
+                        } catch (e: Exception) {
+                            promise.reject("GPX_PICK_FAILED", e.message ?: "Unknown error")
+                        }
                     }
                 }
                 SAVE_FILE_AS_REQUEST_CODE -> {
@@ -579,6 +625,20 @@ class AmbitUsbModule(private val reactContext: ReactApplicationContext) :
             type = "*/*" // pas de type MIME GPX standard fiable sur tous les file managers
         }
         activity.startActivityForResult(intent, PICK_GPX_REQUEST_CODE)
+    }
+
+    // ─── pickSmlFolder() ──────────────────────────────────────────────────────
+    // Lets the user choose a FOLDER (e.g. Moveslink2's) and copies every .sml found in it (and its
+    // sub-folders, 4 levels) to the app cache; resolves with the array of local paths.
+    @ReactMethod
+    fun pickSmlFolder(promise: Promise) {
+        val activity = reactContext.currentActivity
+        if (activity == null) {
+            promise.reject("NO_ACTIVITY", "No active activity")
+            return
+        }
+        pendingPickFolderPromise = promise
+        activity.startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_SML_FOLDER_REQUEST_CODE)
     }
 
     // ─── saveFileAs() ─────────────────────────────────────────────────────────
