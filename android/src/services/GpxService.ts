@@ -112,3 +112,15 @@ export async function listGpxFiles(): Promise<string[]> {
     .filter(item => item.name.endsWith('.gpx'))
     .map(item => item.path);
 }
+
+/** The sport-mode name ("Windsurf IDF"...) written in a SML's <Activity>, read from the file's first 20 KB. '' if none. */
+export async function readSmlModeName(path: string): Promise<string> {
+  try {
+    const head = await RNFS.read(path, 20000, 0, 'utf8');
+    const a0 = head.indexOf('<Activity>');
+    if (a0 < 0) return '';
+    const a1 = head.indexOf('</Activity>', a0);
+    const name = a1 > a0 ? head.substring(a0 + 10, a1).trim() : '';
+    return name.indexOf('<') < 0 ? name : '';
+  } catch { return ''; }
+}

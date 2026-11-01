@@ -92,7 +92,7 @@ def sport_type(entry):
     return "Ride"
 
 
-DESCRIPTION = "Made in Sommet."
+DESCRIPTION = "Made in rom1rv."
 
 
 def event_body(entry):

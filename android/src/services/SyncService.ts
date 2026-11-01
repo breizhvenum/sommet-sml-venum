@@ -1,7 +1,6 @@
 import { DeviceProvider } from './devices/DeviceProvider';
 import { ambitDeviceProvider } from './devices/AmbitDeviceProvider';
-import RNFS from 'react-native-fs';
-import { writeGpxFile, writeFitFile, adoptSmlFile, clearSmlTmp, SML_TMP_DIR } from './GpxService';
+import { writeGpxFile, writeFitFile, adoptSmlFile, clearSmlTmp, SML_TMP_DIR, readSmlModeName } from './GpxService';
 import { readCustomModeNames, saveSmlStatus, withTimeout } from './SmlActivityNames';
 import { extractGpxMetadata } from './GpxParser';
 import { isActivitySynced, isActivityDeleted, markActivitySynced, getAllSyncedIds, clearDeletedActivities, rejectJunkActivity } from '../database/db';
@@ -214,11 +213,7 @@ export async function runSync(
     // moved, so the list shows the mode name, as an imported SML already does.
     let modeName = '';
     if (smlLogs[i]) {
-      try {
-        const head = await RNFS.read(smlLogs[i], 20000, 0, 'utf8');
-        const a0 = head.indexOf('<Activity>');
-        if (a0 >= 0) { const a1 = head.indexOf('</Activity>', a0); if (a1 > a0) modeName = head.substring(a0 + 10, a1).trim(); }
-      } catch { /* keep the base sport name */ }
+      try { modeName = await readSmlModeName(smlLogs[i]); } catch { /* keep the base sport name */ }
     }
     if (modeName && modeName.indexOf('<') < 0) meta.activityType = modeName;   // list + gear use the mode name
     // The Moveslink2-style .sml, next to the GPX/FIT (best-effort, index-aligned with gpxLogs).

@@ -1,5 +1,6 @@
 import React from 'react';
-import Svg, { Path, Circle, Line, Rect } from 'react-native-svg';
+import { useThemeMode } from '../../theme/ThemeModeContext';
+import Svg, { Path, Circle, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 // Outlined, 24dp grid, 2px stroke — same set drawn for the black-and-white
 // UI mockup. Paths are 1:1 ports of that mockup's <symbol> defs.
@@ -25,6 +26,7 @@ interface Props {
 }
 
 export default function Icon({ name, size = 20, color = '#000' }: Props) {
+  const { isDark } = useThemeMode();
   const s = { stroke: color, strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
 
   switch (name) {
@@ -337,7 +339,49 @@ export default function Icon({ name, size = 20, color = '#000' }: Props) {
         </Svg>
       );
     case 'watch':
-      // Suunto Ambit3 Peak silhouette — round bezel, top/bottom strap
+      // Large sizes: slim Ambit drawn in one colour, with a digital display (Vmax 30 kts).
+      if (size >= 30 && !isDark) {
+        // Light theme: the all-black watch (solid case, dark screen, white digits).
+        return (
+          <Svg width={size} height={size} viewBox="0 0 120 140">
+            <Path d="M49 2h22l2 36H47zM47 102h26l-2 36H49z" fill="#1b1d21" />
+            <Rect x={94} y={46} width={4} height={9} rx={2} fill="#1b1d21" />
+            <Rect x={94} y={85} width={4} height={9} rx={2} fill="#1b1d21" />
+            <Rect x={22} y={46} width={4} height={9} rx={2} fill="#1b1d21" />
+            <Rect x={22} y={85} width={4} height={9} rx={2} fill="#1b1d21" />
+            <Circle cx={60} cy={70} r={36} fill="#17191d" stroke="#000" strokeWidth={1.2} />
+            <Path d="M60 36v3M60 101v3M26 70h3M91 70h3" stroke="#8d929c" strokeWidth={0.8} strokeLinecap="round" />
+            <Circle cx={60} cy={70} r={31} fill="#050607" stroke="#000" strokeWidth={1} />
+            <SvgText x={60} y={50} fontSize={4.6} fontWeight="700" letterSpacing={0.8} fill="#e8eaee" textAnchor="middle">VMAX</SvgText>
+            <SvgText x={55} y={75} fontSize={23} fontWeight="700" fontFamily="monospace" fill="#f1f2f4" textAnchor="middle">30</SvgText>
+            <SvgText x={80} y={75} fontSize={6.5} fontWeight="700" fill="#9aa0aa" textAnchor="end">kts</SvgText>
+            <Path d="M40 82h40" stroke="#4a4f58" strokeWidth={0.7} strokeDasharray="1.2 1.6" />
+            <SvgText x={60} y={92} fontSize={6} fontFamily="monospace" fill="#b9bec7" textAnchor="middle">12:45 · 5,8 km</SvgText>
+          </Svg>
+        );
+      }
+      // Dark theme (and large sizes otherwise): the one-colour outline watch.
+      if (size >= 30) {
+        const w = { stroke: color, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
+        return (
+          <Svg width={size} height={size} viewBox="0 0 120 140">
+            <Path d="M49 2h22l2 36H47zM47 102h26l-2 36H49z" strokeWidth={2.2} {...w} />
+            <Rect x={94} y={46} width={4} height={9} rx={2} fill={color} />
+            <Rect x={94} y={85} width={4} height={9} rx={2} fill={color} />
+            <Rect x={22} y={46} width={4} height={9} rx={2} fill={color} />
+            <Rect x={22} y={85} width={4} height={9} rx={2} fill={color} />
+            <Circle cx={60} cy={70} r={36} strokeWidth={2.6} {...w} />
+            <Circle cx={60} cy={70} r={31} strokeWidth={1.2} {...w} />
+            <Path d="M60 38v3M60 99v3M28 70h3M89 70h3" strokeWidth={1.2} {...w} />
+            <SvgText x={60} y={50} fontSize={4.6} fontWeight="700" letterSpacing={0.8} fill={color} textAnchor="middle">VMAX</SvgText>
+            <SvgText x={55} y={75} fontSize={23} fontWeight="700" fontFamily="monospace" fill={color} textAnchor="middle">30</SvgText>
+            <SvgText x={80} y={75} fontSize={6.5} fontWeight="700" fill={color} textAnchor="end">kts</SvgText>
+            <Path d="M40 82h40" strokeWidth={0.7} strokeDasharray="1.2 1.6" {...w} />
+            <SvgText x={60} y={92} fontSize={6} fontFamily="monospace" fill={color} textAnchor="middle">12:45 · 5,8 km</SvgText>
+          </Svg>
+        );
+      }
+      // Small sizes: Suunto Ambit3 Peak silhouette — round bezel, top/bottom strap
       // lugs and four side buttons (plain watch; no mountain, rom1rv).
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">
