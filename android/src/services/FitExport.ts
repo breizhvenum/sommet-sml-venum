@@ -1,5 +1,6 @@
 import RNFS from 'react-native-fs';
-import { readGpxFile, fitPathForGpx } from './GpxService';
+import { readGpxFile, fitPathForGpx, smlPathForGpx } from './GpxService';
+import { convertSmlFileToGpx } from './SmlToGpx';
 import { parseTrackPoints, computeElevationStats } from './GpxParser';
 import type { ActivityRecord } from '../database/db';
 
@@ -241,6 +242,16 @@ export async function generateFitFile(
 export async function getFitFile(gpxPath: string, activity: ActivityRecord): Promise<string> {
   const native = await fitPathForGpx(gpxPath);
   if (native) return native;
+  // The app's own GPX is not trusted for the user's uploads: when the move has its SML (the
+  // Moveslink2-identical file), build the FIT from the GPX converted from that SML, as the stats and
+  // the GPX export already do. Falls back to the app's GPX only if there is no SML or it has no track.
+  try {
+    const sml = await smlPathForGpx(gpxPath);
+    if (sml) {
+      const { path } = await convertSmlFileToGpx(sml, `${activity.id}_fit_from_sml`);
+      return await generateFitFile(path, activity);
+    }
+  } catch { /* no SML track: fall back below */ }
   return generateFitFile(gpxPath, activity);
 }
 
