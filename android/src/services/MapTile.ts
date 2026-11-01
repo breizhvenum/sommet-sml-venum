@@ -30,7 +30,7 @@ const TILE_SIZE = 256;
 // strokeStyle, PoisPage.qml). Was #00897B, a near-but-not-equal Material teal that made the
 // two apps' maps visibly disagree; matched to desktop's value so a route drawn here is the
 // same green as the same route on desktop.
-export const TRACK_COLOR = '#167E6A';
+export const TRACK_COLOR = '#B8283A';
 
 export function tileUrl(provider: MapProvider, z: number, x: number, y: number): string {
   switch (provider) {

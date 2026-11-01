@@ -117,6 +117,8 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
           <Tile label="Top 5 × 10s (moy.)" value={kts(stats.top5x10s)} unit="kts" big />
           <Tile label="V100m" value={kts(stats.v100m)} unit="kts" />
           <Tile label="V500m" value={kts(stats.v500m)} unit="kts" />
+          <Tile label="V1000m" value={kts(stats.v1000m)} unit="kts" />
+          <Tile label="V1852m (1 mille)" value={kts(stats.v1852m)} unit="kts" />
           <Tile label="V10km" value={kts(stats.v10000m)} unit="kts" />
           <Tile label="Alpha 500" value={kts(stats.a500)} unit="kts" big />
         </View>

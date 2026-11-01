@@ -23,7 +23,7 @@ export const lightColors: ThemeColors = {
   text:        '#111111',
   textMuted:   '#6e6e6e',
   outline:     '#dcdcdc',
-  primary:     '#111111',
+  primary:     '#A3212D',
   onPrimary:   '#ffffff',
   alert:       '#9c3b2e',
 };
@@ -35,7 +35,7 @@ export const darkColors: ThemeColors = {
   text:        '#f2f2f2',
   textMuted:   '#9a9a9a',
   outline:     '#3a3a3a',
-  primary:     '#f2f2f2',
-  onPrimary:   '#1a1a1a',
+  primary:     '#CF3E46',
+  onPrimary:   '#ffffff',
   alert:       '#d97a63',
 };

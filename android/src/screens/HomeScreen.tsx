@@ -1213,7 +1213,11 @@ export default function HomeScreen() {
 
       {/* ── Header ── */}
       <View style={styles.header}>
-        <Text style={styles.appName}>Ambit rom1rv</Text>
+        <Text style={styles.appName}>
+          <Text style={{ fontWeight: '300', color: theme.mutedText }}>Ambit </Text>
+          <Text style={{ fontWeight: '800', color: theme.primary }}>rom1rv</Text>
+        </Text>
+        <View style={{ width: 44, height: 3, borderRadius: 2, backgroundColor: theme.primary }} />
         <Badge label={`v${APP_VERSION}`} />
       </View>
 
@@ -1892,10 +1896,9 @@ function createStyles(t: ReturnType<typeof useV3Theme>) {
       gap: 6,
     },
     appName: {
-      fontSize: 26,
-      fontWeight: '800',
+      fontSize: 30,
       color: t.text,
-      letterSpacing: 1.5,
+      letterSpacing: 2,
     },
     // Wrapper around the device-info cards. Portrait: a centered column. Roomy: a
     // centered wrapping row so the cards sit side by side (see cardStackRoomy).

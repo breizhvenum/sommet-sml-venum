@@ -129,7 +129,10 @@ export function NavShell({
           <View style={[styles.bar, { backgroundColor: t.text, marginVertical: 4 }]} />
           <View style={[styles.bar, { backgroundColor: t.text }]} />
         </TouchableOpacity>
-        <Text style={[styles.appBrand, { color: t.text }]}>Ambit rom1rv</Text>
+        <Text style={[styles.appBrand, { color: t.text }]}>
+          <Text style={{ fontWeight: '300', color: t.mutedText }}>Ambit </Text>
+          <Text style={{ fontWeight: '800', color: t.primary }}>rom1rv</Text>
+        </Text>
         <Text style={[styles.navVer, { color: t.mutedText, marginLeft: 8 }]}>v{APP_VERSION}</Text>
       </View>
 
@@ -180,7 +183,7 @@ const styles = StyleSheet.create({
   appbar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 6, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 5 },
   burger: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
   bar: { width: 18, height: 2, borderRadius: 1 },
-  appBrand: { fontSize: 17, fontWeight: '700', marginLeft: 4 },
+  appBrand: { fontSize: 16, letterSpacing: 1.5, marginLeft: 4 },
 
   bodyRow: { flex: 1, flexDirection: 'row' },
   content: { flex: 1 },

@@ -109,24 +109,24 @@ const styles = StyleSheet.create({
   // Real cap, not a full-bleed stretch - on a wide tablet-rail card this content block
   // would otherwise spread thin across the whole width. 420 keeps the main row's own
   // three sections (icon/temp, wind+high-low) close enough to read as one group.
-  contentWrap: { width: '100%', maxWidth: 420, gap: v3Spacing.medium, alignItems: 'center' },
+  contentWrap: { width: '100%', maxWidth: 420, overflow: 'hidden', gap: v3Spacing.medium, alignItems: 'center' },
   // alignSelf:'center' - see the header comment above: without this, both rows stretched
   // to contentWrap's full width by default (Column's alignItems:'stretch'), so mainRow's
   // tight icon+temp+wind cluster and forecastRow's spread-out 3 columns had different
   // visual centers. Sizing each row to its own content instead makes both centers coincide.
-  mainRow: { flexDirection: 'row', alignItems: 'center', gap: v3Spacing.medium, alignSelf: 'center' },
+  mainRow: { flexDirection: 'row', alignItems: 'center', gap: v3Spacing.medium, alignSelf: 'center', maxWidth: '100%' },
   // includeFontPadding/textAlignVertical: emoji glyphs render with extra vertical padding
   // baked into Android's own font metrics that plain text doesn't have, throwing off
   // alignItems:'center' against the numbers/labels beside them - real, found live on device.
   mainEmoji: { fontSize: 40, includeFontPadding: false, textAlignVertical: 'center' },
-  mainInfo: { gap: 2 },
+  mainInfo: { gap: 2, flexShrink: 1 },
   placeName: { fontSize: v3Type.label },
   temp: { fontSize: v3Type.display, fontWeight: '800' },
   condLabel: { fontSize: v3Type.bodyLarge },
-  sideInfo: { marginLeft: v3Spacing.large, gap: 2, alignItems: 'flex-end' },
+  sideInfo: { marginLeft: v3Spacing.small, gap: 2, alignItems: 'flex-end', flexShrink: 1 },
   sideLine: { fontSize: v3Type.label },
-  forecastRow: { flexDirection: 'row', gap: v3Spacing.large, alignSelf: 'center' },
-  forecastCol: { alignItems: 'center', gap: 4 },
+  forecastRow: { flexDirection: 'row', gap: v3Spacing.medium, alignSelf: 'center', maxWidth: '100%' },
+  forecastCol: { alignItems: 'center', gap: 4, flexShrink: 1 },
   forecastDay: { fontSize: v3Type.label },
   forecastEmoji: { fontSize: 22, includeFontPadding: false, textAlignVertical: 'center' },
   forecastTemp: { fontSize: v3Type.label, fontWeight: '600' },

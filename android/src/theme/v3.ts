@@ -46,55 +46,40 @@ export interface V3Colors {
 // (#167E6A) and the semantic ramp were pulled toward quieter tones; green is still the
 // identity, just less flashy.
 export const v3Light: V3Colors = {
-  background: '#E9EDF0',
-  surface:    '#F2F5F7',
+  // rom1rv palette (2026-11): cool neutral greys + one confident red accent.
+  background: '#ECEDEF',
+  surface:    '#F3F4F5',
   card:       '#FFFFFF',
-  cardNested: '#EDF1F4',
-  border:     '#DCE2E7',
-  borderStrong: '#C6CED6',
-  // 2026-08-15 (André, full design-parity audit: "the android app should look 100%
-  // identical to the desktop except the intervals. Desktop is our baseline"). Light-mode
-  // primary/accent were a slate grey (#475569/#64748B) - a leftover from the 2026-08-09
-  // "change to a nicer grey" pass, which only ever mutualized the DARK palette (both apps
-  // are grey in dark mode, see v3Dark below and Theme.qml's _dark* block). Light mode was
-  // never brought back into line: desktop stayed on its teal identity (Theme.qml's
-  // _lightPrimary #167E6A / _lightAccent #2FA98C), Android was left grey - so the two apps
-  // did not match in light mode. Restored to desktop's exact teal so they do.
-  primary:    '#2E6A57',
-  secondary:  '#5B6270',
-  accent:     '#3C8571',
+  cardNested: '#EFF0F2',
+  border:     '#DADCE0',
+  borderStrong: '#C3C6CC',
+  primary:    '#A3212D',
+  secondary:  '#5E626B',
+  accent:     '#C2343F',
   success:    '#3E7D52',
   warning:    '#9A7A22',
   hard:       '#B5652F',
-  error:      '#B0473C',
-  text:       '#1A1D22',
-  mutedText:  '#5B6270',
+  error:      '#A61E2A',
+  text:       '#191B1F',
+  mutedText:  '#5E626B',
 };
 
 export const v3Dark: V3Colors = {
-  background: '#0F1216',
-  surface:    '#171B22',
-  card:       '#1B1F27',
-  cardNested: '#232935',
-  border:     '#2B313C',
-  borderStrong: '#3A414E',
-  // 2026-08-25 pass 2: dark primary was a grey that made every link/active element read as
-  // dead grey-on-grey (André, seeing it live). Now a calm pine green - same hue as light's
-  // #2E6A57, lifted for the dark card - so dark gets one living accent. Secondary lifted so
-  // labels stay legible. Kept identical to desktop Theme.qml's _dark* values.
-  primary:    '#59A88C',
-  secondary:  '#ADB6C2',
-  accent:     '#7BC0A6',
+  background: '#0E0F11',
+  surface:    '#16181B',
+  card:       '#1C1E22',
+  cardNested: '#25282D',
+  border:     '#2D3036',
+  borderStrong: '#3C4048',
+  primary:    '#CF3E46',
+  secondary:  '#B3B8C0',
+  accent:     '#E5595F',
   success:    '#5C9E72',
   warning:    '#CB9A45',
   hard:       '#CE8258',
-  error:      '#CE6A60',
-  text:       '#E9EBEE',
-  // 2026-08-11 (André, S2): was #9AA3AF, which measures 6.5:1 on the dark card but is the
-  // colour caption text uses - at that size antialiasing renders it noticeably dimmer than
-  // the number suggests. #B4BDC9 is 8.7:1 and still a soft grey-blue, not white. Kept
-  // identical to desktop/qml/Theme.qml's _darkMutedText on purpose.
-  mutedText:  '#B4BDC9',
+  error:      '#F0757B',
+  text:       '#EDEEF0',
+  mutedText:  '#B6BAC2',
 };
 
 // Theme.qml's spacingSmall/Medium/Large and radiusSmall/radiusCard, unchanged.
