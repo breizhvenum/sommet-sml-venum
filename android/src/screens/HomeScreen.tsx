@@ -1219,11 +1219,11 @@ export default function HomeScreen() {
           whatever the phone's width or font size: the "r" is measured, then the photo is moved. */}
       <View
         onLayout={e => setHdrBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
-        style={[styles.header, { marginHorizontal: 12, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', minHeight: 190, justifyContent: 'center', paddingVertical: 22 }]}>
+        style={[styles.header, { alignSelf: 'center', width: Math.max(winWidth - 24, 200), borderRadius: 18, overflow: 'hidden', backgroundColor: '#000', minHeight: 190, justifyContent: 'center', paddingVertical: 22 }]}>
         {(() => {
           const HEAD_X = 0.490, HEAD_Y = 0.483, RATIO = 1360 / 764;   // head position in the photo (fractions)
           const ready = hdrBox.w > 0 && rowBox && rBox;
-          const w = Math.max(hdrBox.w * 1.45, 1);
+          const w = Math.max(hdrBox.w * 1.45, hdrBox.h * 1.1 * RATIO, 1);   // always covers the whole banner
           const h = w / RATIO;
           const rx = ready ? rowBox!.x + rBox!.x + rBox!.width / 2 : hdrBox.w / 2;
           const ry = ready ? rowBox!.y + rBox!.y + rBox!.height / 2 : hdrBox.h / 2;
