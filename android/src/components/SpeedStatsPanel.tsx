@@ -108,19 +108,23 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
   );
 
   const FilterBox = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingHorizontal: 4, flexWrap: 'wrap' }}>
-      <TouchableOpacity onPress={toggleFilters} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1 }}>
+    <View style={{ marginTop: 12, paddingHorizontal: 4 }}>
+      <TouchableOpacity onPress={toggleFilters} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center' }}>
         <View style={{ width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: theme.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: vmaxOn ? theme.primary : 'transparent' }}>
           {vmaxOn ? <Text style={{ color: '#fff', fontWeight: '800', lineHeight: 18 }}>✓</Text> : null}
         </View>
-        <Text style={{ color: theme.text, fontSize: 13, marginLeft: 10, flexShrink: 1 }}>Filtrer une Vmax aberrante · plafond</Text>
+        <Text style={{ color: theme.text, fontSize: 13, marginLeft: 10, flexShrink: 1 }}>Filtrer une Vmax aberrante</Text>
       </TouchableOpacity>
-      <TextInput
-        value={vmaxTxt} onChangeText={setVmaxTxt} onBlur={applyVmaxTxt} onSubmitEditing={applyVmaxTxt}
-        editable={vmaxOn} keyboardType="decimal-pad" selectTextOnFocus maxLength={5}
-        style={{ marginLeft: 8, width: 62, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.border,
-          color: vmaxOn ? theme.text : theme.mutedText, textAlign: 'center', fontSize: 14, opacity: vmaxOn ? 1 : 0.5 }} />
-      <Text style={{ color: theme.text, fontSize: 13, marginLeft: 6 }}>kts</Text>
+      {/* Last line: "Plafond à [40.0] kts", all on one row, lined up under the label (22 box + 10 gap) */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginLeft: 32 }}>
+        <Text style={{ color: theme.text, fontSize: 13 }}>avec un plafond à</Text>
+        <TextInput
+          value={vmaxTxt} onChangeText={setVmaxTxt} onBlur={applyVmaxTxt} onSubmitEditing={applyVmaxTxt}
+          editable={vmaxOn} keyboardType="decimal-pad" selectTextOnFocus maxLength={5}
+          style={{ marginLeft: 8, width: 62, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.border,
+            color: vmaxOn ? theme.text : theme.mutedText, textAlign: 'center', fontSize: 14, opacity: vmaxOn ? 1 : 0.5 }} />
+        <Text style={{ color: theme.text, fontSize: 13, marginLeft: 6 }}>kts</Text>
+      </View>
     </View>
   );
 
