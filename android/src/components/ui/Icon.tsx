@@ -10,7 +10,7 @@ export type IconName =
   | 'list' | 'link' | 'map' | 'chart' | 'apps' | 'activity' | 'key' | 'person'
   | 'delete' | 'check' | 'info' | 'battery' | 'warning' | 'home'
   | 'watch' | 'etrex' | 'bryton' | 'magene' | 'sun' | 'moon' | 'auto' | 'chevronLeft' | 'chevronRight'
-  | 'cycling' | 'running' | 'walking'
+  | 'cycling' | 'running' | 'walking' | 'windsurf'
   | 'play' | 'pause' | 'skipBack' | 'skipForward'
   | 'download' | 'upload' | 'calendar' | 'bluetooth'
   // Nav-rail icons for the screens ported from desktop (2026-08-26). Each mirrors the Material
@@ -203,6 +203,16 @@ export default function Icon({ name, size = 20, color = '#000' }: Props) {
     // font, impossible to tint, and visibly clashing with this app's own monochrome
     // outline icon language everywhere else. Same 24dp/1.9-stroke style as the rest of
     // this set, tintable like every other icon here.
+    case 'windsurf':
+      // Windsurfer silhouette: tall sail, rider hanging from the boom, board (used for the gear / "Matériel" entry).
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M9.4 15.4L20.1 1.5L21.7 2.3L18.7 13.7Z" fill={color} stroke={color} strokeWidth={0.6} strokeLinejoin="round" />
+          <Circle cx={14.7} cy={15.8} r={1.4} fill={color} />
+          <Path d="M15.3 15.3L17.7 13.5M14.7 17.3L14.9 19.4M14.9 19.4L13.1 20.4M14.9 19.4L16.8 20.4" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          <Path d="M1.2 15.7C4.2 18.7 10.2 21.6 17 21.3C18.4 21.2 19 20.4 18 19.8C13 18.4 6 16.8 1.2 15.7Z" fill={color} />
+        </Svg>
+      );
     case 'cycling':
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">

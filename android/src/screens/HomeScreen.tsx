@@ -1158,7 +1158,7 @@ export default function HomeScreen() {
       : []),
     // Gear tracker (v3): derived from the local gear DB + intervals.icu, so it's always
     // reachable — no connected watch needed, not gated behind Experimental.
-    { id: 'gear', label: t.gearButton, icon: 'cycling' as const, onPress: () => navigation.navigate('Gear'), group: 'training' as const },
+    { id: 'gear', label: t.gearButton, icon: 'windsurf' as const, onPress: () => navigation.navigate('Gear'), group: 'training' as const },
     // Bryton Aero 60 — its own device-gated items, like the watch's Routes/Sport Modes. Only when
     // the head unit is plugged in. Workouts = the builder; Profile = FTP/LTHR/Max HR reconciliation.
     ...(deviceType === 'bryton'
