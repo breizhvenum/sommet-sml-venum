@@ -73,10 +73,10 @@ export function WeatherCard() {
               </Text>
             </View>
             <View style={styles.sideInfo}>
-              <Text style={[styles.sideLine, { color: theme.mutedText }]}>
+              <Text style={[styles.sideLine, { color: theme.mutedText }]} numberOfLines={1}>
                 {t.weatherWind(Math.round(weather.data.windSpeed))}
               </Text>
-              <Text style={[styles.sideLine, { color: theme.mutedText }]}>
+              <Text style={[styles.sideLine, { color: theme.mutedText }]} numberOfLines={1}>
                 {t.weatherHighLow(Math.round(weather.data.todayHigh), Math.round(weather.data.todayLow))}
               </Text>
             </View>
@@ -123,7 +123,8 @@ const styles = StyleSheet.create({
   placeName: { fontSize: v3Type.label },
   temp: { fontSize: v3Type.display, fontWeight: '800' },
   condLabel: { fontSize: v3Type.bodyLarge },
-  sideInfo: { marginLeft: v3Spacing.small, gap: 2, alignItems: 'flex-end', flexShrink: 1 },
+  // flexShrink 0 + single-line lines: the wind ("Vent 17 km/h") must never wrap at the "/"; the place name on the left gives way instead.
+  sideInfo: { marginLeft: v3Spacing.small, gap: 2, alignItems: 'flex-end', flexShrink: 0 },
   sideLine: { fontSize: v3Type.label },
   forecastRow: { flexDirection: 'row', gap: v3Spacing.medium, alignSelf: 'center', maxWidth: '100%' },
   forecastCol: { alignItems: 'center', gap: 4, flexShrink: 1 },
