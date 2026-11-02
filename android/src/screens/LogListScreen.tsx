@@ -434,7 +434,7 @@ export default function LogListScreen() {
                   <Text style={styles.cardDevice} numberOfLines={1}>{item.device}</Text>
                 )}
               </View>
-              <Text style={styles.cardArrow}>›</Text>
+              <View style={styles.viewBtn}><Text style={styles.viewBtnTxt}>{t.viewBtn}</Text></View>
             </View>
             {/* The configured metrics, in the watch's own values. A metric the move never
                 recorded is skipped (metricValue returns ""), so cards stay tidy. */}
@@ -594,4 +594,6 @@ const createStyles = (t: ReturnType<typeof useV3Theme>) => StyleSheet.create({
   cardRight: { alignItems: 'flex-end' },
   cardDPlus: { fontSize: 13, color: t.mutedText, marginBottom: 4 },
   cardArrow: { fontSize: 22, color: t.mutedText },
+  viewBtn: { backgroundColor: t.primary, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 7 },
+  viewBtnTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
 });

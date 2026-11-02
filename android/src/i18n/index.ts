@@ -193,6 +193,7 @@ const fr = {
   loadingActivities: 'Chargement des activités…',
   noFilter:     'Aucune activité pour ce filtre',
   deleteHint:   'Appui long sur une activité pour la supprimer',
+  viewBtn:      'Voir',
   unknownDate:  'Date inconnue',
 
   // MapScreen
@@ -1077,6 +1078,7 @@ const en: typeof fr = {
   loadingActivities: 'Loading activities…',
   noFilter:     'No activities for this filter',
   deleteHint:   'Long press on an activity to delete it',
+  viewBtn:      'View',
   unknownDate:  'Unknown date',
 
   loading:        'Loading track…',
