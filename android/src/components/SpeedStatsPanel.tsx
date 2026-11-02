@@ -138,7 +138,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
                 <ActivityIndicator color="#fff" />
                 <Text style={{ color: '#fff', fontWeight: '700', marginLeft: 10 }}>(please wait...)</Text>
               </View>
-            : <Text style={{ color: '#fff', fontWeight: '700', textAlign: 'center' }}>Calculer les statistiques rom1rv Speed</Text>}
+            : <Text style={{ color: '#fff', fontWeight: '700', textAlign: 'center' }}>Calculer les statistiques by rom1rv Speed</Text>}
         </TouchableOpacity>
         {FilterBox}
       </View>
@@ -149,7 +149,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed }: { smlPath: string
   return (
     <View style={s.wrap}>
       <View style={s.card}>
-        <Text style={s.h}>rom1rv Speed · {date}</Text>
+        <Text style={s.h}>Speed · {date}</Text>
         <View style={s.grid}>
           <Tile label="Distance totale" value={(stats.distanceM / 1000).toFixed(2)} unit="km" />
           <Tile label="Vmax" value={kts(stats.vmax)} unit="kts" big />

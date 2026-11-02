@@ -979,15 +979,16 @@ export default function MapScreen() {
       {/* ── Overview / Charts / Laps ── (desktop parity: ActivityDetail.qml) */}
       {/* Under the map: the analyzer-style stats from the SML (knots); the usual panel when the move has no SML */}
       {usedGear.length > 0 && (
-        <View style={{ marginHorizontal: 12, marginTop: 12, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Icon name="windsurf" size={18} color={theme.mutedText} />
-            <Text style={{ color: theme.mutedText, fontSize: 12.5, fontWeight: '800', letterSpacing: 0.5, marginLeft: 6 }}>{t.gearSetForActivity.toUpperCase()}</Text>
+        <View style={{ marginHorizontal: 12, marginTop: 12, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
+          {/* Same title style as the "Speed" card below (SpeedStatsPanel `h`) */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+            <Icon name="windsurf" size={14} color={theme.mutedText} />
+            <Text style={{ color: theme.mutedText, fontSize: 12, fontWeight: '700', letterSpacing: 0.6, marginLeft: 6 }}>{t.gearSetForActivity.toUpperCase()}</Text>
           </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {usedGear.map(n => (
-              <View key={n} style={{ borderWidth: 1, borderColor: theme.primary, backgroundColor: theme.primary + '22', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, marginRight: 6, marginTop: 6 }}>
-                <Text style={{ color: theme.text, fontSize: 14 }}>{n}</Text>
+              <View key={n} style={{ borderWidth: 1, borderColor: theme.primary, backgroundColor: theme.primary + '22', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, marginRight: 6, marginTop: 6 }}>
+                <Text style={{ color: theme.text, fontSize: 12 }}>{n}</Text>
               </View>
             ))}
           </View>
