@@ -192,75 +192,81 @@ export async function purgeReminder(id: string): Promise<void> {
 
 // ─── Assignment (sport type -> default gear) & per-activity tagging ────────────
 
-export async function getAssignments(): Promise<Record<string, string>> {
+export async function getAssignments(): Promise<Record<string, string[]>> {
   const db = await getDb();
-  const [res] = await db.executeSql('SELECT activity_type, gear_id FROM gear_assignment');
-  const map: Record<string, string> = {};
+  const [res] = await db.executeSql('SELECT activity_type, gear_id FROM gear_assignment_multi');
+  const map: Record<string, string[]> = {};
   for (let i = 0; i < res.rows.length; i++) {
     const row = res.rows.item(i);
-    map[row.activity_type] = row.gear_id;
+    (map[row.activity_type] ||= []).push(row.gear_id);
   }
   return map;
 }
 
-export async function setAssignment(activityType: string, gearId: string | null): Promise<void> {
+/** Replace the default gear list of a sport (empty list = none). */
+export async function setAssignments(activityType: string, gearIds: string[]): Promise<void> {
   const db = await getDb();
-  if (!gearId) {
-    await db.executeSql('DELETE FROM gear_assignment WHERE activity_type = ?', [activityType]);
-  } else {
+  await db.executeSql('DELETE FROM gear_assignment_multi WHERE activity_type = ?', [activityType]);
+  for (const id of gearIds) {
     await db.executeSql(
-      'INSERT OR REPLACE INTO gear_assignment (activity_type, gear_id) VALUES (?, ?)',
-      [activityType, gearId]
-    );
+      'INSERT OR REPLACE INTO gear_assignment_multi (activity_type, gear_id) VALUES (?, ?)', [activityType, id]);
   }
 }
 
-export async function getDefaultGearFor(activityType: string): Promise<string | null> {
+export async function getDefaultGearsFor(activityType: string): Promise<string[]> {
   const db = await getDb();
-  const [res] = await db.executeSql(
-    'SELECT gear_id FROM gear_assignment WHERE activity_type = ? LIMIT 1', [activityType]
-  );
-  return res.rows.length ? res.rows.item(0).gear_id : null;
+  const [res] = await db.executeSql('SELECT gear_id FROM gear_assignment_multi WHERE activity_type = ?', [activityType]);
+  const out: string[] = [];
+  for (let i = 0; i < res.rows.length; i++) out.push(res.rows.item(i).gear_id);
+  return out;
 }
 
 export async function isActivityTagged(activityId: string): Promise<boolean> {
   const db = await getDb();
-  const [res] = await db.executeSql('SELECT 1 FROM activity_gear WHERE activity_id = ? LIMIT 1', [activityId]);
+  const [res] = await db.executeSql('SELECT 1 FROM activity_gear_multi WHERE activity_id = ? LIMIT 1', [activityId]);
   return res.rows.length > 0;
 }
 
-/** Attribute a synced move to a gear in the local usage ledger (idempotent per activity_id).
- * distance_m/time_s feed the local distance tally (GearTotals). */
+/** Attribute a synced move to a gear item in the local usage ledger (idempotent per activity + gear).
+ * distance_m/time_s feed the local distance tally (GearTotals): every gear item of the move gets the full distance. */
 export async function recordActivityGear(
   activityId: string, gearId: string, distanceM: number, timeS: number, activityDate = '',
 ): Promise<void> {
   const db = await getDb();
   await db.executeSql(
-    `INSERT OR REPLACE INTO activity_gear
+    `INSERT OR REPLACE INTO activity_gear_multi
        (activity_id, gear_id, distance_m, time_s, activity_date, assigned_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [activityId, gearId, distanceM, timeS, activityDate, Date.now()]
   );
 }
 
-/** The gear a specific activity is currently attributed to (manual pick or sport default), or null. */
-export async function getActivityGear(activityId: string): Promise<string | null> {
+/** All the gear items a specific activity is attributed to (manual picks or sport defaults). */
+export async function getActivityGears(activityId: string): Promise<string[]> {
   const db = await getDb();
-  const [res] = await db.executeSql('SELECT gear_id FROM activity_gear WHERE activity_id = ? LIMIT 1', [activityId]);
-  return res.rows.length ? res.rows.item(0).gear_id : null;
+  const [res] = await db.executeSql('SELECT gear_id FROM activity_gear_multi WHERE activity_id = ?', [activityId]);
+  const out: string[] = [];
+  for (let i = 0; i < res.rows.length; i++) out.push(res.rows.item(i).gear_id);
+  return out;
 }
 
-/** Remove an activity's gear attribution (clear). */
+/** Remove one gear item from an activity. */
+export async function removeActivityGear(activityId: string, gearId: string): Promise<void> {
+  const db = await getDb();
+  await db.executeSql('DELETE FROM activity_gear_multi WHERE activity_id = ? AND gear_id = ?', [activityId, gearId]);
+}
+
+/** Remove an activity's gear attribution (clear all). */
 export async function clearActivityGear(activityId: string): Promise<void> {
   const db = await getDb();
-  await db.executeSql('DELETE FROM activity_gear WHERE activity_id = ?', [activityId]);
+  await db.executeSql('DELETE FROM activity_gear_multi WHERE activity_id = ?', [activityId]);
 }
 
 export interface LedgerRow { gearId: string; distanceM: number; timeS: number; assignedAt: number }
 
 export async function getGearLedger(): Promise<LedgerRow[]> {
   const db = await getDb();
-  const [res] = await db.executeSql('SELECT gear_id, distance_m, time_s, assigned_at FROM activity_gear');
+  const [res] = await db.executeSql('SELECT gear_id, distance_m, time_s, assigned_at FROM activity_gear_multi');
   const out: LedgerRow[] = [];
   for (let i = 0; i < res.rows.length; i++) {
     const r = res.rows.item(i);

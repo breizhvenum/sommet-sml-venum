@@ -4,11 +4,12 @@ import { useV3Theme } from '../theme/v3';
 import { t } from '../i18n';
 import Icon from './ui/Icon';
 import {
-  LocalGear, getAllGear, getActivityGear, recordActivityGear, clearActivityGear,
+  LocalGear, getAllGear, getActivityGears, recordActivityGear, removeActivityGear, clearActivityGear,
 } from '../database/gearDb';
+import { gearKinds, gearKindOf } from './gearKinds';
 
-// Manual per-activity gear picker (André 2026-08-18): attribute a specific move to a specific
-// bike/shoes, overriding the sport default. Writes the local usage ledger (recordActivityGear,
+// Manual per-activity gear picker (André 2026-08-18): attribute a specific move to specific
+// gear (bike, shoes, board, sail, wing, foil, fin; several at once), overriding the sport default. Writes the local usage ledger (recordActivityGear,
 // keyed by the activity id, idempotent) so the gear-distance tally reflects the real choice.
 // Local-first — it does not push to intervals.icu here (the app is meant to stand alone).
 export function GearPicker({
@@ -24,29 +25,33 @@ export function GearPicker({
   const theme = useV3Theme();
   const s = styles(theme);
   const [gear, setGear] = useState<LocalGear[]>([]);
-  const [current, setCurrent] = useState<string | null>(null);
+  const [current, setCurrent] = useState<string[]>([]);
 
   useEffect(() => {
     if (!visible) return;
     (async () => {
       setGear((await getAllGear()).filter(g => !g.parentId && !g.retired));
-      setCurrent(await getActivityGear(activityId));
+      setCurrent(await getActivityGears(activityId));
     })();
   }, [visible, activityId]);
 
-  async function pick(g: LocalGear) {
-    await recordActivityGear(activityId, g.id, distanceM || 0, timeS || 0, date);
-    setCurrent(g.id);
-    onClose();
+  // Tap = tick / untick; the sheet stays open so several items can be ticked.
+  async function toggle(g: LocalGear) {
+    if (current.includes(g.id)) {
+      await removeActivityGear(activityId, g.id);
+      setCurrent(current.filter(x => x !== g.id));
+    } else {
+      await recordActivityGear(activityId, g.id, distanceM || 0, timeS || 0, date);
+      setCurrent([...current, g.id]);
+    }
   }
   async function clear() {
     await clearActivityGear(activityId);
-    setCurrent(null);
+    setCurrent([]);
     onClose();
   }
 
-  const bikes = gear.filter(g => g.type.toLowerCase() === 'bike');
-  const shoes = gear.filter(g => g.type.toLowerCase().startsWith('shoe'));
+  const kinds = gearKinds().map(k => ({ ...k, list: gear.filter(g => gearKindOf(g.type)?.type === k.type) }));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -55,14 +60,14 @@ export function GearPicker({
           <Text style={s.title}>{t.gearPickTitle}</Text>
           <ScrollView style={{ maxHeight: 420 }}>
             {gear.length === 0 && <Text style={s.empty}>{t.gearEmpty}</Text>}
-            {([[t.gearBikes, bikes], [t.gearShoes, shoes]] as const).map(([label, list]) =>
+            {kinds.map(({ type, label, list }) =>
               list.length > 0 ? (
-                <View key={label}>
+                <View key={type}>
                   <Text style={s.section}>{label}</Text>
                   {list.map(g => (
-                    <TouchableOpacity key={g.id} style={s.row} onPress={() => pick(g)}>
+                    <TouchableOpacity key={g.id} style={s.row} onPress={() => toggle(g)}>
                       <Text style={s.rowText}>{g.name}</Text>
-                      {current === g.id && <Icon name="check" size={18} color={theme.primary} />}
+                      {current.includes(g.id) && <Icon name="check" size={18} color={theme.primary} />}
                     </TouchableOpacity>
                   ))}
                 </View>

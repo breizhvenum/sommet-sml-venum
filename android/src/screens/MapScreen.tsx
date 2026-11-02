@@ -9,6 +9,8 @@ import { getRunalyzeApiKey, uploadFitToRunalyze } from '../services/ApiRunalyze'
 import { getIntervalsIcuCredentials, uploadFitToIntervalsIcu } from '../services/ApiIntervalsIcu';
 import { pushGearToIntervals } from '../services/GearAutoAssign';
 import { GearPicker } from '../components/GearPicker';
+import { getAllGear, getActivityGears } from '../database/gearDb';
+import { gearKindOf } from '../components/gearKinds';
 import { getFitFile } from '../services/FitExport';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -340,6 +342,22 @@ export default function MapScreen() {
     return () => { alive = false; };
   }, [activity.gpx_path]);
   const [showGearPicker, setShowGearPicker] = useState(false);
+  // Gear used for this activity (shown under the map; refreshed when the picker closes).
+  const [usedGear, setUsedGear] = useState<string[]>([]);
+  useEffect(() => {
+    if (showGearPicker) return;
+    let alive = true;
+    (async () => {
+      try {
+        const ids = await getActivityGears(activity.id);
+        const all = await getAllGear();
+        const names = ids.map(id => all.find(g => g.id === id)).filter((g): g is NonNullable<typeof g> => !!g && !g.deleted)
+          .map(g => `${gearKindOf(g.type)?.single ?? g.type} · ${g.name}`);
+        if (alive) setUsedGear(names);
+      } catch { if (alive) setUsedGear([]); }
+    })();
+    return () => { alive = false; };
+  }, [activity.id, showGearPicker]);
   const [downloadProgress, setDownloadProgress] = useState<DownloadRegionProgress | null>(null);
 
   // ── Replay State
@@ -960,6 +978,18 @@ export default function MapScreen() {
           panel's own chart shows altitude now; the replay keeps its play/rewind/forward buttons.) */}
       {/* ── Overview / Charts / Laps ── (desktop parity: ActivityDetail.qml) */}
       {/* Under the map: the analyzer-style stats from the SML (knots); the usual panel when the move has no SML */}
+      {usedGear.length > 0 && (
+        <View style={{ marginHorizontal: 12, marginTop: 12, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
+          <Text style={{ color: theme.mutedText, fontSize: 12.5, fontWeight: '800', letterSpacing: 0.5 }}>{t.gearSetForActivity.toUpperCase()}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 }}>
+            {usedGear.map(n => (
+              <View key={n} style={{ borderWidth: 1, borderColor: theme.primary, backgroundColor: theme.primary + '22', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, marginRight: 6, marginTop: 6 }}>
+                <Text style={{ color: theme.text, fontSize: 14 }}>{n}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
       {smlPath && !statsFailed ? (
         <SpeedStatsPanel smlPath={smlPath} onFailed={() => setStatsFailed(true)} />
       ) : smlResolved ? (

@@ -201,6 +201,42 @@ async function openAndMigrate(): Promise<SQLiteDatabase> {
     ['time_s', 'REAL NOT NULL DEFAULT 0'],
     ['activity_date', `TEXT NOT NULL DEFAULT ''`],
   ]);
+  // Several gear items per sport / per activity (board + sail + fin...). The first two tables above
+  // keep one gear per key, so these have composite keys. Old rows are copied over once, when the
+  // new table is created, and the old tables are then no longer used.
+  const tableExists = async (name: string) => {
+    const [r] = await db.executeSql(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='${name}'`);
+    return r.rows.length > 0;
+  };
+  const freshAssign = !(await tableExists('gear_assignment_multi'));
+  await db.executeSql(`
+    CREATE TABLE IF NOT EXISTS gear_assignment_multi (
+      activity_type TEXT NOT NULL,
+      gear_id       TEXT NOT NULL,
+      PRIMARY KEY (activity_type, gear_id)
+    )
+  `);
+  if (freshAssign) {
+    await db.executeSql(`INSERT OR IGNORE INTO gear_assignment_multi (activity_type, gear_id)
+                         SELECT activity_type, gear_id FROM gear_assignment`);
+  }
+  const freshLedger = !(await tableExists('activity_gear_multi'));
+  await db.executeSql(`
+    CREATE TABLE IF NOT EXISTS activity_gear_multi (
+      activity_id   TEXT    NOT NULL,
+      gear_id       TEXT    NOT NULL,
+      distance_m    REAL    NOT NULL DEFAULT 0,
+      time_s        REAL    NOT NULL DEFAULT 0,
+      activity_date TEXT    NOT NULL DEFAULT '',
+      assigned_at   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (activity_id, gear_id)
+    )
+  `);
+  if (freshLedger) {
+    await db.executeSql(`INSERT OR IGNORE INTO activity_gear_multi
+                           (activity_id, gear_id, distance_m, time_s, activity_date, assigned_at)
+                         SELECT activity_id, gear_id, distance_m, time_s, activity_date, assigned_at FROM activity_gear`);
+  }
   // Per-activity metrics read from its GPX (HR, calories, cadence...), cached so the Activities
   // list parses each GPX once ever instead of on every visit (André, 2026-09-29: the list parsed
   // every GPX before showing anything, ~110 s on the tablet). One column per sortable metric so a

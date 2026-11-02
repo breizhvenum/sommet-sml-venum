@@ -9,7 +9,7 @@ import { useV3Theme } from '../theme/v3';
 import { t } from '../i18n';
 import {
   LocalGear, LocalReminder, getAllGear, getReminders, upsertGear, softDeleteGear, setGearBaseline,
-  getAssignments, setAssignment, newLocalId, getGearLedger,
+  getAssignments, setAssignments as saveAssignments, newLocalId, getGearLedger,
 } from '../database/gearDb';
 import { computeGearTotals, reminderPercentUsed, GearTotal } from '../services/GearTotals';
 import {
@@ -25,7 +25,7 @@ type ReminderUnit = 'distance' | 'time' | 'days' | 'activities';
 // a gear. Auto-assign of the default bike/shoes to a synced move lives in GearAutoAssign.
 
 // Common Ambit sport types offered in the default-gear picker.
-const SPORT_TYPES = ['Cycling', 'Mountain biking', 'Running', 'Trail running', 'Walking', 'Hiking', 'Orienteering'];
+const SPORT_TYPES = ['Windsurfing', 'Cycling', 'Mountain biking', 'Running', 'Trail running', 'Walking', 'Hiking', 'Orienteering'];
 
 interface GearWithReminders extends LocalGear { reminders: LocalReminder[] }
 
@@ -34,7 +34,8 @@ export default function GearScreen() {
   const s = styles(theme);
 
   const [gear, setGear] = useState<GearWithReminders[]>([]);
-  const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [assignments, setAssignments] = useState<Record<string, string[]>>({});
+  const [assignSport, setAssignSport] = useState<string | null>(null);
   const [totals, setTotals] = useState<Map<string, GearTotal>>(new Map());
   const [loading, setLoading] = useState(true);
 
@@ -67,6 +68,17 @@ export default function GearScreen() {
   const tops = gear.filter(g => !g.parentId);
   const bikes = tops.filter(g => g.type.toLowerCase() === 'bike');
   const shoes = tops.filter(g => g.type.toLowerCase().startsWith('shoe'));
+  // Windsurf gear (board, sail/wing, foil, fin, wetsuit): same cards and mileage as bikes/shoes.
+  const kindOf = (ty: string) => tops.filter(g => g.type.toLowerCase() === ty.toLowerCase());
+  const GEAR_KINDS: { type: string; label: string; add: string }[] = [
+    { type: 'Bike', label: t.gearBikes, add: t.gearAddBike },
+    { type: 'Shoes', label: t.gearShoes, add: t.gearAddShoes },
+    { type: 'Board', label: t.gearBoards, add: t.gearAddBoard },
+    { type: 'Sail', label: t.gearSails, add: t.gearAddSail },
+    { type: 'Wing', label: t.gearWings, add: t.gearAddWing },
+    { type: 'Foil', label: t.gearFoils, add: t.gearAddFoil },
+    { type: 'Fin', label: t.gearFins, add: t.gearAddFin },
+  ];
   const partsOf = (id: string) => gear.filter(g => g.parentId === id);
 
   // ── Text-input modal (add/rename) ───────────────────────────────────────────
@@ -75,12 +87,12 @@ export default function GearScreen() {
     setPrompt({ title, value: initial, onOk });
   }
 
-  async function addGear(type: 'Bike' | 'Shoes') {
-    askText(type === 'Bike' ? t.gearAddBike : t.gearAddShoes, '', async name => {
+  async function addGear(type: string) {
+    askText(GEAR_KINDS.find(k => k.type === type)?.add ?? type, '', async name => {
       if (!name.trim()) return;
       const now = Date.now();
       await upsertGear({
-        id: newLocalId(type === 'Bike' ? 'bike' : 'shoe'), remoteId: null, parentId: null,
+        id: newLocalId(type === 'Bike' ? 'bike' : type === 'Shoes' ? 'shoe' : type.toLowerCase()), remoteId: null, parentId: null,
         name: name.trim(), type, distanceM: 0, timeS: 0, retired: false, isPrimary: false,
         updatedAt: now, lastSyncedAt: 0, remoteSnapshot: '', deleted: false,
       });
@@ -203,12 +215,12 @@ export default function GearScreen() {
     <ScrollView style={s.root} contentContainerStyle={s.content}>
       {gear.length === 0 && <Text style={s.desc}>{t.gearEmpty}</Text>}
 
-      {/* Bikes & shoes */}
-      {([['Bike', t.gearBikes, bikes], ['Shoes', t.gearShoes, shoes]] as const).map(([type, label, list]) => (
+      {/* Bikes, shoes and windsurf gear */}
+      {GEAR_KINDS.map(({ type, label, add }) => ({ type, label, add, list: type === 'Bike' ? bikes : type === 'Shoes' ? shoes : kindOf(type) })).map(({ type, label, add, list }) => (
         <View key={type} style={{ width: '100%' }}>
           <View style={s.sectionHead}>
             <Text style={s.section}>{label}</Text>
-            <TouchableOpacity onPress={() => addGear(type)}><Text style={s.addLink}>＋ {type === 'Bike' ? t.gearAddBike : t.gearAddShoes}</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => addGear(type)}><Text style={s.addLink}>＋ {add}</Text></TouchableOpacity>
           </View>
           {list.map(g => (
             <Card key={g.id} style={{ width: '100%', marginBottom: 10, opacity: g.retired ? 0.55 : 1 }}>
@@ -269,17 +281,41 @@ export default function GearScreen() {
         <Card style={{ width: '100%' }}>
           <Text style={s.section}>{t.gearDefaultFor}</Text>
           {SPORT_TYPES.map(sport => {
-            const chosen = gear.find(g => g.id === assignments[sport]);
+            const chosen = (assignments[sport] ?? []).map(id => gear.find(g => g.id === id)).filter(Boolean) as GearWithReminders[];
             return (
-              <TouchableOpacity key={sport} style={s.assignRow} onPress={() => cycleAssignment(sport)}>
+              <TouchableOpacity key={sport} style={s.assignRow} onPress={() => setAssignSport(sport)}>
                 <Text style={s.assignSport}>{sport}</Text>
-                <Text style={[s.assignGear, { color: chosen ? theme.primary : theme.mutedText }]}>{chosen ? chosen.name : t.gearNoDefault}</Text>
+                <Text style={[s.assignGear, { color: chosen.length ? theme.primary : theme.mutedText, flexShrink: 1, textAlign: 'right' }]}>{chosen.length ? chosen.map(g => g.name).join(' · ') : t.gearNoDefault}</Text>
               </TouchableOpacity>
             );
           })}
           <Text style={[s.desc, { marginTop: 8 }]}>{t.gearAssignedTo('…').replace('…', '')}</Text>
         </Card>
       )}
+
+      {/* Default gear of a sport: tick every item used (board, sail, fin...) */}
+      <Modal visible={assignSport != null} transparent animationType="fade" onRequestClose={() => setAssignSport(null)}>
+        <View style={s.modalOverlay}>
+          <View style={s.promptBox}>
+            <Text style={s.title}>{assignSport}</Text>
+            <ScrollView style={{ maxHeight: 380, marginTop: 8 }}>
+              {gear.filter(g => !g.parentId && !g.retired).map(g => {
+                const on = !!assignSport && (assignments[assignSport] ?? []).includes(g.id);
+                return (
+                  <TouchableOpacity key={g.id} style={s.assignRow} onPress={() => toggleAssignment(g.id)}>
+                    <Text style={s.assignSport}>{g.name}</Text>
+                    {on ? <Icon name="check" size={18} color={theme.primary} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <View style={s.promptBtns}>
+              <TouchableOpacity onPress={() => assignSport && saveAssignments(assignSport, []).then(async () => setAssignments(await getAssignments()))}><Text style={[s.smallLink, { color: theme.mutedText }]}>{t.gearNoDefault}</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => setAssignSport(null)}><Text style={s.smallLink}>OK</Text></TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Text prompt modal */}
       <Modal visible={prompt != null} transparent animationType="fade" onRequestClose={() => setPrompt(null)}>
@@ -323,13 +359,12 @@ export default function GearScreen() {
     </ScrollView>
   );
 
-  // Tap a sport to cycle through: none -> each gear -> none.
-  async function cycleAssignment(sport: string) {
-    const options = [null, ...gear.filter(g => !g.retired).map(g => g.id)];
-    const cur = assignments[sport] ?? null;
-    const idx = options.indexOf(cur);
-    const nextVal = options[(idx + 1) % options.length];
-    await setAssignment(sport, nextVal);
+  // Tap a sport, then tick/untick each gear item it uses.
+  async function toggleAssignment(gearId: string) {
+    if (!assignSport) return;
+    const cur = assignments[assignSport] ?? [];
+    const next = cur.includes(gearId) ? cur.filter(x => x !== gearId) : [...cur, gearId];
+    await saveAssignments(assignSport, next);
     setAssignments(await getAssignments());
   }
 }
