@@ -89,22 +89,6 @@ export function NavShell({
     );
   }
 
-  // Phone bottom-menu cell: a small icon-over-label card, kept a readable width so the strip
-  // scrolls sideways rather than squeezing. Selecting it navigates and hides the menu.
-  function BottomItem({ item }: { item: NavShellItem }) {
-    const sel = item.id === selectedId;
-    return (
-      <TouchableOpacity
-        style={[styles.bItem, sel && { backgroundColor: t.primary }]}
-        activeOpacity={0.7}
-        onPress={() => { item.onPress(); close(); }}
-      >
-        <Icon name={item.icon} size={22} color={sel ? t.card : t.text} />
-        <Text style={[styles.bLabel, { color: sel ? t.card : t.text }]} numberOfLines={1}>{item.label}</Text>
-      </TouchableOpacity>
-    );
-  }
-
   const navList = (
     <View style={{ flex: 1 }}>
       {/* No brand header here: the app bar right above already says "Sommet" next to the ☰ that
@@ -158,17 +142,21 @@ export function NavShell({
           >
             <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={close} />
           </Animated.View>
+          {/* Phone menu: a dropdown panel that opens right under the ☰ button (top-left), as a vertical list. */}
           <Animated.View
             pointerEvents={open ? 'auto' : 'none'}
-            style={[styles.bottomBar, {
+            style={[styles.dropMenu, {
+              top: insets.top + 54,
+              width: Math.min(300, width - 16),
+              maxHeight: height - (insets.top + 54) - insets.bottom - 16,
               backgroundColor: t.card,
-              borderTopColor: t.border,
-              paddingBottom: insets.bottom,
-              transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [180, 0] }) }],
+              borderColor: t.border,
+              opacity: anim,
+              transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [-12, 0] }) }],
             }]}
           >
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bottomScroll}>
-              {items.map(it => <BottomItem key={it.id} item={it} />)}
+            <ScrollView contentContainerStyle={{ padding: 8 }} showsVerticalScrollIndicator={false}>
+              {items.map(it => <Row key={it.id} item={it} />)}
             </ScrollView>
           </Animated.View>
         </>
@@ -193,7 +181,8 @@ const styles = StyleSheet.create({
   scrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 40 },
 
   // Phone: the bottom slide-up menu (a horizontal scrollable strip of every destination).
-  bottomBar: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, zIndex: 50 },
+  dropMenu: { position: 'absolute', left: 8, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, zIndex: 50, elevation: 12, overflow: 'hidden',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
   bottomScroll: { flexGrow: 1, justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 8 },
   bItem: { minWidth: 74, alignItems: 'center', paddingVertical: 6, paddingHorizontal: 6, borderRadius: 12, marginHorizontal: 2 },
   bLabel: { fontSize: 10, marginTop: 2, maxWidth: 82 },
