@@ -298,10 +298,11 @@ function frequenceHz(pts: any[]): number {
   dts.sort((a, b) => a - b);
   return Math.round(1000 / dts[Math.floor(dts.length / 2)]);
 }
-function nettoyerPoints(points: any[]): any {
+function nettoyerPoints(points: any[], vmaxKts: number | null = FILTRE_VMAX_DEFAUT): any {
   if (points.length === 0) return { points: [], keptCount: 0, rawCount: 0 };
+  // The acceleration filter (1.8) is always on. vmaxKts = the speed ceiling in kts (default 40.0), null = "filter aberrant Vmax" box unticked.
   const accelMax = FILTRE_ACCEL_DEFAUT;
-  const vmaxMs = FILTRE_VMAX_DEFAUT / KNOTS_CONVERSION;
+  const vmaxMs = vmaxKts !== null ? vmaxKts / KNOTS_CONVERSION : Infinity;
   if (frequenceHz(points) >= 2) return nettoyerPointsHautDebit(points, accelMax, vmaxMs);
   const cleaned = [points[0]];
   cleaned[0].speed = 0;
@@ -533,11 +534,11 @@ function distancesGeo(points: any[]): number[] {
   for (let i = 1; i < points.length; i++) d.push(d[i - 1] + distGeo(points[i - 1], points[i]));
   return d;
 }
-function pointsPourAlphas(points: any[], useDoppler: boolean, rawPoints: any[]): any[] {
+function pointsPourAlphas(points: any[], useDoppler: boolean, rawPoints: any[], vmaxKts: number | null = FILTRE_VMAX_DEFAUT): any[] {
   if (useDoppler) return points;
   const raw = filtrerQualiteGPS(rawPoints.map(p => ({ ...p }))).points;
   if (raw.length === 0) return raw;
-  const vmaxMs = FILTRE_VMAX_DEFAUT / KNOTS_CONVERSION;
+  const vmaxMs = vmaxKts !== null ? vmaxKts / KNOTS_CONVERSION : Infinity;
   const hautDebit = frequenceHz(raw) >= 2;
   const out = [raw[0]];
   let segStart = 0;
@@ -817,16 +818,16 @@ export async function fetchMeteoVent(points: any[]): Promise<MeteoVent | null> {
 /** Same pipeline as the analyzer's recalculer(); `meteoDir` = wind direction from fetchMeteoVent (or null).
  *  `light` skips Alpha 250 and the manoeuvre stats (turns, jibes, tacks); every other figure is the same
  *  as in the full run - lighter on a phone. */
-export function analyseSession(rawPoints: any[], meteoDir: number | null = null, light = false, doppler = true): SpeedStats | null {
+export function analyseSession(rawPoints: any[], meteoDir: number | null = null, light = false, doppler = true, vmaxKts: number | null = FILTRE_VMAX_DEFAUT): SpeedStats | null {
   if (!rawPoints || rawPoints.length < 2) return null;
   const withSpeed = rawPoints.filter(p => p.dopplerSpeed !== null && p.dopplerSpeed !== undefined).length;
   const useDoppler = doppler && withSpeed > 0;   // doppler=false: the analyzer with "Utiliser le Doppler" unticked (positions only)
   let points: any[] = rawPoints.map(p => ({ ...p }));
   if (!useDoppler) {
     const qualite = filtrerQualiteGPS(points);
-    points = nettoyerPoints(qualite.points).points;
+    points = nettoyerPoints(qualite.points, vmaxKts).points;
   } else {
-    const vmaxDop = FILTRE_VMAX_DEFAUT / KNOTS_CONVERSION;
+    const vmaxDop = vmaxKts !== null ? vmaxKts / KNOTS_CONVERSION : Infinity;
     points = points.filter(p => p.dopplerSpeed === null || p.dopplerSpeed <= vmaxDop);
   }
   if (points.length < 2) return null;
@@ -852,7 +853,7 @@ export function analyseSession(rawPoints: any[], meteoDir: number | null = null,
   let v500m = getBestSpeedDistance(points, 500, useDoppler);
   let v1000m = getBestSpeedDistance(points, 1000, useDoppler);
   let v1852m = getBestSpeedDistance(points, 1852, useDoppler);
-  const ptsLong = pointsPourAlphas(points, useDoppler, rawPoints);
+  const ptsLong = pointsPourAlphas(points, useDoppler, rawPoints, vmaxKts);
   const distLong = distancesGeo(ptsLong);
   let v5000m = getBestSpeedDistance(ptsLong, 5000, useDoppler);
   let v10000m = getBestSpeedDistance(ptsLong, 10000, useDoppler);
