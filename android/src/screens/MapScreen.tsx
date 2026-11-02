@@ -980,6 +980,8 @@ export default function MapScreen() {
           onHover={onPanelHover} onStretch={onPanelStretch} onColoured={onPanelColoured} />
         </>
       ) : null}
+      {/* Extra room at the bottom (~2 lines) so the Vmax field of the speed stats isn't tucked against the screen edge */}
+      <View style={{ height: 72 }} />
       </ScrollView>
     </View>
   );
