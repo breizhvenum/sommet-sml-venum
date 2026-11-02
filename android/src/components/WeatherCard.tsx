@@ -63,7 +63,7 @@ export function WeatherCard() {
             <Text style={styles.mainEmoji} textBreakStrategy="simple">{weatherEmoji(weather.data.currentWeatherCode)}</Text>
             <View style={styles.mainInfo}>
               {!!weather.placeName && (
-                <Text style={[styles.placeName, { color: theme.mutedText }]}>{weather.placeName}</Text>
+                <Text style={[styles.placeName, { color: theme.mutedText }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{weather.placeName}</Text>
               )}
               <Text style={[styles.temp, { color: theme.text }]}>
                 {Math.round(weather.data.currentTemperature)}°
