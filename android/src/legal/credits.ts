@@ -11,6 +11,14 @@ export interface CreditEntry {
 
 export const CREDITS: CreditEntry[] = [
   {
+    name: 'Sommet',
+    url: 'https://github.com/skinnie/sommet',
+    description:
+      'By skinnie and its contributors — the starting point of this app (rom1rv), GPL v3. ' +
+      'Additions by breizhvenum: speed statistics, equipment management, basedevitesse.com upload. ' +
+      'Same license (GPL v3); source: https://github.com/breizhvenum/sommet-sml-venum',
+  },
+  {
     name: 'openambit',
     url: 'https://github.com/openambitproject/openambit',
     description:

@@ -66,7 +66,7 @@ export function WeatherCard() {
                 <Text style={[styles.placeName, { color: theme.mutedText }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{weather.placeName}</Text>
               )}
               <Text style={[styles.temp, { color: theme.text }]}>
-                {Math.round(weather.data.currentTemperature)}°
+                {Math.round(weather.data.currentTemperature)}°C
               </Text>
               <Text style={[styles.condLabel, { color: theme.mutedText }]}>
                 {weatherLabel(weather.data.currentWeatherCode)}
@@ -74,7 +74,7 @@ export function WeatherCard() {
             </View>
             <View style={styles.sideInfo}>
               <Text style={[styles.sideLine, { color: theme.mutedText }]} numberOfLines={1}>
-                {t.weatherWind(Math.round(weather.data.windSpeed))}
+                {t.weatherWind(Math.round(weather.data.windSpeed), weather.data.windDirection === null ? undefined : t.weatherCardinals[Math.round((((weather.data.windDirection % 360) + 360) % 360) / 45) % 8])}
               </Text>
               <Text style={[styles.sideLine, { color: theme.mutedText }]} numberOfLines={1}>
                 {t.weatherHighLow(Math.round(weather.data.todayHigh), Math.round(weather.data.todayLow))}

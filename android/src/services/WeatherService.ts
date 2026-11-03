@@ -19,6 +19,7 @@ export interface WeatherData {
   currentTemperature: number;
   currentWeatherCode: number;
   windSpeed: number;
+  windDirection: number | null;   // degrees the wind comes FROM (0 = north), null if unknown
   todayHigh: number;
   todayLow: number;
   forecast: ForecastDay[];
@@ -42,7 +43,7 @@ export async function fetchWeather(latitude: number, longitude: number): Promise
   const params = new URLSearchParams({
     latitude: String(latitude),
     longitude: String(longitude),
-    current: 'temperature_2m,weather_code,wind_speed_10m',
+    current: 'temperature_2m,weather_code,wind_speed_10m,wind_direction_10m',
     daily: 'temperature_2m_max,temperature_2m_min,weather_code',
     timezone: 'auto',
     forecast_days: '3',
@@ -73,6 +74,7 @@ export async function fetchWeather(latitude: number, longitude: number): Promise
     currentTemperature: current.temperature_2m ?? 0,
     currentWeatherCode: current.weather_code ?? -1,
     windSpeed: current.wind_speed_10m ?? 0,
+    windDirection: typeof current.wind_direction_10m === 'number' ? current.wind_direction_10m : null,
     todayHigh: forecast[0]?.high ?? 0,
     todayLow: forecast[0]?.low ?? 0,
     forecast,

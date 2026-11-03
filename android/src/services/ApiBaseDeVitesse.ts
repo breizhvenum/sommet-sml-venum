@@ -1,3 +1,5 @@
+// Copyright (C) 2026 breizhvenum. Licensed under the GNU GPL v3 (see LICENSE).
+// Part of rom1rv, derived from the Sommet project by skinnie (https://github.com/skinnie/sommet), also GPL v3.
 import * as Keychain from 'react-native-keychain';
 import RNFS from 'react-native-fs';
 import { BDV_API_KEY } from '../config/bdvKey';

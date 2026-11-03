@@ -1,3 +1,5 @@
+// Copyright (C) 2026 breizhvenum. Licensed under the GNU GPL v3 (see LICENSE).
+// Part of rom1rv, derived from the Sommet project by skinnie (https://github.com/skinnie/sommet), also GPL v3.
 /* eslint-disable */
 // Speed analysis of a session, ported from the user's analyzer "analysegpsarpro16" (GPSAR Pro method),
 // so the app shows the same numbers. Computation only (no DOM): Andoyer-Lambert distances, windows on
