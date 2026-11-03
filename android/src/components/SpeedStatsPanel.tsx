@@ -1,5 +1,3 @@
-// Copyright (C) 2026 breizhvenum. Licensed under the GNU GPL v3 (see LICENSE).
-// Part of rom1rv, derived from the Sommet project by skinnie (https://github.com/skinnie/sommet), also GPL v3.
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
 import RNFS from 'react-native-fs';
