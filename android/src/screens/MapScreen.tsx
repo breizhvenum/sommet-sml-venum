@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, Modal, useWindowDimensions } from 'react-native';
+import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
+import { View, Text, StyleSheet, ActivityIndicator, Alert, TouchableOpacity, Linking, ScrollView, Modal, useWindowDimensions, PanResponder } from 'react-native';
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
 import { getBdvAccount, fetchBdvSupports, uploadSessionToBdv, BdvSupport } from '../services/ApiBaseDeVitesse';
 import { convertSmlFileToGpx } from '../services/SmlToGpx';
@@ -9,6 +9,7 @@ import { getRunalyzeApiKey, uploadFitToRunalyze } from '../services/ApiRunalyze'
 import { getIntervalsIcuCredentials, uploadFitToIntervalsIcu } from '../services/ApiIntervalsIcu';
 import { pushGearToIntervals } from '../services/GearAutoAssign';
 import { GearPicker } from '../components/GearPicker';
+import { neighbors } from '../services/ActivityNav';
 import { getAllGear, getActivityGears } from '../database/gearDb';
 import { gearKindOf } from '../components/gearKinds';
 import { getFitFile } from '../services/FitExport';
@@ -323,6 +324,32 @@ export default function MapScreen() {
   const route      = useRoute<Route>();
   const navigation = useNavigation<Nav>();
   const { activity } = route.params;
+
+  // Previous / next activity of the journal: arrows in the header + a horizontal swipe under the map.
+  const nav = neighbors(activity.id);
+  const navRef = useRef(nav); navRef.current = nav;
+  const goTo = (a: any) => { if (a) navigation.replace('Map', { activity: a }); };
+  useLayoutEffect(() => {
+    if (!nav.prev && !nav.next) { navigation.setOptions({ headerRight: undefined }); return; }
+    const arrow = (a: any, ch: string) => (
+      <TouchableOpacity disabled={!a} onPress={() => goTo(a)} hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+        style={{ paddingHorizontal: 10, opacity: a ? 1 : 0.25 }}>
+        <Text style={{ color: theme.text, fontSize: 30, lineHeight: 32 }}>{ch}</Text>
+      </TouchableOpacity>
+    );
+    navigation.setOptions({ headerRight: () => (<View style={{ flexDirection: 'row' }}>{arrow(nav.prev, '‹')}{arrow(nav.next, '›')}</View>) });
+  }, [activity.id, nav.prev, nav.next, theme.text]);
+  const swipe = useRef(PanResponder.create({
+    // only a clearly horizontal, long gesture that does not start at the screen edge (Android "back" gesture)
+    onMoveShouldSetPanResponder: (e, g) => {
+      const x0 = e.nativeEvent.pageX - g.dx;
+      return Math.abs(g.dx) > 40 && Math.abs(g.dx) > 2 * Math.abs(g.dy) && x0 > 28;
+    },
+    onPanResponderRelease: (_e, g) => {
+      if (g.dx > 80) goTo(navRef.current.prev);
+      else if (g.dx < -80) goTo(navRef.current.next);
+    },
+  })).current;
 
   const [points, setPoints] = useState<TrackPoint[]>([]);
   const [meta, setMeta] = useState<GpxMetadata | null>(null);   // summary (used for no-GPS moves)
@@ -985,6 +1012,7 @@ export default function MapScreen() {
           panel's own chart shows altitude now; the replay keeps its play/rewind/forward buttons.) */}
       {/* ── Overview / Charts / Laps ── (desktop parity: ActivityDetail.qml) */}
       {/* Under the map: the analyzer-style stats from the SML (knots); the usual panel when the move has no SML */}
+      <View {...swipe.panHandlers}>
       {usedGear.length > 0 && (
         <View style={{ marginHorizontal: 12, marginTop: 12, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
           {/* Same title style as the "Speed" card below (SpeedStatsPanel `h`) */}
@@ -1023,6 +1051,7 @@ export default function MapScreen() {
       ) : null}
       {/* Extra room at the bottom (~2 lines) so the Vmax field of the speed stats isn't tucked against the screen edge */}
       <View style={{ height: 72 }} />
+      </View>
       </ScrollView>
     </View>
   );

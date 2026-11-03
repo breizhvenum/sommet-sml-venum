@@ -17,6 +17,7 @@ import { readGpxFile, listGpxFiles } from '../services/GpxService';
 import { extractGpxMetadata, GpxMetadata } from '../services/GpxParser';
 import RNFS from 'react-native-fs';
 import { t, fmtDate } from '../i18n';
+import { setActivityList } from '../services/ActivityNav';
 import { useV3Theme } from '../theme/v3';
 import { ActivityThumbnail } from '../components/ActivityThumbnail';
 import Icon, { IconName } from '../components/ui/Icon';
@@ -409,7 +410,7 @@ export default function LogListScreen() {
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.card}
-            onPress={() => navigation.navigate('Map', { activity: item })}
+            onPress={() => { setActivityList(activities); navigation.navigate('Map', { activity: item }); }}
             onLongPress={() => confirmDelete(item)}
             activeOpacity={0.75}
           >
