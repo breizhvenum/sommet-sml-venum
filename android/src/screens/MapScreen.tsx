@@ -1030,7 +1030,7 @@ export default function MapScreen() {
         </View>
       )}
       {smlPath && !statsFailed ? (
-        <SpeedStatsPanel smlPath={smlPath} onFailed={() => setStatsFailed(true)} />
+        <SpeedStatsPanel smlPath={smlPath} onFailed={() => setStatsFailed(true)} title={activity.activity_type} />
       ) : smlResolved ? (
         <>
         {!smlPath && (
