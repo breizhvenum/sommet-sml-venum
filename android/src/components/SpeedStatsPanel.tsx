@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { WebView } from 'react-native-webview';
 import Svg, { Path, Circle } from 'react-native-svg';
-import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, TextInput, ToastAndroid } from 'react-native';
 import RNFS from 'react-native-fs';
 import { useV3Theme } from '../theme/v3';
 import { readSmlPoints, analyseSession, fetchMeteoVent, SpeedStats } from '../services/SpeedAnalysis';
-import { shareFile } from '../native/AmbitUsbModule';
+import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
 import { captureTrack, buildCaptureHtml, smlHeartRate } from '../services/CaptureImage';
 
 // Stats of a session under the map, computed from the move's SML with the same method as the user's
@@ -86,9 +86,13 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
     try {
       if (msg.startsWith('PNG:')) {
         const d = new Date(stats ? stats.date : Date.now());
-        const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
-        const path = `${RNFS.CachesDirectoryPath}/rom1rv_speed_${stamp}.png`;
+        const p2 = (n: number) => String(n).padStart(2, '0');
+        const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}`;
+        const fileName = `rom1rv_speed_${stamp}.png`;
+        const path = `${RNFS.CachesDirectoryPath}/${fileName}`;
         await RNFS.writeFile(path, msg.slice(4), 'base64');
+        // kept in the phone's Downloads folder, then the share sheet opens
+        try { await saveToDownloads(path, fileName, 'image/png'); ToastAndroid.show(`Image enregistrée dans Téléchargements : ${fileName}`, ToastAndroid.LONG); } catch (e) { /* share anyway */ }
         await shareFile(path, 'image/png');
       }
     } catch (e) { /* share cancelled or failed: nothing else to do */ }
