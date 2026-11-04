@@ -218,7 +218,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
       </View>
       {capHtml ? (
         <View pointerEvents="none" style={{ position: 'absolute', width: 4, height: 4, opacity: 0, overflow: 'hidden' }}>
-          <WebView originWhitelist={['*']} source={{ html: capHtml, baseUrl: 'https://localhost/' }} javaScriptEnabled
+          <WebView originWhitelist={['*']} source={{ html: capHtml, baseUrl: 'https://www.windsurf77.fr/ambitrom1rv/' }} javaScriptEnabled
             onMessage={e => onCaptureMsg(e.nativeEvent.data)} onError={() => { setCapHtml(null); setCapBusy(false); }}
             style={{ width: 4, height: 4 }} />
         </View>

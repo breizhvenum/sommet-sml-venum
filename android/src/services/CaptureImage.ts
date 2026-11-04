@@ -1,7 +1,7 @@
 import type { SpeedStats } from './SpeedAnalysis';
 
 // Session capture image (no heart rate): drawn on a canvas inside a hidden WebView, returned as PNG base64.
-// Design: app palette, speed-coloured track on a dark map (tiles are optional: no network = plain background),
+// Design: app palette, speed-coloured track on a dark map (OpenStreetMap tiles are optional: no network = plain background),
 // 12 equal tiles, one colour per kind of figure.
 
 const KT = 1.943844;
@@ -81,7 +81,7 @@ x.fillStyle='#9aa0a8';x.font='600 15px '+FONT;x.fillText('ANALYSE DE VITESSE',M,
 x.fillStyle='#ef4a62';x.font='700 34px '+FONT;x.fillText(D.title,M,100);
 x.textAlign='right';x.fillStyle='#9aa0a8';x.font='18px '+FONT;x.fillText(D.date,W-M,72);x.fillText(D.sub,W-M,98);x.textAlign='left';
 var MY=34+80+18;
-function finish(img){
+function finish(img){D.osm=!!(img&&img.length);
   // track
   var z=18;
   var pad=0.06;
@@ -91,7 +91,7 @@ function finish(img){
   function PX(lon){return M+MW/2+(mx(lon,z)-cx)*S;}function PY(lat){return MY+MH/2+(my(lat,z)-cy)*S;}
   x.save();rr(x,0,M,MY,MW,MH,22);x.clip();
   x.fillStyle='#25292c';x.fillRect(M,MY,MW,MH);
-  if(img){img.forEach(function(t){try{x.drawImage(t.im,M+MW/2+(t.px-cx)*S,MY+MH/2+(t.py-cy)*S,256*S+1,256*S+1);}catch(e){}});}
+  if(img){try{x.filter='invert(1) hue-rotate(180deg) grayscale(.55) brightness(.78) contrast(.9)';}catch(e){}img.forEach(function(t){try{x.drawImage(t.im,M+MW/2+(t.px-cx)*S,MY+MH/2+(t.py-cy)*S,256*S+1,256*S+1);}catch(e){}});try{x.filter='none';}catch(e){}}
   x.fillStyle='rgba(29,30,34,'+(img&&img.length?'0.25':'0')+')';x.fillRect(M,MY,MW,MH);
   x.lineCap='round';x.lineJoin='round';
   function colr(v){var t=Math.min(1,Math.max(0,v/vTop));var a=[139,145,153],b=[200,52,74];return 'rgb('+Math.round(a[0]+(b[0]-a[0])*t)+','+Math.round(a[1]+(b[1]-a[1])*t)+','+Math.round(a[2]+(b[2]-a[2])*t)+')';}
@@ -126,10 +126,10 @@ function finish(img){
   // footer
   var FY=GY+gridH+44;
   x.fillStyle='#7b8088';x.font='14px '+FONT;x.textBaseline='alphabetic';
-  x.fillText(D.brand+' · Speed',M,FY);x.textAlign='right';x.fillText(D.foot2,W-M,FY);x.textAlign='left';
+  x.fillText(D.brand+' · Speed'+(D.osm?' · © OpenStreetMap contributors':''),M,FY);x.textAlign='right';x.fillText(D.foot2,W-M,FY);x.textAlign='left';
   try{post('PNG:'+cv.toDataURL('image/png').split(',')[1]);}catch(e){post('ERR:'+e);}
 }
-// optional dark map tiles; any failure -> plain background
+// optional map tiles (OpenStreetMap, darkened; no key needed); any failure -> plain background
 function loadTiles(){
   var z=18;var pad=0.06;
   for(;z>2;z--){var w=mx(lo1,z)-mx(lo0,z),h=my(la0,z)-my(la1,z);if(w<=MW*(1-2*pad)&&h<=MH*(1-2*pad))break;}
@@ -145,7 +145,7 @@ function loadTiles(){
     var im=new Image();im.crossOrigin='anonymous';
     im.onload=function(){res.push({im:im,px:t[0]*256,py:t[1]*256});if(++done===list.length)end();};
     im.onerror=function(){if(++done===list.length)end();};
-    im.src='https://basemaps.cartocdn.com/dark_all/'+z+'/'+(((t[0]%(1<<z))+(1<<z))%(1<<z))+'/'+t[1]+'.png';
+    im.src='https://tile.openstreetmap.org/'+z+'/'+(((t[0]%(1<<z))+(1<<z))%(1<<z))+'/'+t[1]+'.png';
   });
 }
 if(n<2){finish(null);}else{loadTiles();}
