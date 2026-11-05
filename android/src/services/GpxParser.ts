@@ -49,8 +49,36 @@ export interface GpxMetadata {
  * parser) for the same reason activityType uses it - more reliable for the flat extensions
  * block. Returns 0 when absent. */
 function extTag(gpxXml: string, tag: string): number {
-  const m = gpxXml.match(new RegExp(`<${tag}>(-?\\d+(?:\\.\\d+)?)</${tag}>`));
-  return m ? parseFloat(m[1]) : 0;
+  // first <tag>number</tag> in the file (plain indexOf scans: a regex over a multi-MB GPX is slow on a phone)
+  const open = '<' + tag + '>', close = '</' + tag + '>';
+  let i = 0;
+  for (;;) {
+    const a = gpxXml.indexOf(open, i);
+    if (a < 0) return 0;
+    const b = gpxXml.indexOf(close, a + open.length);
+    if (b < 0) return 0;
+    const txt = gpxXml.substring(a + open.length, b);
+    if (/^-?\d+(?:\.\d+)?$/.test(txt)) return parseFloat(txt);
+    i = a + open.length;
+  }
+}
+
+/** Text of the first <tag>...</tag> between two positions (no markup inside), or undefined. */
+function textBetween(xml: string, tag: string, from: number, to: number): string | undefined {
+  const open = '<' + tag + '>';
+  const a = xml.indexOf(open, from);
+  if (a < 0 || (to >= 0 && a >= to)) return undefined;
+  const b = xml.indexOf('</' + tag + '>', a + open.length);
+  if (b < 0) return undefined;
+  const v = xml.substring(a + open.length, b);
+  return v.indexOf('<') >= 0 ? undefined : v.trim();
+}
+
+function attrOf(tag: string, name: string): string | undefined {
+  const k = tag.indexOf(name + '="');
+  if (k < 0) return undefined;
+  const a = k + name.length + 2;
+  return tag.substring(a, tag.indexOf('"', a));
 }
 
 // The log header's <sport_type> is the watch's Suunto activity id (the sport mode's id from
@@ -68,11 +96,36 @@ const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_
 
 /** Extrait les points GPS d'une string GPX. */
 export function parseTrackPoints(gpxXml: string): TrackPoint[] {
-  const obj = parser.parse(gpxXml);
-  const trkseg = obj?.gpx?.trk?.trkseg;
-  if (!trkseg) return [];
-
-  const rawPoints = Array.isArray(trkseg.trkpt) ? trkseg.trkpt : [trkseg.trkpt];
+  // Fast path (2026-11-05): read the <trkpt> blocks with plain indexOf scans - the full XML parser took
+  // seconds on a multi-MB GPX (and ran 3 times when an activity was opened). Same lat / lon / ele / time.
+  let rawPoints: any[] = [];
+  let i = 0;
+  for (;;) {
+    const a = gpxXml.indexOf('<trkpt', i);
+    if (a < 0) break;
+    const b = gpxXml.indexOf('>', a);
+    if (b < 0) break;
+    const head = gpxXml.substring(a, b);
+    let end = b + 1;
+    let ele: string | undefined, time: string | undefined;
+    if (head.charAt(head.length - 1) !== '/') {
+      const c = gpxXml.indexOf('</trkpt>', b);
+      if (c < 0) break;
+      const block = gpxXml.substring(b, c);   // search inside the point only (never scan on to the end of the file)
+      ele = textBetween(block, 'ele', 0, -1);
+      time = textBetween(block, 'time', 0, -1);
+      end = c + 8;
+    }
+    rawPoints.push({ '@_lat': attrOf(head, 'lat'), '@_lon': attrOf(head, 'lon'), ele, time });
+    i = end;
+  }
+  if (rawPoints.length === 0) {
+    // unusual layout: fall back to the XML parser
+    const obj = parser.parse(gpxXml);
+    const trkseg = obj?.gpx?.trk?.trkseg;
+    if (!trkseg || trkseg.trkpt === undefined) return [];
+    rawPoints = Array.isArray(trkseg.trkpt) ? trkseg.trkpt : [trkseg.trkpt];
+  }
 
   const points: TrackPoint[] = [];
   let firstTimestamp = 0;
@@ -152,11 +205,12 @@ export function computeElevationStats(points: TrackPoint[]): ElevationStats {
 /** Extrait les métadonnées principales d'un GPX (date, durée, distance, D+).
  *  Utilise <metadata><time> comme date de référence (= header.date_time de la montre)
  *  pour que l'ID généré corresponde à celui du skip_callback C (formatLogId). */
-export function extractGpxMetadata(gpxXml: string): GpxMetadata {
-  const obj = parser.parse(gpxXml);
-  const metaTime: string | undefined = obj?.gpx?.metadata?.time;
+export function extractGpxMetadata(gpxXml: string, parsedPoints?: TrackPoint[]): GpxMetadata {
+  const mOpen = gpxXml.indexOf('<metadata>');
+  const mClose = mOpen >= 0 ? gpxXml.indexOf('</metadata>', mOpen) : -1;
+  const metaTime: string | undefined = mOpen >= 0 && mClose > 0 ? textBetween(gpxXml, 'time', mOpen, mClose) : undefined;
 
-  const points = parseTrackPoints(gpxXml);
+  const points = parsedPoints ?? parseTrackPoints(gpxXml);
   const stats = points.length > 0 ? computeElevationStats(points) : null;
   const first = points[0];
   const last  = points[points.length - 1];
@@ -188,8 +242,10 @@ export function extractGpxMetadata(gpxXml: string): GpxMetadata {
     dPlus:     stats?.dPlus ?? 0,
     activityType: (() => {
       // 1. Essayer activity_name (peut être vide sur Ambit 1)
-      const rawName = obj?.gpx?.trk?.name;
-      const name = rawName && rawName !== true ? String(rawName).trim() : '';
+      const tk = gpxXml.indexOf('<trk>');
+      const tkEnd = tk >= 0 ? gpxXml.search(/<trkseg|<trkpt/) : -1;
+      const rawName = tk >= 0 ? textBetween(gpxXml, 'name', tk, tkEnd > tk ? tkEnd : -1) : undefined;
+      const name = rawName ? rawName.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'") : '';
       if (name && name !== 'Activité') return name;
       // 2. Regex sur la string brute — plus fiable que le parser pour les extensions
       const m = gpxXml.match(/<sport_type>(\d+)<\/sport_type>/);

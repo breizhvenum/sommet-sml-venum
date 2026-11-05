@@ -440,7 +440,7 @@ export default function MapScreen() {
     // panel shows it from its FIT. Reading '' only raised a "Cannot read GPX file" alert.
     if (!activity.gpx_path) { setLoading(false); return; }
     readGpxFile(activity.gpx_path)
-      .then(xml => { setPoints(parseTrackPoints(xml)); setMeta(extractGpxMetadata(xml)); })
+      .then(xml => { const pts = parseTrackPoints(xml); setPoints(pts); setMeta(extractGpxMetadata(xml, pts)); })
       .catch(e => Alert.alert(t.error, t.readError + e?.message))
       .finally(() => setLoading(false));
   }, [activity.gpx_path]);
