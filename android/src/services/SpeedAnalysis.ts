@@ -1,9 +1,8 @@
 /* eslint-disable */
-// Speed analysis of a session, ported from the user's analyzer "analysegpsarpro16" (GPSAR Pro method),
-// so the app shows the same numbers. Computation only (no DOM): Vincenty (WGS-84) distances, windows on
+// Speed analysis of a session (rom1rv Speed method). Computation only (no DOM): Vincenty (WGS-84) distances, windows on
 // real points, Doppler (watch <Speed>) integration, the cascade of ceilings (Vmax >= V10s, V100m >= V500m...),
 // alphas (jibes only, wind from the track and, if reachable, Open-Meteo) and the manoeuvre stats.
-// The manual wind choice / inversion / alpha verification of the analyzer are not part of this port.
+// No manual wind choice / inversion / alpha verification here.
 
 const KNOTS_CONVERSION = 1.94384;
 const DOPPLER_MIN_COVERAGE = 0.8;
@@ -29,11 +28,11 @@ const UN_RESULTAT_PAR_BORD = true;
 const RUN_MIN_SPEED_KTS = 8;
 const RUN_MAX_CAP_DELTA = 100;
 const QUALITE_SAT_MIN = 5, QUALITE_HDOP_MAX = 4, QUALITE_MAX_RETRAIT = 0.10;
-const GPSAR_D_WINDOW = 50;
-const GPSAR_START_MIN = 5.14;
+const MAN_D_WINDOW = 50;
+const MAN_START_MIN = 5.14;
 const SEUIL_REUSSITE = 6;
-const GPSAR_MAX_WIDTH = 95;
-const GPSAR_EXAM_MIN = 2;
+const MAN_MAX_WIDTH = 95;
+const MAN_EXAM_MIN = 2;
 
 export interface SpeedRange { tStart: number; tEnd: number }
 export interface SpeedStats {
@@ -760,18 +759,18 @@ function statsSession(points: any[], windDir: number | null, useDoppler: boolean
     sc[i] = (Math.atan2(ex, ey) * 180 / Math.PI + 360) % 360;
   }
   const spd = (k: number) => { const v = points[k].speed; return (v === null || v === undefined) ? 0 : v; };
-  const idxAt = (k: number, dir: number) => { let acc = 0, x = k; while (dir < 0 ? x > 0 : x < n - 1) { const nx = x + dir; if (coupe[dir < 0 ? x : nx]) break; acc += haversine(points[Math.min(x, nx)], points[Math.max(x, nx)]); x = nx; if (acc >= GPSAR_D_WINDOW) break; } return x; };
+  const idxAt = (k: number, dir: number) => { let acc = 0, x = k; while (dir < 0 ? x > 0 : x < n - 1) { const nx = x + dir; if (coupe[dir < 0 ? x : nx]) break; acc += haversine(points[Math.min(x, nx)], points[Math.max(x, nx)]); x = nx; if (acc >= MAN_D_WINDOW) break; } return x; };
   // Speed for the minimum: Doppler = raw (measured, reliable); positional = time median +-1.5 s
   // (removes the noise of the computed speed at the tip of the turn).
-  const GPSAR_SMOOTH_S = 3;
+  const MAN_SMOOTH_S = 3;
   const spdVmin = new Float64Array(n);
   if (useDoppler) { for (let i = 0; i < n; i++) spdVmin[i] = spd(i); }
   else {
     for (let i = 0; i < n; i++) {
       if (coupe[i]) { spdVmin[i] = spd(i); continue; }
       const buf = [spd(i)];
-      for (let j = i - 1; j >= 0 && !coupe[j + 1] && (points[i].time - points[j].time) / 1000 <= GPSAR_SMOOTH_S / 2; j--) buf.push(spd(j));
-      for (let j = i + 1; j < n && !coupe[j] && (points[j].time - points[i].time) / 1000 <= GPSAR_SMOOTH_S / 2; j++) buf.push(spd(j));
+      for (let j = i - 1; j >= 0 && !coupe[j + 1] && (points[i].time - points[j].time) / 1000 <= MAN_SMOOTH_S / 2; j--) buf.push(spd(j));
+      for (let j = i + 1; j < n && !coupe[j] && (points[j].time - points[i].time) / 1000 <= MAN_SMOOTH_S / 2; j++) buf.push(spd(j));
       buf.sort((a, b) => a - b);
       spdVmin[i] = buf[buf.length >> 1];
     }
@@ -780,7 +779,7 @@ function statsSession(points: any[], windDir: number | null, useDoppler: boolean
   const cumD = new Float64Array(n);
   for (let i = 1; i < n; i++) cumD[i] = cumD[i - 1] + (coupe[i] ? 0 : haversine(points[i - 1], points[i]));
   const vmaxEntre = (a: number, b: number) => { let v = 0; for (let x = a; x <= b; x++) if (!coupe[x] && spd(x) > v) v = spd(x); return v; };
-  const GPSAR_DEBOUNCE = 40;   // m: half-turns at least 40 m apart (debounce)
+  const MAN_DEBOUNCE = 40;   // m: half-turns at least 40 m apart (debounce)
   let ref: number | null = null, mid: number | null = null, tot = 0, jib = 0, tack = 0, lastApex = -1e9;
   const listJ: number[] = [], listT: number[] = [];
   for (let k = 0; k < n; k++) {
@@ -791,7 +790,7 @@ function statsSession(points: any[], windDir: number | null, useDoppler: boolean
     const d = Math.abs(angleDiff(h, ref));
     if (mid === null && d > 90) mid = h;
     if (d > 150) {
-      if (cumD[k] - lastApex < GPSAR_DEBOUNCE) { ref = h; mid = null; continue; }
+      if (cumD[k] - lastApex < MAN_DEBOUNCE) { ref = h; mid = null; continue; }
       lastApex = cumD[k];
       tot++;
       const capPointe = mid == null ? h : mid;
@@ -800,9 +799,9 @@ function statsSession(points: any[], windDir: number | null, useDoppler: boolean
         if (est) jib++; else tack++;
         const a0 = idxAt(k, -1), b0 = idxAt(k, 1);
         const largeur = haversine(points[a0], points[b0]);
-        if (largeur <= GPSAR_MAX_WIDTH && vmaxEntre(a0, k) >= GPSAR_START_MIN) {
+        if (largeur <= MAN_MAX_WIDTH && vmaxEntre(a0, k) >= MAN_START_MIN) {
           const vm = vminEntre(a0, b0);
-          if (vm >= GPSAR_EXAM_MIN) (est ? listJ : listT).push(vm);
+          if (vm >= MAN_EXAM_MIN) (est ? listJ : listT).push(vm);
         }
       }
       ref = h; mid = null;

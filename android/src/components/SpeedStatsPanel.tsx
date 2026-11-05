@@ -8,8 +8,7 @@ import { readSmlPoints, analyseSession, fetchMeteoVent, SpeedStats } from '../se
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
 import { captureTrack, buildCaptureHtml, smlHeartRate } from '../services/CaptureImage';
 
-// Stats of a session under the map, computed from the move's SML with the same method as the user's
-// analyzer (analysegpsarpro16) - speeds in knots. Wind comes from the track, then from Open-Meteo
+// Stats of a session under the map, computed from the move's SML (rom1rv Speed method) - speeds in knots. Wind comes from the track, then from Open-Meteo
 // when reachable (the figures are recomputed with it). No wind inversion / alpha verification here.
 
 const cache = new Map<string, SpeedStats>();
