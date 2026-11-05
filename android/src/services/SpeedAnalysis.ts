@@ -1,6 +1,6 @@
 /* eslint-disable */
 // Speed analysis of a session, ported from the user's analyzer "analysegpsarpro16" (GPSAR Pro method),
-// so the app shows the same numbers. Computation only (no DOM): Andoyer-Lambert distances, windows on
+// so the app shows the same numbers. Computation only (no DOM): Vincenty (WGS-84) distances, windows on
 // real points, Doppler (watch <Speed>) integration, the cascade of ceilings (Vmax >= V10s, V100m >= V500m...),
 // alphas (jibes only, wind from the track and, if reachable, Open-Meteo) and the manoeuvre stats.
 // The manual wind choice / inversion / alpha verification of the analyzer are not part of this port.
@@ -21,8 +21,8 @@ const POS_V10S_PIVOT_KTS = 19.44;
 const POS_V10S_ISOLATED_RATIO = 1.20;
 const FILTRE_ACCEL_DEFAUT = 1.8;
 const FILTRE_VMAX_DEFAUT = 40;
-const GEO_A = 6378135;
-const GEO_F = 1 / 298.26;
+const GEO_A = 6378137;                 // WGS-84 semi-major axis (m)
+const GEO_F = 1 / 298.257223563;       // WGS-84 flattening
 const GAP_MAX_S = 30;
 const ALPHA_PROXIMITE_M = 50;
 const UN_RESULTAT_PAR_BORD = true;
@@ -148,17 +148,30 @@ export function readSmlPoints(smlText: string): any[] {
 // ───────────────────────── geometry ─────────────────────────
 function distGeo(p1: any, p2: any): number {
   if (p1.lat === p2.lat && p1.lon === p2.lon) return 0;
-  const k = Math.PI / 180;
-  const F = (p1.lat + p2.lat) / 2 * k, G = (p1.lat - p2.lat) / 2 * k, L = (p1.lon - p2.lon) / 2 * k;
-  const sF = Math.sin(F), cF = Math.cos(F), sG = Math.sin(G), cG = Math.cos(G), sL = Math.sin(L), cL = Math.cos(L);
-  const S = sG * sG * cL * cL + cF * cF * sL * sL;
-  const C = cG * cG * cL * cL + sF * sF * sL * sL;
-  if (S <= 0 || C <= 0) return 0;
-  const w = Math.atan(Math.sqrt(S / C));
-  const R = Math.sqrt(S * C) / w;
-  const D = 2 * w * GEO_A;
-  const H1 = (3 * R - 1) / (2 * C), H2 = (3 * R + 1) / (2 * S);
-  return D * (1 + GEO_F * H1 * sF * sF * cG * cG - GEO_F * H2 * cF * cF * sG * sG);
+  // Vincenty inverse formula on the WGS-84 ellipsoid (same as the analyzer)
+  const a = GEO_A, f = GEO_F, b = a * (1 - f), rad = Math.PI / 180;
+  const L = (p2.lon - p1.lon) * rad;
+  const U1 = Math.atan((1 - f) * Math.tan(p1.lat * rad)), U2 = Math.atan((1 - f) * Math.tan(p2.lat * rad));
+  const sU1 = Math.sin(U1), cU1 = Math.cos(U1), sU2 = Math.sin(U2), cU2 = Math.cos(U2);
+  let lam = L, lamP, it = 0, cosSqA = 0, sinSig = 0, cos2SM = 0, cosSig = 0, sig = 0;
+  do {
+    const sL = Math.sin(lam), cL = Math.cos(lam);
+    sinSig = Math.sqrt((cU2 * sL) ** 2 + (cU1 * sU2 - sU1 * cU2 * cL) ** 2);
+    if (sinSig === 0) return 0;
+    cosSig = sU1 * sU2 + cU1 * cU2 * cL;
+    sig = Math.atan2(sinSig, cosSig);
+    const sinA = cU1 * cU2 * sL / sinSig;
+    cosSqA = 1 - sinA * sinA;
+    cos2SM = cosSqA !== 0 ? cosSig - 2 * sU1 * sU2 / cosSqA : 0;
+    const C = f / 16 * cosSqA * (4 + f * (4 - 3 * cosSqA));
+    lamP = lam;
+    lam = L + (1 - C) * f * sinA * (sig + C * sinSig * (cos2SM + C * cosSig * (-1 + 2 * cos2SM * cos2SM)));
+  } while (Math.abs(lam - lamP) > 1e-12 && ++it < 100);
+  const uSq = cosSqA * (a * a - b * b) / (b * b);
+  const A = 1 + uSq / 16384 * (4096 + uSq * (-768 + uSq * (320 - 175 * uSq)));
+  const B = uSq / 1024 * (256 + uSq * (-128 + uSq * (74 - 47 * uSq)));
+  const dSig = B * sinSig * (cos2SM + B / 4 * (cosSig * (-1 + 2 * cos2SM * cos2SM) - B / 6 * cos2SM * (-3 + 4 * sinSig * sinSig) * (-3 + 4 * cos2SM * cos2SM)));
+  return b * A * (sig - dSig);
 }
 const haversine = distGeo;
 function bearing(p1: any, p2: any): number {
@@ -719,7 +732,7 @@ function getAlphaExclu(points: any[], distances: number[], maxDist: number, minD
   }
   return best ? { speed: best.speed, ranges: [{ tStart: best.tStart, tEnd: best.tEnd }] } : { speed: 0, ranges: [] };
 }
-function statsSession(points: any[], windDir: number | null): any {
+function statsSession(points: any[], windDir: number | null, useDoppler: boolean): any {
   const vide = { tot: 0, jib: 0, tack: 0, nJibe: 0, nTack: 0, vminJibe: null, vminTack: null, moyJibe: null, moyTack: null };
   const n = points.length;
   if (n < 5) return vide;
@@ -748,9 +761,27 @@ function statsSession(points: any[], windDir: number | null): any {
   }
   const spd = (k: number) => { const v = points[k].speed; return (v === null || v === undefined) ? 0 : v; };
   const idxAt = (k: number, dir: number) => { let acc = 0, x = k; while (dir < 0 ? x > 0 : x < n - 1) { const nx = x + dir; if (coupe[dir < 0 ? x : nx]) break; acc += haversine(points[Math.min(x, nx)], points[Math.max(x, nx)]); x = nx; if (acc >= GPSAR_D_WINDOW) break; } return x; };
-  const vminEntre = (a: number, b: number) => { let v = 1e9; for (let x = a; x <= b; x++) if (!coupe[x] && spd(x) < v) v = spd(x); return v; };
+  // Speed for the minimum: Doppler = raw (measured, reliable); positional = time median +-1.5 s
+  // (removes the noise of the computed speed at the tip of the turn).
+  const GPSAR_SMOOTH_S = 3;
+  const spdVmin = new Float64Array(n);
+  if (useDoppler) { for (let i = 0; i < n; i++) spdVmin[i] = spd(i); }
+  else {
+    for (let i = 0; i < n; i++) {
+      if (coupe[i]) { spdVmin[i] = spd(i); continue; }
+      const buf = [spd(i)];
+      for (let j = i - 1; j >= 0 && !coupe[j + 1] && (points[i].time - points[j].time) / 1000 <= GPSAR_SMOOTH_S / 2; j--) buf.push(spd(j));
+      for (let j = i + 1; j < n && !coupe[j] && (points[j].time - points[i].time) / 1000 <= GPSAR_SMOOTH_S / 2; j++) buf.push(spd(j));
+      buf.sort((a, b) => a - b);
+      spdVmin[i] = buf[buf.length >> 1];
+    }
+  }
+  const vminEntre = (a: number, b: number) => { let v = 1e9; for (let x = a; x <= b; x++) if (!coupe[x] && spdVmin[x] < v) v = spdVmin[x]; return v; };
+  const cumD = new Float64Array(n);
+  for (let i = 1; i < n; i++) cumD[i] = cumD[i - 1] + (coupe[i] ? 0 : haversine(points[i - 1], points[i]));
   const vmaxEntre = (a: number, b: number) => { let v = 0; for (let x = a; x <= b; x++) if (!coupe[x] && spd(x) > v) v = spd(x); return v; };
-  let ref: number | null = null, mid: number | null = null, tot = 0, jib = 0, tack = 0;
+  const GPSAR_DEBOUNCE = 40;   // m: half-turns at least 40 m apart (debounce)
+  let ref: number | null = null, mid: number | null = null, tot = 0, jib = 0, tack = 0, lastApex = -1e9;
   const listJ: number[] = [], listT: number[] = [];
   for (let k = 0; k < n; k++) {
     if (coupe[k]) { ref = null; mid = null; continue; }
@@ -760,6 +791,8 @@ function statsSession(points: any[], windDir: number | null): any {
     const d = Math.abs(angleDiff(h, ref));
     if (mid === null && d > 90) mid = h;
     if (d > 150) {
+      if (cumD[k] - lastApex < GPSAR_DEBOUNCE) { ref = h; mid = null; continue; }
+      lastApex = cumD[k];
       tot++;
       const capPointe = mid == null ? h : mid;
       const est = windDir != null && Math.abs(angleDiff(capPointe, windDir)) > 90;
@@ -882,7 +915,7 @@ export function analyseSession(rawPoints: any[], meteoDir: number | null = null,
   if (!useDoppler && v10s.speed > 0 && top5.speed > v10s.speed + 0.01) top5 = { speed: v10s.speed, ranges: top5.ranges };
   const a250 = light ? none : getAlphaExclu(ptsLong, distLong, 250, 125, useDoppler, windUsed);
   const a500 = getAlphaExclu(ptsLong, distLong, 500, 250, useDoppler, windUsed);
-  const ss = light ? { tot: 0, jib: 0, tack: 0, nJibe: 0, nTack: 0, vminJibe: null, vminTack: null, moyJibe: null, moyTack: null } : statsSession(points, windUsed);
+  const ss = light ? { tot: 0, jib: 0, tack: 0, nJibe: 0, nTack: 0, vminJibe: null, vminTack: null, moyJibe: null, moyTack: null } : statsSession(points, windUsed, useDoppler);
   return {
     date: rawPoints[0].time,
     durationMs: rawPoints[rawPoints.length - 1].time - rawPoints[0].time,
