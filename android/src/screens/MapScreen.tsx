@@ -149,7 +149,7 @@ function buildLeafletHtml(provider: MapProvider, trackColor: string): string {
         if (!map._loaded) { window.__progMove = true; map.setView(lls[0], 13, { animate: false }); }
         window.__progMove = true;
         map.invalidateSize(false);
-        line = L.polyline(lls, { color: '${trackColor}', weight: 7, opacity: 0.95 }).addTo(map);
+        line = L.polyline(lls, { color: '${trackColor}', weight: 1.75, opacity: 0.95 }).addTo(map);
         // Zone colours may have arrived first: keep the plain track hidden under them.
         if ((ovl.segs && ovl.segs.getLayers().length) || ovl.pending) line.setStyle({ opacity: 0 });
         startMarker = L.marker(lls[0], { icon: dot('#2ecc71') }).addTo(map);
@@ -274,8 +274,8 @@ function buildLeafletHtml(provider: MapProvider, trackColor: string): string {
       if (!ovl.segs) ovl.segs = L.layerGroup().addTo(map);
       ovl.segs.clearLayers();
       if (line) line.setStyle({ opacity: segs && segs.length ? 0 : 0.95 });
-      (segs || []).forEach(function(s) { L.polyline(s.coords, { color: casing, weight: 9, opacity: 0.9, interactive: false }).addTo(ovl.segs); });
-      (segs || []).forEach(function(s) { L.polyline(s.coords, { color: s.color, weight: 5.5, opacity: 1, interactive: false }).addTo(ovl.segs); });
+      (segs || []).forEach(function(s) { L.polyline(s.coords, { color: casing, weight: 2.75, opacity: 0.9, interactive: false }).addTo(ovl.segs); });
+      (segs || []).forEach(function(s) { L.polyline(s.coords, { color: s.color, weight: 1.6, opacity: 1, interactive: false }).addTo(ovl.segs); });
     },
     setCursor: function(p) {
       if (!map._loaded) return;
@@ -285,7 +285,7 @@ function buildLeafletHtml(provider: MapProvider, trackColor: string): string {
     setHighlight: function(coords) {
       if (!map._loaded) return;
       if (ovl.hl) { map.removeLayer(ovl.hl); ovl.hl = null; }
-      if (coords && coords.length > 1) { ovl.hl = L.polyline(coords, { color: '#1a1d22', opacity: 0.3, weight: 18, interactive: false }).addTo(map); ovl.hl.bringToBack(); }
+      if (coords && coords.length > 1) { ovl.hl = L.polyline(coords, { color: '#1a1d22', opacity: 0.3, weight: 8, interactive: false }).addTo(map); ovl.hl.bringToBack(); }
     },
     fitCoords: function(coords) {
       if (!coords || coords.length < 2) return;
