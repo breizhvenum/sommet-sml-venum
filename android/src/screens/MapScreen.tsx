@@ -33,6 +33,8 @@ import { getCachedPois } from '../services/PoiService';
 import Icon from '../components/ui/Icon';
 import ActivityPanel from '../components/activity/ActivityPanel';
 import SpeedStatsPanel from '../components/SpeedStatsPanel';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 type Route = RouteProp<RootStackParamList, 'Map'>;
 type Nav   = NativeStackNavigationProp<RootStackParamList, 'Map'>;
@@ -720,8 +722,8 @@ export default function MapScreen() {
   async function explainNoSml() {
     const status = await loadSmlStatus();
     Alert.alert('SML',
-      'Aucun fichier SML n’existe encore pour cette activité.\n\nRelis-la depuis la montre : connecte la montre, puis fais un APPUI LONG sur le bouton Sync de l’accueil et choisis Retélécharger.\n\n' +
-      (status ? `Dernière synchro (étape SML) :\n${status}` : 'Aucune étape SML n’a encore tourné sur cette installation (synchronise d’abord la montre).'));
+      L('Aucun fichier SML n’existe encore pour cette activité.\n\nRelis-la depuis la montre : connecte la montre, puis fais un APPUI LONG sur le bouton Sync de l’accueil et choisis Retélécharger.\n\n', 'There is no SML file for this activity yet.\n\nRead it again from the watch: connect the watch, then LONG-PRESS the Sync button on the home screen and choose Re-download.\n\n') +
+      (status ? L(`Dernière synchro (étape SML) :\n${status}`, `Last sync (SML step):\n${status}`) : L('Aucune étape SML n’a encore tourné sur cette installation (synchronise d’abord la montre).', 'No SML step has run on this installation yet (sync the watch first).')));
   }
 
   // GPX built from the activity's SML (the app's own GPX/FIT exports were removed from the menu).
@@ -788,8 +790,8 @@ export default function MapScreen() {
     if (!smlPath) { setShowExportMenu(false); await explainNoSml(); return; }
     try {
       const acc = await getBdvAccount();
-      if (!acc) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Connecte-toi d\'abord dans Réglages → basedevitesse.com.'); return; }
-      if (!acc.key) { setShowExportMenu(false); Alert.alert('basedevitesse.com', 'Clé de l\'appli absente de cette version.'); return; }
+      if (!acc) { setShowExportMenu(false); Alert.alert('basedevitesse.com', L('Connecte-toi d\'abord dans Réglages → basedevitesse.com.', 'Sign in first in Settings → basedevitesse.com.')); return; }
+      if (!acc.key) { setShowExportMenu(false); Alert.alert('basedevitesse.com', L('Clé de l\'appli absente de cette version.', 'App key missing from this build.')); return; }
       setBdvSending(true);
       // The support list replaces the menu entries INSIDE the same sheet (a second Modal opened while
       // the first one closes is silently dropped on Android).
@@ -829,22 +831,22 @@ export default function MapScreen() {
         <View style={{ backgroundColor: theme.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: Math.round(win.height * 0.85), overflow: 'hidden' }}>
           {bdvPicker ? (
             <ScrollView>
-              <Text style={{ color: theme.text, fontWeight: '600', padding: 16 }}>Support utilisé</Text>
+              <Text style={{ color: theme.text, fontWeight: '600', padding: 16 }}>{L('Support utilisé', 'Gear used')}</Text>
               {bdvPicker.supports.map(sp => (
                 <ExportMenuItem key={sp.id} styles={styles} label={sp.name} onPress={() => sendToBdv(sp.id)} />
               ))}
             </ScrollView>
           ) : (
           <ScrollView>
-            <ExportSection styles={styles} title="Envoyer" />
-            <ExportMenuItem styles={styles} icon="upload" highlight label="Envoyer à basedevitesse.com" sub="Le fichier SML de la montre" onPress={handleUploadBdv} />
-            <ExportSection styles={styles} title="Partager" />
-            <ExportMenuItem styles={styles} icon="upload" label="Fichier SML d’origine" sub="Moveslink" onPress={handleShareSml} />
-            <ExportMenuItem styles={styles} icon="upload" label="Fichier GPX" sub="Converti du SML" onPress={handleShareGpxFromSml} />
-            <ExportSection styles={styles} title="Enregistrer dans Téléchargements" />
-            <ExportMenuItem styles={styles} icon="download" label="Fichier SML d’origine" onPress={handleSaveSmlToDownloads} />
-            <ExportMenuItem styles={styles} icon="download" label="Fichier GPX" onPress={handleSaveGpxFromSmlToDownloads} />
-            <ExportSection styles={styles} title="Autres" />
+            <ExportSection styles={styles} title={L("Envoyer", "Send")} />
+            <ExportMenuItem styles={styles} icon="upload" highlight label={L("Envoyer à basedevitesse.com", "Send to basedevitesse.com")} sub={L("Le fichier SML de la montre", "The watch's SML file")} onPress={handleUploadBdv} />
+            <ExportSection styles={styles} title={L("Partager", "Share")} />
+            <ExportMenuItem styles={styles} icon="upload" label={L("Fichier SML d’origine", "Original SML file")} sub="Moveslink" onPress={handleShareSml} />
+            <ExportMenuItem styles={styles} icon="upload" label={L("Fichier GPX", "GPX file")} sub="Converti du SML" onPress={handleShareGpxFromSml} />
+            <ExportSection styles={styles} title={L("Enregistrer dans Téléchargements", "Save to Downloads")} />
+            <ExportMenuItem styles={styles} icon="download" label={L("Fichier SML d’origine", "Original SML file")} onPress={handleSaveSmlToDownloads} />
+            <ExportMenuItem styles={styles} icon="download" label={L("Fichier GPX", "GPX file")} onPress={handleSaveGpxFromSmlToDownloads} />
+            <ExportSection styles={styles} title={L("Autres", "Other")} />
             <ExportMenuItem styles={styles} label={t.uploadStrava}   onPress={handleUploadStrava} />
             <ExportMenuItem styles={styles} label={t.gearSetForActivity} onPress={() => { setShowExportMenu(false); setShowGearPicker(true); }} />
           </ScrollView>
@@ -888,7 +890,7 @@ export default function MapScreen() {
         >
           {exporting
             ? <Text style={styles.exportFabText}>…</Text>
-            : <><Icon name="upload" size={20} color="#fff" /><Text style={styles.exportFabLabel}>Exporter / Partager</Text></>}
+            : <><Icon name="upload" size={20} color="#fff" /><Text style={styles.exportFabLabel}>{L('Exporter / Partager', 'Export / Share')}</Text></>}
         </TouchableOpacity>
 
         {(showExportMenu || !!bdvPicker) && exportSheet}
@@ -961,7 +963,7 @@ export default function MapScreen() {
       >
         {exporting
           ? <Text style={styles.exportFabText}>…</Text>
-          : <><Icon name="upload" size={20} color="#fff" /><Text style={styles.exportFabLabel}>Exporter / Partager</Text></>}
+          : <><Icon name="upload" size={20} color="#fff" /><Text style={styles.exportFabLabel}>{L('Exporter / Partager', 'Export / Share')}</Text></>}
       </TouchableOpacity>
 
       {/* ── Menu d'export ── */}
@@ -1035,13 +1037,13 @@ export default function MapScreen() {
         <>
         {!smlPath && (
           <View style={{ margin: 12, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.card }}>
-            <Text style={{ color: theme.text, fontSize: 15, fontWeight: '700' }}>Pas de fichier SML pour cette activité</Text>
+            <Text style={{ color: theme.text, fontSize: 15, fontWeight: '700' }}>{L('Pas de fichier SML pour cette activité', 'No SML file for this activity')}</Text>
             <Text style={{ color: theme.mutedText, fontSize: 13, marginTop: 6 }}>
-              Les statistiques rom1rv Speed et l’envoi à basedevitesse.com ont besoin du SML. Rebranche la montre (câble fourni + adaptateur OTG), puis appuie sur le bouton : l’appli relit la montre et crée le SML.
+              {L('Les statistiques rom1rv Speed et l’envoi à basedevitesse.com ont besoin du SML. Rebranche la montre (câble fourni + adaptateur OTG), puis appuie sur le bouton : l’appli relit la montre et crée le SML.', 'The rom1rv Speed statistics and sending to basedevitesse.com need the SML. Plug the watch back in (supplied cable + OTG adapter), then press the button: the app re-reads the watch and creates the SML.')}
             </Text>
             <TouchableOpacity activeOpacity={0.8} onPress={() => { requestSmlRegen(); navigation.navigate('Home' as any); }}
               style={{ marginTop: 10, backgroundColor: theme.primary, borderRadius: 12, paddingVertical: 12, alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Générer le SML</Text>
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{L('Générer le SML', 'Generate the SML')}</Text>
             </TouchableOpacity>
           </View>
         )}

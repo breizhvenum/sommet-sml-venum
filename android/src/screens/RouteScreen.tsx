@@ -23,6 +23,8 @@ import { detectBryton } from '../services/BrytonUsb';
 import { sendRouteToBryton } from '../services/BrytonTrack';
 import { getKnownMagene, type KnownMagene } from '../services/MageneStore';
 import { sendRoute as sendRouteToMagene } from '../services/MageneRoute';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // The imported route as a minimal GPX, for the bike-computer encoders (MageneRoute/BrytonTrack
 // both take GPX text, like their desktop tools).
@@ -336,7 +338,7 @@ export default function RouteScreen() {
           {/* A real button, not bare text (André, 2026-10-03: "'Open planner' looks like plain
               text"); the first one says what it does - it opens the file picker - instead of
               repeating the card's title. */}
-          <Button label="Ouvrir le planificateur" variant="outline" onPress={() => navigation.navigate('RouteWeather')} />
+          <Button label={L("Ouvrir le planificateur", "Open the planner")} variant="outline" onPress={() => navigation.navigate('RouteWeather')} />
         </View>
 
         {pending && (
@@ -353,7 +355,7 @@ export default function RouteScreen() {
             )}
             <View style={styles.row}>
               {watchHere && <Button label={t.routeUploadBtn} variant="filled" loading={sendBusy} disabled={sendBusy} onPress={handleUpload} />}
-              <Button label="Ouvrir dans le planificateur" variant="text" grow={false} disabled={sendBusy}
+              <Button label={L("Ouvrir dans le planificateur", "Open in the planner")} variant="text" grow={false} disabled={sendBusy}
                 onPress={() => openInPlanner(pending.name, pending.points.map(p => ({ lat: p.lat, lon: p.lon, ele: p.alt })))} />
               <Button label={t.routeDiscardBtn} variant="text" grow={false} disabled={sendBusy} onPress={() => setPending(null)} />
             </View>
@@ -394,16 +396,16 @@ export default function RouteScreen() {
             <Text style={styles.itemName}>{r.name}</Text>
             <Text style={styles.itemStats}>{formatDist(r.distanceMeters)} · +{r.ascentMeters} m</Text>
             <View style={[styles.row, { flexWrap: 'wrap' }]}>
-              <Button label="Ouvrir dans le planificateur" variant="text" grow={false} onPress={async () => {
+              <Button label={L("Ouvrir dans le planificateur", "Open in the planner")} variant="text" grow={false} onPress={async () => {
                 const pr = await libraryRoute(r);
                 if (pr) openInPlanner(r.name, pr.points.map(p => ({ lat: p.lat, lon: p.lon, ele: p.alt })));
               }} />
-              <Button label="Envoyer…" variant="text" grow={false} disabled={sendBusy} onPress={async () => {
+              <Button label={L("Envoyer…", "Send…")} variant="text" grow={false} disabled={sendBusy} onPress={async () => {
                 const pr = await libraryRoute(r);
                 if (pr) { setPending(pr); scrollRef.current?.scrollTo({ y: 0, animated: true }); }
               }} />
               <Button label="Renommer" variant="text" grow={false} onPress={() => setRenaming({ id: r.id, value: r.name })} />
-              <Button label="Supprimer" variant="text" tone="alert" grow={false} onPress={() => Alert.alert(
+              <Button label={L("Supprimer", "Delete")} variant="text" tone="alert" grow={false} onPress={() => Alert.alert(
                 'Delete route', `Remove “${r.name}” from the Library?`, [
                   { text: t.cancel, style: 'cancel' },
                   { text: t.delete, style: 'destructive', onPress: () => deleteLibraryRoute(r.id).then(refreshLibrary) },
@@ -460,7 +462,7 @@ export default function RouteScreen() {
               </TouchableOpacity>
             </View>
             {route.points.length > 1 && (
-              <Button label="Ouvrir dans le planificateur" variant="text" grow={false}
+              <Button label={L("Ouvrir dans le planificateur", "Open in the planner")} variant="text" grow={false}
                 onPress={() => openInPlanner(route.name, route.points.map(p => ({ lat: p.latitude, lon: p.longitude, ele: null })))} />
             )}
           </View>

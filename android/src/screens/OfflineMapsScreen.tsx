@@ -16,6 +16,8 @@ import { getCachedPois } from '../services/PoiService';
 import {
   OfflineRegion, listRegions, addRegion, deleteRegion, bboxCorners, RegionBBox,
 } from '../services/OfflineRegionsService';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // Offline Maps manager — the OruxMaps-style "download any area of the world for use with no
 // signal" screen. Pan/zoom the map anywhere (you can be in France and grab Utah), the blue box
@@ -166,14 +168,14 @@ export default function OfflineMapsScreen() {
         : `Saved ${result.done} tiles for offline use.`;
       Alert.alert('Zone hors ligne', msg);
     } catch (err: any) {
-      Alert.alert('Échec du téléchargement', err?.message ?? 'Impossible de télécharger cette zone.');
+      Alert.alert(L('Échec du téléchargement', 'Download failed'), err?.message ?? L('Impossible de télécharger cette zone.', 'Could not download this area.'));
     } finally {
       setProgress(null);
     }
   }
 
   function handleDelete(r: OfflineRegion) {
-    Alert.alert('Supprimer la zone', `Supprimer « ${r.name} » et ses tuiles téléchargées ?`, [
+    Alert.alert(L('Supprimer la zone', 'Delete the area'), L(`Supprimer « ${r.name} » et ses tuiles téléchargées ?`, `Delete “${r.name}” and its downloaded tiles?`), [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete', style: 'destructive',
@@ -265,7 +267,7 @@ export default function OfflineMapsScreen() {
             <Text style={s.muted}>Downloading {progress.done}/{progress.total}{progress.failed ? ` · ${progress.failed} failed` : ''}</Text>
           </View>
         ) : (
-          <Button label="Télécharger cette zone" icon="backup" variant="filled"
+          <Button label={L("Télécharger cette zone", "Download this area")} icon="backup" variant="filled"
             onPress={handleDownload} disabled={!bbox || tooBig}
             style={{ marginTop: v3Spacing.small }} />
         )}

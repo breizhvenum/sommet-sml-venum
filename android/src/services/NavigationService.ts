@@ -13,6 +13,8 @@ import { readNavBases } from './MemoryMap';
 import { sendLegacyRoute } from './AmbitLegacyNav';
 import { mergeRoutes, existingRoutesToKeep, storedName } from './RouteMerge';
 import { t } from '../i18n';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // AMBIT3_MAX_ROUTE_POINTS / AMBIT3_MAX_NAME_BYTES from
 // android/app/src/main/cpp/libambit/device_driver_ambit3_navigation.h —
@@ -115,7 +117,7 @@ export async function pickRouteGpx(): Promise<{ xml: string; name: string } | nu
     gpxPath = await pickGpxFile();
   } catch (e: any) {
     if (e?.code === 'GPX_PICK_CANCELLED') return null;
-    throw new Error(e?.message ?? 'Sélection du fichier annulée');
+    throw new Error(e?.message ?? L('Sélection du fichier annulée', 'File selection cancelled'));
   }
   const xml = await RNFS.readFile(gpxPath, 'utf8');
   return { xml, name: (gpxPath.split('/').pop() ?? 'Route').replace(/\.gpx$/i, '') };

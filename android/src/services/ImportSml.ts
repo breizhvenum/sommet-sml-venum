@@ -5,6 +5,8 @@ import { extractGpxMetadata } from './GpxParser';
 import { writeGpxFile, adoptSmlFile } from './GpxService';
 import { isActivitySynced, isActivityDeleted, markActivitySynced } from '../database/db';
 import { attributeMoveToGear } from './GearAutoAssign';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 export type ImportSmlResult =
   | { status: 'imported'; id: string; distanceM: number; durationS: number }
@@ -38,7 +40,7 @@ export async function importSmlFolder(): Promise<{ imported: number; exists: num
 
 async function importSmlFromPath(picked: string): Promise<ImportSmlResult> {
   const xml = await RNFS.readFile(picked, 'utf8');
-  if (!/<sml[\s>]/i.test(xml)) throw new Error('Ce fichier n\'est pas un SML.');
+  if (!/<sml[\s>]/i.test(xml)) throw new Error(L('Ce fichier n\'est pas un SML.', 'This file is not a SML.'));
 
   const { gpx, points } = smlToGpx(xml);
   if (points === 0) throw new Error('Ce SML ne contient aucune trace GPS.');

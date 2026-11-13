@@ -9,6 +9,8 @@ import { getStreams, getZoneGroups, getPlanned, Streams } from '../../services/A
 import { buildActivityChartHtml } from '../../services/activityChartPage';
 import { useV3Theme, V3Colors } from '../../theme/v3';
 import { useThemeMode } from '../../theme/ThemeModeContext';
+import { isFrench as __isFr } from '../../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 // Shared with the desktop (edit shared/, then tools/gen_activity_view.py): what each sport shows
 // and the maths behind it - the same files the desktop's QML runs.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -112,7 +114,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
       const w = ws.find(x => x.type === 'Ride' || x.type === 'VirtualRide') || ws[0];
       if (!w) return;
       const blocks = AVL.workoutBlocks(w.workout_doc, AVL.ftpFrom(zoneGroups));
-      setPlanned(blocks.length ? { name: w.name || 'Séance prévue', blocks } : null);
+      setPlanned(blocks.length ? { name: w.name || L('Séance prévue', 'Planned workout'), blocks } : null);
     }).catch(() => undefined);
   }, [st, zoneGroups]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -251,8 +253,8 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
   const focus = focusId || (cb ? ((chansOn.find(c => c.key === CFG.colour_modes[colourMode].key) || {}).id || '') : '');
   const colors = { text: t.text, muted: t.mutedText, border: t.border, borderStrong: t.borderStrong, card: t.card, cardNested: t.cardNested,
                    background: t.background, primary: t.primary, hard: t.hard, warning: t.warning, secondary: t.secondary, accent: t.accent };
-  const labels = { altitude: 'Altitude', fasterUp: '(plus rapide = plus haut)', plannedTarget: 'Objectif prévu', avg: 'moy.', max: 'max', best: 'meilleur',
-                   top: 'top', target: 'Objectif', colour: 'Couleur', stripHint: 'Toute l’activité · fais glisser le cadre pour te déplacer', median: 'médiane' };
+  const labels = { altitude: 'Altitude', fasterUp: '(plus rapide = plus haut)', plannedTarget: L('Objectif prévu', 'Planned target'), avg: 'moy.', max: 'max', best: 'meilleur',
+                   top: 'top', target: 'Objectif', colour: 'Couleur', stripHint: L('Toute l’activité · fais glisser le cadre pour te déplacer', 'Whole activity · drag the frame to move around'), median: 'médiane' };
   useEffect(() => {
     if (!chartReady || !st) return;
     const d = swimMode
@@ -287,7 +289,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
   const hasPlot = chans.length > 0;
   const pressedLaps = !!(st && st.laps_kind === 'pressed') && sport !== 'pool_swim';
   const showCharts = !!sc.chart && (hasPlot || swimMode);
-  const tabs: ['overview' | 'charts' | 'laps', string][] = [['overview', 'Aperçu']];
+  const tabs: ['overview' | 'charts' | 'laps', string][] = [['overview', L('Aperçu', 'Overview')]];
   if (showCharts) tabs.push(['charts', 'Graphiques']);
   if (pressedLaps) tabs.push(['laps', 'Tours']);
   const info = (label: string, text: string) => Alert.alert(label, text);
@@ -362,7 +364,7 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
           {ov.more.length > 0 && (
             <View style={s.more}>
               <TouchableOpacity onPress={() => setMoreOpen(o => !o)} style={s.moreHead}>
-                <Text style={s.moreTitle}>Plus de détails</Text>
+                <Text style={s.moreTitle}>{L('Plus de détails', 'More details')}</Text>
                 <Text style={s.caption}>{ov.more.length === 1 ? '1 value' : `${ov.more.length} values`}  {moreOpen ? '▴' : '▾'}</Text>
               </TouchableOpacity>
               {moreOpen && ov.more.map((m: any) => (
@@ -381,8 +383,8 @@ export default function ActivityPanel({ activity, meta, hasMap, mapView, onHover
               <Seg t={t} label="Temps par longueur" on={swimY === 'len'} onPress={() => setSwimY('len')} />
               <Seg t={t} label="Allure aux 100 m" on={swimY === 'pace'} onPress={() => setSwimY('pace')} />
               <Seg t={t} label="Couleur : nage" on={swimColour === 'stroke'} onPress={() => setSwimColour('stroke')} />
-              <Seg t={t} label="Couleur : vitesse" on={swimColour === 'speed'} onPress={() => setSwimColour('speed')} />
-              <Seg t={t} label="Fréquence cardiaque" on={swimHr} onPress={() => setSwimHr(v => !v)} />
+              <Seg t={t} label={L("Couleur : vitesse", "Colour: speed")} on={swimColour === 'speed'} onPress={() => setSwimColour('speed')} />
+              <Seg t={t} label={L("Fréquence cardiaque", "Heart rate")} on={swimHr} onPress={() => setSwimHr(v => !v)} />
             </View>
           ) : (
             <>

@@ -1,4 +1,6 @@
 import type { SpeedStats } from './SpeedAnalysis';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // Session capture image (no heart rate): drawn on a canvas inside a hidden WebView, returned as PNG base64.
 // Design: app palette, speed-coloured track on a dark map (OpenStreetMap tiles are optional: no network = plain background),
@@ -33,15 +35,15 @@ export function captureTrack(raw: any[]): number[][] {
   return out;
 }
 
-const num = (v: number | null | undefined, d = 2) => (v !== null && v !== undefined && v > 0 ? v.toFixed(d).replace('.', ',') : '--');
+const num = (v: number | null | undefined, d = 2) => (v !== null && v !== undefined && v > 0 ? v.toFixed(d).replace('.', L(',', '.')) : '--');
 
 export function buildCaptureHtml(stats: SpeedStats, track: number[][], title: string, brand = 'Ambit rom1rv'): string {
   const d = new Date(stats.date);
-  const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-  const dateTxt = `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const MONTHS = L('janvier,février,mars,avril,mai,juin,juillet,août,septembre,octobre,novembre,décembre', 'January,February,March,April,May,June,July,August,September,October,November,December').split(',');
+  const dateTxt = L(`${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`, `${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`);
   const mins = Math.round(stats.durationMs / 60000);
   const durTxt = `${Math.floor(mins / 60)} h ${String(mins % 60).padStart(2, '0')}`;
-  const km = (stats.distanceM / 1000).toFixed(2).replace('.', ',');
+  const km = (stats.distanceM / 1000).toFixed(2).replace('.', L(',', '.'));
   const T = (label: string, value: string, unit: string, cls: string) => ({ label, value, unit, cls });
   const tiles = [
     T('Vmax', num(stats.vmax), 'kts', 'k1'), T('V10s', num(stats.v10s), 'kts', 'k1'), T('Top 5 × 10s', num(stats.top5x10s), 'kts', 'k1'),
@@ -50,8 +52,8 @@ export function buildCaptureHtml(stats: SpeedStats, track: number[][], title: st
     T('Alpha 250', num(stats.a250), 'kts', 'k3'), T('Alpha 500', num(stats.a500), 'kts', 'k3'), T('Distance', km, 'km', 'k4'),
   ];
   const data = {
-    title: title || 'Session', date: dateTxt, sub: `${durTxt} · ${km} km`,
-    brand, tiles, track, foot2: `Distance ${km} km · ${stats.turns} demi-tours`,
+    title: title || L('Session', 'Session'), date: dateTxt, sub: `${durTxt} · ${km} km`,
+    brand, tiles, track, foot2: L(`Distance ${km} km · ${stats.turns} demi-tours`, `Distance ${km} km · ${stats.turns} turns`),
   };
   const json = JSON.stringify(data).replace(/</g, '\\u003c');
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#1d1e22"><canvas id="c"></canvas><script>

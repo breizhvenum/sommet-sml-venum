@@ -1,3 +1,5 @@
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 /* eslint-disable */
 // Speed analysis of a session (rom1rv Speed method). Computation only (no DOM): Vincenty (WGS-84) distances, windows on
 // real points, Doppler (watch <Speed>) integration, the cascade of ceilings (Vmax >= V10s, V100m >= V500m...),
@@ -22,7 +24,8 @@ const FILTRE_ACCEL_DEFAUT = 1.8;
 const FILTRE_VMAX_DEFAUT = 40;
 const GEO_A = 6378137;                 // WGS-84 semi-major axis (m)
 const GEO_F = 1 / 298.257223563;       // WGS-84 flattening
-const GAP_MAX_S = 30;
+const GAP_MAX_S = 30;   // turns / cleaning / alphas
+const GAP_BLOC_S = 60;  // distance/time windows only (block split in preparerSegments)
 const ALPHA_PROXIMITE_M = 50;
 const UN_RESULTAT_PAR_BORD = true;
 const RUN_MIN_SPEED_KTS = 8;
@@ -206,7 +209,7 @@ function preparerSegments(points: any[], useDoppler: boolean) {
   let b = 0;
   for (let i = 1; i < n; i++) {
     const dt = (points[i].time - points[i - 1].time) / 1000;
-    if (!(dt > 0) || dt > GAP_MAX_S) { b++; CD[i] = CD[i - 1]; CDop[i] = CDop[i - 1]; blk[i] = b; continue; }
+    if (!(dt > 0) || dt > GAP_BLOC_S) { b++; CD[i] = CD[i - 1]; CDop[i] = CDop[i - 1]; blk[i] = b; continue; }
     let d, dop = 0;
     const v0 = points[i - 1].dopplerSpeed, v1 = points[i].dopplerSpeed;
     const ok0 = v0 !== null && v0 !== undefined;
@@ -675,16 +678,16 @@ function choisirVent(points: any[], meteoDir: number | null): { dir: number | nu
     const proche = (ref: number) => angleDiff(geo.candidats[0], ref) < angleDiff(geo.candidats[1], ref) ? geo.candidats[0] : geo.candidats[1];
     if (meteo !== null) {
       const c = proche(meteo);
-      res = angleDiff(c, meteo) <= 60 ? { dir: c, source: 'trace + météo', sur: true } : { dir: meteo, source: 'météo (trace différente)', sur: false };
+      res = angleDiff(c, meteo) <= 60 ? { dir: c, source: L('trace + météo', 'track + weather'), sur: true } : { dir: meteo, source: L('météo (trace différente)', 'weather (different track)'), sur: false };
     } else {
       const vir = coteParVirages(points, geo.candidats);
-      if (vir && vir.ratio >= 0.6) res = { dir: vir.cote, source: `trace (${Math.round(vir.ratio * 100)} % des demi-tours vent arrière)` + (vir.ratio >= 0.75 ? '' : ', à vérifier'), sur: vir.ratio >= 0.75 };
-      else if (geo.cote !== null) res = { dir: geo.cote, source: 'trace, à vérifier', sur: false };
-      else if (ancien !== null) res = { dir: proche(ancien), source: 'trace, à vérifier', sur: false };
-      else res = { dir: geo.candidats[0], source: 'à vérifier', sur: false };
+      if (vir && vir.ratio >= 0.6) res = { dir: vir.cote, source: L(`trace (${Math.round(vir.ratio * 100)} % des demi-tours vent arrière)`, `track (${Math.round(vir.ratio * 100)} % of the turns downwind)`) + (vir.ratio >= 0.75 ? '' : L(', à vérifier', ', to be checked')), sur: vir.ratio >= 0.75 };
+      else if (geo.cote !== null) res = { dir: geo.cote, source: L('trace, à vérifier', 'track, to be checked'), sur: false };
+      else if (ancien !== null) res = { dir: proche(ancien), source: L('trace, à vérifier', 'track, to be checked'), sur: false };
+      else res = { dir: geo.candidats[0], source: L('à vérifier', 'to be checked'), sur: false };
     }
-  } else if (meteo !== null) res = { dir: meteo, source: 'météo', sur: false };
-  else res = { dir: ancien, source: ancien === null ? '' : 'trace (approx.), à vérifier', sur: false };
+  } else if (meteo !== null) res = { dir: meteo, source: L('météo', 'weather'), sur: false };
+  else res = { dir: ancien, source: ancien === null ? '' : L('trace (approx.), à vérifier', 'track (approx.), to be checked'), sur: false };
   return res;
 }
 function getAlphaExclu(points: any[], distances: number[], maxDist: number, minDist: number, useDoppler: boolean, windDir: number | null): any {

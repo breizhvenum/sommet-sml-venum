@@ -3,6 +3,8 @@
 import * as Keychain from 'react-native-keychain';
 import RNFS from 'react-native-fs';
 import { BDV_API_KEY } from '../config/bdvKey';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // basedevitesse.com. The API key belongs to the APP (it is baked in at build time from a GitHub secret and
 // users never see it). Each user logs in with their own identifier + password ONCE: the app keeps only
@@ -51,13 +53,13 @@ async function post(url: string, params: Record<string, string>): Promise<{ stat
  */
 export async function bdvLogin(login: string, password: string, typedKey = ''): Promise<BdvAccount> {
   const key = BDV_API_KEY || typedKey.trim();
-  if (!key) throw new Error('Clé de l\'appli absente de cette version : renseigne-la ci-dessous, ou utilise une version compilée avec le secret BDV_API_KEY.');
+  if (!key) throw new Error(L('Clé de l\'appli absente de cette version : renseigne-la ci-dessous, ou utilise une version compilée avec le secret BDV_API_KEY.', 'App key missing from this build: enter it below, or use a build compiled with the BDV_API_KEY secret.'));
   if (!login.trim() || !password) throw new Error('Renseigne ton identifiant et ton mot de passe basedevitesse.');
   const r = await post(LOGIN_URL, { login: login.trim(), password, key });
   let o: any = null;
   try { o = JSON.parse(r.text); } catch { /* not JSON */ }
   if (!o || Number(o.login) !== 1 || !o.IDuser) {
-    throw new Error(r.status !== 200 ? `basedevitesse a répondu HTTP ${r.status}.` : 'Identifiant ou mot de passe refusé par basedevitesse.');
+    throw new Error(r.status !== 200 ? L(`basedevitesse a répondu HTTP ${r.status}.`, `basedevitesse answered HTTP ${r.status}.`) : L('Identifiant ou mot de passe refusé par basedevitesse.', 'Username or password refused by basedevitesse.'));
   }
   const name = [o.Prenom, o.Nom].filter(Boolean).join(' ').trim();
   await Keychain.setGenericPassword('basedevitesse', JSON.stringify({ idUser: String(o.IDuser), name, key: BDV_API_KEY ? '' : key }), { service: KEYCHAIN_SERVICE });
@@ -109,7 +111,7 @@ export async function uploadSessionToBdv(
   fd.append('gps', { uri: filePath.startsWith('file://') ? filePath : `file://${filePath}`, name, type: 'application/octet-stream' } as any);
   const r = await fetch(ADD_URL, { method: 'POST', body: fd });
   const text = await r.text();
-  return { status: r.status, text, summary: `Fichier envoyé : ${name}\n` + summarizeBdvAnswer(r.status, r.url, text) };
+  return { status: r.status, text, summary: L(`Fichier envoyé : ${name}\n`, `File sent: ${name}\n`) + summarizeBdvAnswer(r.status, r.url, text) };
 }
 
 /** Readable digest of the server answer: final URL, session id if any, then the page text without tags. */

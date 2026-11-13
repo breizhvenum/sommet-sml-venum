@@ -7,6 +7,8 @@ import { useV3Theme } from '../theme/v3';
 import { readSmlPoints, analyseSession, fetchMeteoVent, SpeedStats } from '../services/SpeedAnalysis';
 import { shareFile, saveToDownloads } from '../native/AmbitUsbModule';
 import { captureTrack, buildCaptureHtml, smlHeartRate } from '../services/CaptureImage';
+import { isFrench as __isFr } from '../i18n';
+const L = (fr: string, en: string): string => (__isFr ? fr : en);
 
 // Stats of a session under the map, computed from the move's SML (rom1rv Speed method) - speeds in knots. Wind comes from the track, then from Open-Meteo
 // when reachable (the figures are recomputed with it). No wind inversion / alpha verification here.
@@ -32,7 +34,7 @@ const hms = (ms: number) => {
   const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 };
-const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSO', 'SO', 'OSO', 'O', 'ONO', 'NO', 'NNO'];
+const CARD = L('N,NNE,NE,ENE,E,ESE,SE,SSE,S,SSO,SO,OSO,O,ONO,NO,NNO', 'N,NNE,NE,ENE,E,ESE,SE,SSE,S,SSW,SW,WSW,W,WNW,NW,NNW').split(',');
 const card = (deg: number | null) => deg === null ? '--' : `${CARD[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]} (${Math.round(deg)}°)`;
 
 export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath: string; onFailed: () => void; title?: string }) {
@@ -61,7 +63,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
     setStats(cache.get(k) ?? null); setMeteo(''); setBusy(false);
     if (cache.has(k)) return;
     loadStored(k).then(r => {
-      if (r && alive.current && !cache.has(k)) { cache.set(k, r); setStats(r); setMeteo('résultat enregistré'); }
+      if (r && alive.current && !cache.has(k)) { cache.set(k, r); setStats(r); setMeteo(L('résultat enregistré', 'saved result')); }
     });
   }, [smlPath, vmaxOn, vmaxKts]);
 
@@ -91,7 +93,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
         const path = `${RNFS.CachesDirectoryPath}/${fileName}`;
         await RNFS.writeFile(path, msg.slice(4), 'base64');
         // kept in the phone's Downloads folder, then the share sheet opens
-        try { await saveToDownloads(path, fileName, 'image/png'); ToastAndroid.show(`Image enregistrée dans Téléchargements : ${fileName}`, ToastAndroid.LONG); } catch (e) { /* share anyway */ }
+        try { await saveToDownloads(path, fileName, 'image/png'); ToastAndroid.show(L(`Image enregistrée dans Téléchargements : ${fileName}`, `Image saved to Downloads: ${fileName}`), ToastAndroid.LONG); } catch (e) { /* share anyway */ }
         await shareFile(path, 'image/png');
       }
     } catch (e) { /* share cancelled or failed: nothing else to do */ }
@@ -117,7 +119,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
         cache.set(k, res);
         saveStored(k, res);
         setStats(res); setBusy(false);
-        setMeteo(m ? `météo ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts` : 'météo indisponible');
+        setMeteo(m ? L(`météo ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts`, `weather ${card(m.dir)}, ${Math.round(m.vitesse / 1.852)} kts`) : L('météo indisponible', 'weather unavailable'));
       } catch (e) {
         if (alive.current) { setBusy(false); onFailed(); }
       }
@@ -151,11 +153,11 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
         <View style={{ width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: theme.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: vmaxOn ? theme.primary : 'transparent' }}>
           {vmaxOn ? <Text style={{ color: '#fff', fontWeight: '800', lineHeight: 18 }}>✓</Text> : null}
         </View>
-        <Text style={{ color: theme.text, fontSize: 13, marginLeft: 10, flexShrink: 1 }}>Filtrer une Vmax aberrante</Text>
+        <Text style={{ color: theme.text, fontSize: 13, marginLeft: 10, flexShrink: 1 }}>{L('Filtrer une Vmax aberrante', 'Filter an outlier Vmax')}</Text>
       </TouchableOpacity>
       {/* Last line: "Plafond à [40.0] kts", all on one row, lined up under the label (22 box + 10 gap) */}
       <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, marginLeft: 32 }}>
-        <Text style={{ color: theme.text, fontSize: 13 }}>avec un plafond à</Text>
+        <Text style={{ color: theme.text, fontSize: 13 }}>{L('avec un plafond à', 'with a ceiling of')}</Text>
         <TextInput
           value={vmaxTxt} onChangeText={setVmaxTxt} onBlur={applyVmaxTxt} onSubmitEditing={applyVmaxTxt}
           editable={vmaxOn} keyboardType="decimal-pad" selectTextOnFocus maxLength={5}
@@ -176,7 +178,7 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
                 <ActivityIndicator color="#fff" />
                 <Text style={{ color: '#fff', fontWeight: '700', marginLeft: 10 }}>(please wait...)</Text>
               </View>
-            : <Text style={{ color: '#fff', fontWeight: '700', textAlign: 'center' }}>Calculer les statistiques by rom1rv Speed</Text>}
+            : <Text style={{ color: '#fff', fontWeight: '700', textAlign: 'center' }}>{L('Calculer les statistiques by rom1rv Speed', 'Compute the statistics by rom1rv Speed')}</Text>}
         </TouchableOpacity>
         {FilterBox}
       </View>
@@ -199,20 +201,20 @@ export default function SpeedStatsPanel({ smlPath, onFailed, title }: { smlPath:
           </TouchableOpacity>
         </View>
         <View style={s.grid}>
-          <Tile label="Distance totale" value={(stats.distanceM / 1000).toFixed(2)} unit="km" />
+          <Tile label={L("Distance totale", "Total distance")} value={(stats.distanceM / 1000).toFixed(2)} unit="km" />
           <Tile label="Vmax" value={kts(stats.vmax)} unit="kts" big />
           <Tile label="V10s" value={kts(stats.v10s)} unit="kts" big />
-          <Tile label="Top 5 × 10s (moy.)" value={kts(stats.top5x10s)} unit="kts" big />
+          <Tile label={L("Top 5 × 10s (moy.)", "Top 5 × 10s (avg)")} value={kts(stats.top5x10s)} unit="kts" big />
           <Tile label="V100m" value={kts(stats.v100m)} unit="kts" />
           <Tile label="V500m" value={kts(stats.v500m)} unit="kts" />
           <Tile label="V1000m" value={kts(stats.v1000m)} unit="kts" />
-          <Tile label="V1852m (1 mille)" value={kts(stats.v1852m)} unit="kts" />
+          <Tile label={L("V1852m (1 mille)", "V1852m (1 nautical mile)")} value={kts(stats.v1852m)} unit="kts" />
           <Tile label="V10km" value={kts(stats.v10000m)} unit="kts" />
           <Tile label="Alpha 500" value={kts(stats.a500)} unit="kts" big />
-          {stats.hrAvg ? <Tile label="♥ FC moyenne" value={String(stats.hrAvg)} unit="bpm" /> : null}
-          {stats.hrMax ? <Tile label="♥ FC max" value={String(stats.hrMax)} unit="bpm" /> : null}
+          {stats.hrAvg ? <Tile label={L("♥ FC moyenne", "♥ Avg HR")} value={String(stats.hrAvg)} unit="bpm" /> : null}
+          {stats.hrMax ? <Tile label={L("♥ FC max", "♥ Max HR")} value={String(stats.hrMax)} unit="bpm" /> : null}
         </View>
-        <Text style={s.note}>Vent : {stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}{!vmaxOn ? ' · Vmax non filtrée' : (vmaxKts !== VMAX_DEFAULT ? ` · plafond ${vmaxKts.toFixed(1)} kts` : '')}</Text>
+        <Text style={s.note}>{L('Vent : ', 'Wind: ')}{stats.windSource || '--'}{meteo ? ` · ${meteo}` : ''}{!vmaxOn ? L(' · Vmax non filtrée', ' · Vmax not filtered') : (vmaxKts !== VMAX_DEFAULT ? L(` · plafond ${vmaxKts.toFixed(1)} kts`, ` · ceiling ${vmaxKts.toFixed(1)} kts`) : '')}</Text>
         {FilterBox}
       </View>
       {capHtml ? (
