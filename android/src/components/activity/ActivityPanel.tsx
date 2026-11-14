@@ -10,7 +10,7 @@ import { buildActivityChartHtml } from '../../services/activityChartPage';
 import { useV3Theme, V3Colors } from '../../theme/v3';
 import { useThemeMode } from '../../theme/ThemeModeContext';
 import { isFrench as __isFr } from '../../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 // Shared with the desktop (edit shared/, then tools/gen_activity_view.py): what each sport shows
 // and the maths behind it - the same files the desktop's QML runs.
 // eslint-disable-next-line @typescript-eslint/no-var-requires

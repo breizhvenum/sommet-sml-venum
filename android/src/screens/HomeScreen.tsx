@@ -70,7 +70,7 @@ import { WeatherCard } from '../components/WeatherCard';
 import { TrackPreview } from '../components/TrackPreview';
 import { NavShell, NavShellItem } from '../navigation/NavShell';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // Real, 2026-08-08: Kailash ("Hoopoe") answers the same USB init + 0x0000 device-info
 // commands every Ambit/Traverse does (AmbitUsbModule.kt's SUUNTO_PID_NAMES/

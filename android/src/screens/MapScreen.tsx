@@ -34,7 +34,7 @@ import Icon from '../components/ui/Icon';
 import ActivityPanel from '../components/activity/ActivityPanel';
 import SpeedStatsPanel from '../components/SpeedStatsPanel';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 type Route = RouteProp<RootStackParamList, 'Map'>;
 type Nav   = NativeStackNavigationProp<RootStackParamList, 'Map'>;

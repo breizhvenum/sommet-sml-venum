@@ -4,7 +4,7 @@ import * as Keychain from 'react-native-keychain';
 import RNFS from 'react-native-fs';
 import { BDV_API_KEY } from '../config/bdvKey';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // basedevitesse.com. The API key belongs to the APP (it is baked in at build time from a GitHub secret and
 // users never see it). Each user logs in with their own identifier + password ONCE: the app keeps only

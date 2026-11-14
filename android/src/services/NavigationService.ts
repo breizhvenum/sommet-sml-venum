@@ -14,7 +14,7 @@ import { sendLegacyRoute } from './AmbitLegacyNav';
 import { mergeRoutes, existingRoutesToKeep, storedName } from './RouteMerge';
 import { t } from '../i18n';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // AMBIT3_MAX_ROUTE_POINTS / AMBIT3_MAX_NAME_BYTES from
 // android/app/src/main/cpp/libambit/device_driver_ambit3_navigation.h —

@@ -1,5 +1,5 @@
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 /* eslint-disable */
 // Speed analysis of a session (rom1rv Speed method). Computation only (no DOM): Vincenty (WGS-84) distances, windows on
 // real points, Doppler (watch <Speed>) integration, the cascade of ceilings (Vmax >= V10s, V100m >= V500m...),

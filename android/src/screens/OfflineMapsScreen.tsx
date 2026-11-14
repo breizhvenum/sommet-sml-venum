@@ -17,7 +17,7 @@ import {
   OfflineRegion, listRegions, addRegion, deleteRegion, bboxCorners, RegionBBox,
 } from '../services/OfflineRegionsService';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // Offline Maps manager — the OruxMaps-style "download any area of the world for use with no
 // signal" screen. Pan/zoom the map anywhere (you can be in France and grab Utah), the blue box

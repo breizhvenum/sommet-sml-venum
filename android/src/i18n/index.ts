@@ -20,7 +20,10 @@ function deviceLocale(): string {
 }
 
 export const locale   = deviceLocale();
-export const isFrench = locale.toLowerCase().startsWith('fr');
+// Language chosen in Settings → Language ('fr' | 'en'; anything else = follow the phone). It is read
+// from storage by index.js before the app's screens are loaded, then handed over in this global.
+const forcedLang = (globalThis as any).__ROM1RV_LANG;
+export const isFrench = forcedLang === 'fr' ? true : forcedLang === 'en' ? false : locale.toLowerCase().startsWith('fr');
 // Kept in sync with the forced English `t` above (see note there).
 export const dateLocale = isFrench ? 'fr-FR' : 'en-GB';
 

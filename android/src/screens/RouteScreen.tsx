@@ -24,7 +24,7 @@ import { sendRouteToBryton } from '../services/BrytonTrack';
 import { getKnownMagene, type KnownMagene } from '../services/MageneStore';
 import { sendRoute as sendRouteToMagene } from '../services/MageneRoute';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // The imported route as a minimal GPX, for the bike-computer encoders (MageneRoute/BrytonTrack
 // both take GPX text, like their desktop tools).

@@ -1,6 +1,6 @@
 import type { SpeedStats } from './SpeedAnalysis';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // Session capture image (no heart rate): drawn on a canvas inside a hidden WebView, returned as PNG base64.
 // Design: app palette, speed-coloured track on a dark map (OpenStreetMap tiles are optional: no network = plain background),

@@ -4,7 +4,7 @@ import { ADVANCED_POWER_KEY } from '../components/activity/ActivityPanel';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Alert, ScrollView, ActivityIndicator, Linking, Modal, Platform, LayoutChangeEvent,
+  StyleSheet, Alert, ScrollView, ActivityIndicator, Linking, Modal, Platform, LayoutChangeEvent, BackHandler,
 } from 'react-native';
 import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -73,7 +73,7 @@ import { useV3Theme } from '../theme/v3';
 import { Button, Chip, Dropdown, FieldRow, IconBadge, StatusLine, Toggle } from '../components/ui/primitives';
 import { SettingsSection } from '../components/ui/SettingsSection';
 import { isFrench as __isFr } from '../i18n';
-const L = (fr: string, en: string): string => (__isFr ? fr : en);
+function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoisted: safe to use at module level
 
 // Real, 2026-08-09 ("no button to change provider, nor in the settings like the desktop
 // version") - same 3 real choices MapScreen.tsx/TrackMapScreen.tsx's own in-map layer
@@ -447,6 +447,28 @@ export default function SettingsScreen() {
   // Activity screen: normalized power, TSS, IF and work on rides (desktop parity: Settings ->
   // Activities -> Advanced power numbers). Off by default.
   const [advancedPower, setAdvancedPower] = useState(false);
+  // Language (Auto = follow the phone). Takes effect after the app is closed and reopened.
+  const [langPref, setLangPref] = useState<'auto' | 'fr' | 'en'>('auto');
+  useEffect(() => {
+    AsyncStorage.getItem('rom1rv:language')
+      .then(v => setLangPref(v === 'fr' || v === 'en' ? v : 'auto'))
+      .catch(() => undefined);
+  }, []);
+  const chooseLanguage = (v: 'auto' | 'fr' | 'en') => {
+    setLangPref(v);
+    const save = v === 'auto' ? AsyncStorage.removeItem('rom1rv:language') : AsyncStorage.setItem('rom1rv:language', v);
+    save.catch(() => undefined).then(() => {
+      const fr = v === 'fr' || (v === 'auto' && __isFr);
+      Alert.alert(
+        fr ? 'Langue' : 'Language',
+        fr ? 'Ferme puis rouvre l’appli pour appliquer la langue.' : 'Close and reopen the app to apply the language.',
+        [
+          { text: fr ? 'Plus tard' : 'Later', style: 'cancel' },
+          { text: fr ? 'Fermer l’appli' : 'Close the app', onPress: () => BackHandler.exitApp() },
+        ],
+      );
+    });
+  };
   useEffect(() => { AsyncStorage.getItem(ADVANCED_POWER_KEY).then(v => setAdvancedPower(v === '1')).catch(() => undefined); }, []);
   function handleToggleAdvancedPower(v: boolean) {
     setAdvancedPower(v);
@@ -793,7 +815,7 @@ export default function SettingsScreen() {
           name={t.stravaSection}
           connected={stravaAuth}
           status={stravaAuth ? 'connected' : 'not connected'}
-          action={stravaAuth ? 'Gérer' : 'Connecter'}
+          action={stravaAuth ? L('Gérer', 'Manage') : L('Connecter', 'Connect')}
           onPress={() => setOpenConnection('strava')}
         />
         {/* Bluetooth body scale (Etekcity FIT 8S): listened to directly, no account. */}
@@ -1072,6 +1094,19 @@ export default function SettingsScreen() {
 
       {/* ── Everything else: one closed row each, opened in place (Settings split). ── */}
       <View style={[styles.section, styles.rowsCard]} onLayout={recordCard('rows')}>
+        {/* Language - Auto follows the phone; French or English can be forced (applies after a restart). */}
+        <SettingsSection
+          title={L('Langue', 'Language')}
+          summary={langPref === 'auto' ? L('Automatique (langue du téléphone)', 'Automatic (phone language)') : langPref === 'fr' ? 'Français' : 'English'}
+          open={isOpen('language')}
+          onToggle={toggleSection('language')}
+          onLayout={recordRow('language')}
+        >
+          <Button label={(langPref === 'auto' ? '✓ ' : '') + L('Automatique (langue du téléphone)', 'Automatic (phone language)')} variant="outline" onPress={() => chooseLanguage('auto')} style={{ marginBottom: 8 }} />
+          <Button label={(langPref === 'fr' ? '✓ ' : '') + 'Français'} variant="outline" onPress={() => chooseLanguage('fr')} style={{ marginBottom: 8 }} />
+          <Button label={(langPref === 'en' ? '✓ ' : '') + 'English'} variant="outline" onPress={() => chooseLanguage('en')} />
+        </SettingsSection>
+
         {/* Activities - the extra power numbers most rides don't need (desktop parity). */}
         <SettingsSection
           title={L("Activités", "Activities")}
