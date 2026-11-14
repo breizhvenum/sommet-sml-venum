@@ -11,9 +11,9 @@ function L(fr: string, en: string): string { return __isFr ? fr : en; } // hoist
 // their IDuser (never the password) and sends sessions with IDuser + the app key.
 
 const KEYCHAIN_SERVICE = 'ambitvenum_basedevitesse';   // kept as-is so an existing install keeps working
-const LOGIN_URL = 'https://traitementbdv.com/api/login.php';
-const SUPPORTS_URL = 'https://traitementbdv.com/api/listeSupports.php';
-const ADD_URL = 'https://traitementbdv.com/api/ajoutSession.php';
+const LOGIN_URL = 'https://apibasedevitesse.fr/api/login.php';
+const SUPPORTS_URL = 'https://apibasedevitesse.fr/api/listeSupports.php';
+const ADD_URL = 'https://apibasedevitesse.fr/api/ajoutSession.php';
 
 export interface BdvAccount { idUser: string; name: string; key: string }
 export interface BdvSupport { id: number; name: string }
