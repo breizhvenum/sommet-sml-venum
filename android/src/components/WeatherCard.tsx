@@ -68,9 +68,6 @@ export function WeatherCard() {
               <Text style={[styles.temp, { color: theme.text }]}>
                 {Math.round(weather.data.currentTemperature)}°C
               </Text>
-              <Text style={[styles.condLabel, { color: theme.mutedText }]}>
-                {weatherLabel(weather.data.currentWeatherCode)}
-              </Text>
             </View>
             <View style={styles.sideInfo}>
               <Text style={[styles.sideLine, { color: theme.mutedText }]} numberOfLines={1}>
@@ -81,6 +78,9 @@ export function WeatherCard() {
               </Text>
             </View>
           </View>
+          <Text style={[styles.condLabel, { color: theme.mutedText, textAlign: 'center' }]}>
+            {weatherLabel(weather.data.currentWeatherCode)}
+          </Text>
 
           <View style={styles.forecastRow}>
             {weather.data.forecast.map((day, i) => (

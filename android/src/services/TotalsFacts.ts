@@ -49,11 +49,6 @@ export function distanceLines(meters: number): string[] {
   if (meters >= EARTH_CIRCUMFERENCE)
     out.push(`You have been around the world ${n(meters / EARTH_CIRCUMFERENCE, 1)} times.`);
 
-  if (meters >= PORTUGAL_LENGTH)
-    out.push(`That is the length of Portugal ${n(meters / PORTUGAL_LENGTH, 1)} times over.`);
-  else
-    out.push(`That is ${n((meters / PORTUGAL_LENGTH) * 100, 0)}% of the length of Portugal.`);
-
   if (meters >= CAMINO * 0.25)
     out.push(`The Camino to Santiago is 780 km - you are at ${n((meters / CAMINO) * 100, 0)}% of it.`);
 

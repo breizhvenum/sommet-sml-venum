@@ -433,7 +433,7 @@ export default function HomeScreen() {
       count += 1;
     }
     const facts = distanceLines(meters);
-    return { year, meters, seconds, count, teaser: facts.length > 0 ? facts[0] : '' };
+    return { year, meters, seconds, count, teaser: '' };
   }, [activities]);
 
   // Newest activity, for the "Last Activity" card. getAllActivities() is already sorted by
