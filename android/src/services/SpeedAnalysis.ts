@@ -11,7 +11,7 @@ const DOPPLER_MIN_COVERAGE = 0.8;
 const PLANNING_SPEED = 12;
 const WIND_STEP_DEG = 5;
 const MAX_CAP_STD = 15;
-const VMAX_DELTA_KTS = 2.45;
+const VMAX_DELTA_KTS = 2.95;
 const VMAX_ISOLATED_RATIO = 1.20;
 const RAD_TO_DEG = 180 / Math.PI;
 const SML_SPEED_MATCH_MS = 1500;
@@ -916,7 +916,7 @@ export function analyseSession(rawPoints: any[], meteoDir: number | null = null,
   let top5 = getTopNAvgSpeedWindowSingleHeading(points, 10, 5, useDoppler, useDoppler ? null : v10s.speed, useDoppler ? null : v10sRange);
   if (!useDoppler && v10s.speed > 0 && top5.speed > v10s.speed + 0.01) top5 = { speed: v10s.speed, ranges: top5.ranges };
   const a250 = light ? none : getAlphaExclu(ptsLong, distLong, 250, 125, useDoppler, windUsed);
-  const a500 = getAlphaExclu(ptsLong, distLong, 500, 250, useDoppler, windUsed);
+  const a500 = getAlphaExclu(ptsLong, distLong, 500, 125, useDoppler, windUsed);
   const ss = light ? { tot: 0, jib: 0, tack: 0, nJibe: 0, nTack: 0, vminJibe: null, vminTack: null, moyJibe: null, moyTack: null } : statsSession(points, windUsed, useDoppler);
   return {
     date: rawPoints[0].time,
