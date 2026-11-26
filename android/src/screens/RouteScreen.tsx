@@ -333,7 +333,7 @@ export default function RouteScreen() {
             <Text style={styles.infoBadgeText}>i</Text>
           </TouchableOpacity>
         </View>
-        <View style={[styles.row, { marginTop: v3Spacing.small }]}>
+        <View style={[styles.row, { marginTop: v3Spacing.small, flexDirection: 'column', alignItems: 'stretch' }]}>
           <Button label={t.routeIdle} variant="filled" loading={picking} disabled={picking || sendBusy} onPress={handlePick} />
           {/* A real button, not bare text (André, 2026-10-03: "'Open planner' looks like plain
               text"); the first one says what it does - it opens the file picker - instead of
@@ -353,7 +353,7 @@ export default function RouteScreen() {
                 {pinned.pins === null ? t.routePinsNone(pinned.note) : t.routePinsCount(pinned.pins)}
               </Text>
             )}
-            <View style={styles.row}>
+            <View style={[styles.row, { flexWrap: 'wrap' }]}>
               {watchHere && <Button label={t.routeUploadBtn} variant="filled" loading={sendBusy} disabled={sendBusy} onPress={handleUpload} />}
               <Button label={L("Ouvrir dans le planificateur", "Open in the planner")} variant="text" grow={false} disabled={sendBusy}
                 onPress={() => openInPlanner(pending.name, pending.points.map(p => ({ lat: p.lat, lon: p.lon, ele: p.alt })))} />
